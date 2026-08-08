@@ -1,0 +1,10 @@
+import { cronJobs } from "convex/server";
+import { internal } from "./_generated/api";
+
+const crons = cronJobs();
+
+// The only scheduled job retained: checking direct X mentions for wallet or
+// launch requests. It exits before contacting X unless explicitly enabled.
+crons.interval("poll direct X mentions", { minutes: 1 }, internal.xReplies.pollMentions);
+
+export default crons;
