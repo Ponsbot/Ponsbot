@@ -3,7 +3,7 @@ import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
-import { PONS_V2_FACTORY, PONS_V2_LAUNCH_AND_BUY_ROUTER } from "./ponsV2";
+import { discoverPonsV2PairAssets, PONS_V2_FACTORY, PONS_V2_LAUNCH_AND_BUY_ROUTER } from "./ponsV2";
 
 const ROBINHOOD_CHAIN_ID = 4663;
 const NON_PREMIUM_DAILY_LIMIT = 10;
@@ -306,6 +306,7 @@ const launchRecordValidator = v.object({
   name: v.string(), symbol: v.string(), imageUri: v.string(), devBuyWei: v.string(),
   description: v.optional(v.string()), website: v.optional(v.string()),
   twitter: v.optional(v.string()), telegram: v.optional(v.string()),
+  pairToken: v.optional(v.string()),
   tokenAddress: v.optional(v.string()), poolAddress: v.optional(v.string()),
   positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
 });
@@ -622,6 +623,7 @@ export const executeCommand = internalAction({
           symbol: command.symbol, imageUri: String(operation.imageUri || ""),
           description: launchMetadata!.description, website: launchMetadata!.website,
           twitter: launchMetadata!.twitter, telegram: launchMetadata!.telegram,
+          pairToken: String(operation.pairToken || ""),
           devBuyWei: result.valueWei || "0", tokenAddress: result.tokenAddress,
           poolAddress: result.poolAddress, positionId: result.positionId,
           devBuySucceeded: result.devBuySucceeded,
@@ -701,6 +703,7 @@ async function operationFor(
     if (!safeAddress(launchAndBuyRouter)) throw new Error("Pons launch-and-buy router is not configured");
     const imageUri = await normalizeImage(mediaUrl);
     const metadata = resolveLaunchMetadata(command, launcherUsername);
+    const pairToken = await resolveLaunchPair(command.pairToken);
     return {
       type: command.devBuy ? "pons_v2_launch_and_buy" : "pons_v2_launch", launchMode: command.launchMode,
       factoryAddress, launchAndBuyRouter,
@@ -710,11 +713,20 @@ async function operationFor(
       socials: { website: metadata.website, twitter: metadata.twitter },
       feeWalletSource: "reply_wallet",
       launchConfigId: process.env.PONS_LAUNCH_CONFIG_ID || "0",
-      pairToken: "0x0000000000000000000000000000000000000000",
+      pairToken,
       method: command.devBuy ? "launchAndBuy" : "launchToken",
     };
   }
   throw new Error("operation is read-only");
+}
+
+async function resolveLaunchPair(identifier?: string) {
+  if (!identifier || /^eth$/i.test(identifier)) return "0x0000000000000000000000000000000000000000";
+  const assets = await discoverPonsV2PairAssets();
+  const normalized = identifier.replace(/^\$/, "").toLowerCase();
+  const match = assets.find((asset) => asset.symbol.toLowerCase() === normalized || asset.address.toLowerCase() === normalized);
+  if (!match) throw new Error("requested Pons V2 pair is not currently approved");
+  return match.address;
 }
 
 function resolveLaunchMetadata(command: Extract<WalletCommand, { kind: "launch" }>, launcherUsername?: string) {

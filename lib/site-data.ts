@@ -8,6 +8,25 @@ export type PublicLaunch = {
   transactionHash: string; devBuySucceeded?: boolean; creatorAddress?: string; createdAt: number;
 };
 
+const PREVIEW_WALLET = "0x0000000000000000000000000000000000000b07";
+const PREVIEW_TOKEN = "0x0000000000000000000000000000000000000a11";
+
+function previewLaunch(tokenAddress: string): PublicLaunch {
+  return {
+    name: "Ponsbot Preview",
+    symbol: "PONSBOT",
+    imageUri: "/ponsbot.png",
+    description: "A preview of a token launched through Ponsbot on Pons V2.",
+    website: "https://ponsfamily.com",
+    twitter: "https://x.com/Ponsbotfamily",
+    tokenAddress,
+    transactionHash: `0x${"1".repeat(64)}`,
+    devBuySucceeded: true,
+    creatorAddress: "0x0000000000000000000000000000000000000B07",
+    createdAt: 1_755_000_000_000,
+  };
+}
+
 export async function listLaunches(limit = 24): Promise<PublicLaunch[]> {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) return [];
@@ -20,8 +39,10 @@ export async function listLaunches(limit = 24): Promise<PublicLaunch[]> {
 }
 
 export async function getLaunch(tokenAddress: string): Promise<PublicLaunch | null> {
+  if (!isAddress(tokenAddress)) return null;
+  if (tokenAddress.toLowerCase() === PREVIEW_TOKEN) return previewLaunch(tokenAddress);
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url || !isAddress(tokenAddress)) return null;
+  if (!url) return null;
   try {
     return await new ConvexHttpClient(url).query(api.site.getLaunch, { tokenAddress });
   } catch (error) {
@@ -39,18 +60,19 @@ export type PublicHolding = { address?: string; name: string; symbol: string; ba
 
 export async function isPonsbotWallet(address: string) {
   if (!isAddress(address)) return false;
+  if (address.toLowerCase() === PREVIEW_WALLET) return true;
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) return address.toLowerCase() === "0x0000000000000000000000000000000000000b07";
+  if (!url) return false;
   try {
     return Boolean(await new ConvexHttpClient(url).query(api.site.getWallet, { address }));
   } catch {
-    return address.toLowerCase() === "0x0000000000000000000000000000000000000b07";
+    return false;
   }
 }
 
 export async function getWalletHoldings(address: string): Promise<{ holdings: PublicHolding[]; available: boolean }> {
   if (!isAddress(address)) return { holdings: [], available: false };
-  if (address.toLowerCase() === "0x0000000000000000000000000000000000000b07") return { holdings: [
+  if (address.toLowerCase() === PREVIEW_WALLET) return { holdings: [
     { name: "Ether", symbol: "ETH", balance: "1.284" },
     { address: "0x0000000000000000000000000000000000000A11", name: "Ponsbot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png" },
     { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },

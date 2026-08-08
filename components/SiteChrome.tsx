@@ -4,7 +4,7 @@ import Link from "next/link";
 export function SiteHeader() {
   return <header className="site-header">
     <Link href="/" className="wordmark"><Image className="brand-logo" src="/ponsbot.png" alt="" width={42} height={42} priority /><span>Ponsbot</span></Link>
-    <nav><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer"><Image src="/x.png" alt="" width={16} height={16} /><span>X</span></a></nav>
+    <nav><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x.webp" alt="" width={20} height={20} /></a></nav>
   </header>;
 }
 

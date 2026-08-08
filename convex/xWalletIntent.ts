@@ -78,6 +78,7 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
       && (!command.website || text.includes(command.website))
       && (!command.twitter || text.includes(command.twitter))
       && (!command.telegram || text.includes(command.telegram))
+      && (!command.pairToken || identifierIsGrounded(text, command.pairToken))
       && (!command.devBuy || includesLoose(text, command.devBuy.amount));
   }
   return true;
@@ -169,7 +170,7 @@ const extractionInstructions: Record<WalletOperation, string> = {
   buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd","token":"ticker or address","slippageBps":250}. Convert an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   sell: `Return {"kind":"sell","amount":"decimal","unit":"token|percent","token":"ticker or address","slippageBps":250}. Convert all, everything, every last token, or the entire balance to 100 percent. Convert half to 50 percent. Convert explicit slippage percent to basis points.`,
   claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names it.`,
-  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, and devBuy {"amount":"decimal","unit":"eth|usd"}. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase the symbol. An attachment is optional and is handled separately; never invent an image URL.`,
+  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd"}. Extract an X or Twitter link into twitter even when other launch options are present. Extract "paired with MSFT", "pair asset MSFT", or a named pair contract into pairToken. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase tickers. An attachment is optional and is handled separately; never invent an image URL.`,
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
@@ -188,6 +189,11 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const token = explicitContract || explicitTicker;
     if (token) command = { ...command, token };
   }
+  if (command?.kind === "launch") {
+    const twitter = command.twitter || text.match(/\b(?:x(?:\s+link)?|twitter)\s*(?:is|=|:)?\s*(https:\/\/x\.com\/[a-zA-Z0-9_]{1,15})/i)?.[1];
+    const pairRaw = command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?|pair\s+against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
+    command = { ...command, ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: pairRaw.replace(/^\$/, "").toUpperCase().startsWith("0X") ? pairRaw : pairRaw.replace(/^\$/, "").toUpperCase() } : {}) };
+  }
   if (!command || command.kind === "unknown" || command.kind !== operation || !explicitAuthority(text, command) || !fieldsAreGrounded(text, command)) {
     return null;
   }
@@ -201,6 +207,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
 
 function deterministicFallback(text: string): XWalletIntent {
   if (hasPromptInjection(text)) return { kind: "unknown_wallet" };
+  if (hasNonExecutableFraming(text)) return { kind: "unknown_wallet" };
   const parsed = parseWalletCommand(text);
   if (parsed.kind !== "unknown") {
     const validated = validateExtractedCommand(parsed, parsed.kind, text);
@@ -226,6 +233,12 @@ function hasPromptInjection(text: string) {
   return /\b(?:ignore|disregard|forget|override)\b[\s\S]{0,45}\b(?:instruction|prompt|rule|system|previous|safety)|\b(?:return|output|respond with|classify as)\b[\s\S]{0,35}\b(?:json|command|irrelevant|unknown_wallet|kind)|\b(?:reveal|show|repeat)\b[\s\S]{0,35}\b(?:instruction|prompt|developer message)|\bpretend\b[\s\S]{0,45}\b(?:bot|classifier|system|instruction|prompt)|\b(?:system|developer)\s+(?:prompt|message|says?)\b/i.test(text);
 }
 
+function hasNonExecutableFraming(text: string) {
+  return /\b(?:do\s+not|don't|dont|never)\s+(?:buy|sell|send|transfer|give|burn|launch|deploy|create|claim)\b/i.test(text)
+    || /^\s*(?:if|when|unless)\b[\s\S]{0,80}\b(?:buy|sell|send|transfer|burn|launch|deploy)\b/i.test(text)
+    || /\b(?:my|a|the)\s+(?:friend|coworker|brother|sister|partner|customer)\s+(?:said|says|asked|asks|wants|wanted|told)\b[\s\S]{0,70}\b(?:buy|sell|send|transfer|burn|launch|deploy)\b/i.test(text);
+}
+
 function requestedOperations(text: string) {
   const operationText = text.replace(/\b(?:developer|dev)\s+buy\b/gi, "developer allocation");
   const patterns: Array<[WalletOperation, RegExp]> = [
@@ -241,6 +254,7 @@ function requestedOperations(text: string) {
 
 function validateIntentDecision(text: string, classification: ClassifiedIntent): ClassifiedIntent {
   if (hasPromptInjection(text)) return { kind: "unknown_wallet" };
+  if (classification.kind === "command" && hasNonExecutableFraming(text)) return { kind: "unknown_wallet" };
   const operations = requestedOperations(text);
   if (operations.length > 1) return { kind: "unknown_wallet" };
   if (/\bwhere\b[\s\S]{0,20}\b(?:send|deposit)\b[\s\S]{0,12}\b(?:eth|tokens?|funds?)\b/i.test(text)) {
@@ -249,6 +263,7 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
   if (/\b(?:what(?:'s|\s+is)|show|check|view|see|how\s+much)\b[\s\S]{0,30}\b(?:my\s+)?balance\b|\bhow\s+much\s+do\s+i\s+have\b/i.test(text)) {
     return { kind: "command", operation: "show_balance" };
   }
+  if (/\bwhat(?:'s|\s+is)\b[\s\S]{0,20}\b(?:sitting|held|inside)\b[\s\S]{0,20}\bmy\s+wallet\b/i.test(text)) return { kind: "command", operation: "show_balance" };
   if (/\b(?:i|we)\s+(?:bought|sold|sent|burned|launched|created|opened)\b/i.test(text) && !/\b(?:please|can you|could you|would you)\b/i.test(text)) {
     return { kind: "irrelevant" };
   }
@@ -295,7 +310,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean): Promi
     ? validateExtractedCommand(fallback, classification.operation, text)
     : null;
   if (command) return { kind: "command", command };
-  if (classification.operation === "show_balance" && /\b(?:balance|how\s+much\s+do\s+i\s+have)\b/i.test(text)) {
+  if (classification.operation === "show_balance" && /\b(?:balance|how\s+much\s+do\s+i\s+have|what(?:'s|\s+is)[\s\S]{0,20}(?:sitting|held|inside)[\s\S]{0,20}my\s+wallet)\b/i.test(text)) {
     return { kind: "command", command: { kind: "show_balance" } };
   }
   return { kind: "unknown_wallet" };

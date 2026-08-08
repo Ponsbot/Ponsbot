@@ -55,7 +55,7 @@ export default defineSchema({
   tokenLaunches: defineTable({
     requestId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), launchMode: v.literal("pons"),
     name: v.string(), symbol: v.string(), imageUri: v.string(), description: v.optional(v.string()), website: v.optional(v.string()),
-    twitter: v.optional(v.string()), telegram: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()),
+    twitter: v.optional(v.string()), telegram: v.optional(v.string()), pairToken: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()),
     poolAddress: v.optional(v.string()), positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
     createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"]).index("by_token_address", ["tokenAddress"]),

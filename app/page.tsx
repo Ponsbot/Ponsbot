@@ -20,10 +20,10 @@ export default async function Home() {
         <div className="hero-blob" />
         <Image src="/ponsbot.png" alt="Ponsbot character" width={660} height={660} priority />
         <div className="message-stack" aria-label="Example X posts">
-          <div className="message-bubble bubble-launch"><small>@Ponsbotfamily</small><strong>Launch Ponsbot ticker $PONSBOT</strong><span>Ready to launch on Pons V2 ✨</span></div>
-          <div className="message-bubble bubble-buy"><small>@Ponsbotfamily</small><strong>Buy $25 of SNDK</strong></div>
-          <div className="message-bubble bubble-send"><small>@Ponsbotfamily</small><strong>Send 10 SNDK to @friend</strong></div>
-          <div className="message-bubble bubble-pair"><small>@Ponsbotfamily</small><strong>Launch Daybreak ticker $DAY</strong><span>Website daybreak.xyz · Pair with MSFT</span></div>
+          <div className="message-bubble bubble-launch">@Ponsbotfamily Launch Ponsbot ticker $PONSBOT</div>
+          <div className="message-bubble bubble-buy">@Ponsbotfamily Buy $25 of $PONSBOT</div>
+          <div className="message-bubble bubble-send">@Ponsbotfamily Send 10 $PONSBOT to @friend</div>
+          <div className="message-bubble bubble-pair">@Ponsbotfamily Launch Ponsbot ticker $PONSBOT, website ponsbot.xyz, pair with MSFT</div>
         </div>
       </div>
     </section>
