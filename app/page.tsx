@@ -23,7 +23,7 @@ export default async function Home() {
           <div className="message-bubble bubble-launch">@Ponsbotfamily Launch Ponsbot ticker $PONSBOT</div>
           <div className="message-bubble bubble-buy">@Ponsbotfamily Buy $25 of $PONSBOT</div>
           <div className="message-bubble bubble-send">@Ponsbotfamily Send 10 $PONSBOT to @friend</div>
-          <div className="message-bubble bubble-pair">@Ponsbotfamily Launch Ponsbot ticker $PONSBOT, website ponsbot.xyz, pair with MSFT</div>
+          <div className="message-bubble bubble-pair">@Ponsbotfamily Launch Ponsbot ticker $PONSBOT, website ponsbot.family, pair with MSFT</div>
         </div>
       </div>
     </section>

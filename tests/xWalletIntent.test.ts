@@ -41,4 +41,26 @@ describe("deterministic X wallet replies", () => {
       expect(groundedCanonicalCommand(text)?.kind, `grounding: ${text}`).toBe(kind);
     }
   });
+
+  it("grounds normalized launch links from labeled bare values", () => {
+    const post = `Hey @ponsbot launch Ponsbot ticker $PONSBOT
+Website: ponsbot.family X: @Ponsbotfamily Dev buy $100`;
+    expect(groundedCanonicalCommand(post)).toEqual({
+      kind: "launch",
+      launchMode: "pons",
+      name: "Ponsbot",
+      symbol: "PONSBOT",
+      website: "https://ponsbot.family",
+      twitter: "https://x.com/Ponsbotfamily",
+      devBuy: { amount: "100", unit: "usd" },
+    });
+  });
+
+  it("supports explicit make-token wording and rejects unsafe ambiguities", () => {
+    expect(groundedCanonicalCommand("@Ponsbotfamily make a token named Robot Juice symbol BOT")).toMatchObject({
+      kind: "launch", name: "Robot Juice", symbol: "BOT",
+    });
+    expect(groundedCanonicalCommand("launch Secret Name ticker")).toBeNull();
+    expect(groundedCanonicalCommand("@Ponsbotfamily buy $25 of $SNDK CA 0xA11CE000000000000000000000000000000000499")).toBeNull();
+  });
 });

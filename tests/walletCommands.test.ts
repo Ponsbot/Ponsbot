@@ -37,37 +37,33 @@ describe("X wallet commands", () => {
   });
 
   it("parses optional Pons metadata", () => {
-    expect(parseWalletCommand('plant "night tuber" ticker NIGHT description "a quiet potato beneath the moon" website: https://night.example x: https://x.com/nightroot tg: https://t.me/nightroot')).toMatchObject({
+    expect(parseWalletCommand('launch "Ponsbot" ticker PONSBOT description "direct on X" website: https://ponsbot.family x: https://x.com/Ponsbotfamily')).toMatchObject({
       kind: "launch",
-      name: "night tuber",
-      symbol: "NIGHT",
-      description: "a quiet potato beneath the moon",
-      website: "https://night.example",
-      twitter: "https://x.com/nightroot",
-      telegram: "https://t.me/nightroot",
+      name: "Ponsbot",
+      symbol: "PONSBOT",
+      description: "direct on X",
+      website: "https://ponsbot.family",
+      twitter: "https://x.com/Ponsbotfamily",
     });
-    expect(parseWalletCommand('plant token named Night Tuber ticker NIGHT description "a quiet potato beneath the moon"')).toMatchObject({
+    expect(parseWalletCommand('launch token named Ponsbot ticker PONSBOT description "direct on X"')).toMatchObject({
       kind: "launch",
-      name: "Night Tuber",
-      description: "a quiet potato beneath the moon",
+      name: "Ponsbot",
+      description: "direct on X",
     });
   });
 
   it("parses flexibly arranged launch names and tickers", () => {
-    expect(parseWalletCommand("hey, please plant $SEED, the name is Potato Seed; thanks")).toMatchObject({
-      kind: "launch", name: "Potato Seed", symbol: "SEED",
+    expect(parseWalletCommand("deploy Ponsbot (PONSBOT)")).toMatchObject({
+      kind: "launch", name: "Ponsbot", symbol: "PONSBOT",
     });
-    expect(parseWalletCommand("deploy Potato Seed (SEED)")).toMatchObject({
-      kind: "launch", name: "Potato Seed", symbol: "SEED",
+    expect(parseWalletCommand("token name: Ponsbot / symbol: $PONSBOT / please launch it")).toMatchObject({
+      kind: "launch", name: "Ponsbot", symbol: "PONSBOT",
     });
-    expect(parseWalletCommand("token name: Potato Seed / symbol: $SEED / please launch it")).toMatchObject({
-      kind: "launch", name: "Potato Seed", symbol: "SEED",
+    expect(parseWalletCommand("launch Ponsbot with PONSBOT as the ticker")).toMatchObject({
+      kind: "launch", name: "Ponsbot", symbol: "PONSBOT",
     });
-    expect(parseWalletCommand("launch Potato Seed with SEED as the ticker")).toMatchObject({
-      kind: "launch", name: "Potato Seed", symbol: "SEED",
-    });
-    expect(parseWalletCommand("create a coin, ticker=$SEED; call it Potato Seed")).toMatchObject({
-      kind: "launch", name: "Potato Seed", symbol: "SEED",
+    expect(parseWalletCommand("create a coin, ticker=$PONSBOT; call it Ponsbot")).toMatchObject({
+      kind: "launch", name: "Ponsbot", symbol: "PONSBOT",
     });
   });
 

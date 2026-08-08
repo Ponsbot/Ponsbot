@@ -16,9 +16,9 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     wallet: "👛 Just ask for your wallet! I'll return its Robinhood Chain explorer link. It's connected to your X account and ready to receive ETH or supported tokens.",
     fund: "💰 Ask for your wallet, open the link, and send Robinhood Chain ETH or supported tokens to it. Keep a little ETH available for gas!",
     balance: "📊 Ask “what's my balance?” to see your nonzero ETH and known tokens. You can also name a ticker or contract to check one asset.",
-    send: "📤 Tell me the amount, asset, and destination wallet or X handle. Example: send 25 ROOT to @user. You can also send half, all, or a percentage!",
-    buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. Example: buy $20 of ROOT or sell half my ROOT. You can also choose your slippage.",
-    burn: "🔥 Say burn, the amount, and the ticker or contract. Example: burn 25 ROOT, burn $10 of ROOT, or burn half my ROOT.",
+    send: "📤 Tell me the amount, asset, and destination wallet or X handle. Example: send 25 PONSBOT to @user. You can also send half, all, or a percentage!",
+    buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. Example: buy $20 of PONSBOT or sell half my PONSBOT. You can also choose your slippage.",
+    burn: "🔥 Say burn, the amount, and the ticker or contract. Example: burn 25 PONSBOT, burn $10 of PONSBOT, or burn half my PONSBOT.",
     launch: "🚀 Ready to launch on Pons? Fund your wallet with ETH, then send the token name and ticker. Artwork, description, links, pair asset, and developer buy can be included too!",
     pairs: "🔗 Ask “what assets can I pair with?” and I'll check the Pons V2 factory for a fresh, verified list!",
     fees: "🛠️ Creator-fee claims aren't enabled in this local build yet, but they're on the workflow checklist.",
@@ -36,7 +36,7 @@ function explicitAuthority(text: string, command: WalletCommand) {
   if (command.kind === "buy") return /\b(?:buy|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\b(?:put|get\s+me)\s+\$?[0-9a-z][0-9a-z,.]*\b|\bsend\s+it\s*:|\bi\s+want\b[\s\S]{0,30}\bworth\s+of\b/i.test(text);
   if (command.kind === "sell") return /\b(?:sell|dump|cash\s+out|get\s+rid\s+of|unload|liquidate)\b/i.test(text);
   if (command.kind === "claim_fees") return /\bclaim\b/i.test(text);
-  if (command.kind === "launch") return /\b(?:launch|deploy|create|make\s+me\s+a\s+token|new\s+token)\b/i.test(text);
+  if (command.kind === "launch") return /\b(?:launch|deploy|create|make\s+(?:me\s+)?a\s+token|new\s+token)\b/i.test(text);
   return true;
 }
 
@@ -62,6 +62,30 @@ function identifierIsGrounded(text: string, value: string) {
   return new RegExp(`(?:^|[^a-zA-Z0-9])\\$?${escaped}(?=$|[^a-zA-Z0-9])`, "i").test(text);
 }
 
+function normalizedUrlIsGrounded(text: string, value: string, kind: "website" | "twitter") {
+  if (text.includes(value)) return true;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    if (kind === "twitter") {
+      if (!["x.com", "twitter.com"].includes(url.hostname.toLowerCase())) return false;
+      const handle = url.pathname.split("/").filter(Boolean)[0];
+      return Boolean(handle && new RegExp(`(?:^|[^a-zA-Z0-9_])@${handle}(?=$|[^a-zA-Z0-9_])`, "i").test(text));
+    }
+    const supplied = `${url.hostname.replace(/^www\./i, "")}${url.pathname.replace(/\/$/, "")}`;
+    const escaped = supplied.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(?:https?:\\/\\/)?(?:www\\.)?${escaped}(?=$|[\\s,;.)])`, "i").test(text);
+  } catch {
+    return false;
+  }
+}
+
+function hasConflictingTradeIdentifiers(text: string) {
+  const explicitTicker = /\$(?!\d)[A-Z][A-Z0-9]{1,11}\b/i.test(text);
+  const contractLike = /\b0x[a-fA-F0-9]{6,}\b/i.test(text);
+  return explicitTicker && contractLike && /\b(?:buy|sell|burn)\b/i.test(text);
+}
+
 function fieldsAreGrounded(text: string, command: WalletCommand) {
   if (command.kind === "send") {
     const amountGrounded = amountIsGrounded(text, command.amount)
@@ -82,9 +106,8 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
   if (command.kind === "launch") {
     return includesLoose(text, command.name) && identifierIsGrounded(text, command.symbol)
       && (!command.description || includesLoose(text, command.description))
-      && (!command.website || text.includes(command.website))
-      && (!command.twitter || text.includes(command.twitter))
-      && (!command.telegram || text.includes(command.telegram))
+      && (!command.website || normalizedUrlIsGrounded(text, command.website, "website"))
+      && (!command.twitter || normalizedUrlIsGrounded(text, command.twitter, "twitter"))
       && (!command.pairToken || identifierIsGrounded(text, command.pairToken))
       && (!command.devBuy || includesLoose(text, command.devBuy.amount));
   }
@@ -180,7 +203,7 @@ const extractionInstructions: Record<WalletOperation, string> = {
   buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd","token":"ticker or address","slippageBps":250}. Buy synonyms include purchase, grab, get me, gimme, ape into, swap into, put money into, spend on, compra, and achète. The token may be a ticker or an explicitly supplied 0x contract address labeled CA, contract, token address, or used directly. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   sell: `Return {"kind":"sell","amount":"decimal","unit":"token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. Convert all, everything, every last token, the entire position, bag, or balance to 100 percent; half and 1/2 to 50 percent; a quarter to 25 percent; and three quarters to 75 percent. Convert number words to decimals and explicit slippage percent to basis points.`,
   claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names it.`,
-  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd"}. Extract an X URL or @handle into twitter; convert an explicit X handle to https://x.com/handle. Prefix https:// to an explicitly labeled bare website domain. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", or a named pair contract into pairToken. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase tickers. An attachment is optional and is handled separately; never invent an image URL.`,
+  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd"}. Extract an X URL or @handle into twitter; convert an explicit X handle to https://x.com/handle. Prefix https:// to an explicitly labeled bare website domain. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", or a named pair contract into pairToken. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase tickers. An attachment is optional and is handled separately; never invent an image URL.`,
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
@@ -192,7 +215,18 @@ Remove commas from numeric strings. Preserve contract and recipient addresses ex
 }
 
 function validateExtractedCommand(value: unknown, operation: WalletOperation, text: string): WalletCommand | null {
-  let command = validateStructuredWalletCommand(value);
+  let normalizedValue = value;
+  if (operation === "launch" && value && typeof value === "object") {
+    const item = { ...(value as Record<string, unknown>) };
+    const labeledWebsite = text.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
+    const labeledXHandle = text.match(/\b(?:x|twitter)\s*(?:is|=|:)?\s*@([a-zA-Z0-9_]{1,15})\b/i)?.[1];
+    const website = typeof item.website === "string" ? item.website : labeledWebsite;
+    const twitter = typeof item.twitter === "string" ? item.twitter : labeledXHandle ? `@${labeledXHandle}` : undefined;
+    if (website && !/^https?:\/\//i.test(website)) item.website = `https://${website}`;
+    if (twitter?.startsWith("@")) item.twitter = `https://x.com/${twitter.slice(1)}`;
+    normalizedValue = item;
+  }
+  let command = validateStructuredWalletCommand(normalizedValue);
   if (command?.kind === "show_balance" && !command.token) {
     const explicitContract = text.match(/\b0x[a-fA-F0-9]{40}\b/)?.[0];
     const explicitTicker = text.match(/\b(?:my|for)\s+\$?([A-Z][A-Z0-9]{1,11})\s+(?:token\s+)?balance\b/i)?.[1];
@@ -207,11 +241,8 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
   if (!command || command.kind === "unknown" || command.kind !== operation || !explicitAuthority(text, command) || !fieldsAreGrounded(text, command)) {
     return null;
   }
-  if (command.kind === "launch") {
-    const canonicalName = command.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-    const canonicalSymbol = command.symbol.toLowerCase();
-    if (canonicalName === canonicalSymbol || canonicalName === `ticker ${canonicalSymbol}` || canonicalName === `symbol ${canonicalSymbol}`) return null;
-  }
+  if (hasConflictingTradeIdentifiers(text)) return null;
+  if (command.kind === "launch" && /^(?:ticker|symbol)$/i.test(command.symbol)) return null;
   return command;
 }
 
@@ -340,9 +371,7 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
   if (classification.kind === "command" && hasNonExecutableFraming(text)) return { kind: "unknown_wallet" };
   const operations = requestedOperations(text);
   if (operations.length > 1) return { kind: "unknown_wallet" };
-  const contracts = text.match(/\b0x[a-fA-F0-9]{40}\b/g) || [];
-  const explicitTicker = /\$(?!\d)[A-Z][A-Z0-9]{1,11}\b/i.test(text);
-  if (contracts.length === 1 && explicitTicker && /\b(?:buy|sell|burn)\b/i.test(text)) return { kind: "unknown_wallet" };
+  if (hasConflictingTradeIdentifiers(text)) return { kind: "unknown_wallet" };
   if (asksWhatIsInMyWallet(text)) {
     return { kind: "command", operation: "show_balance" };
   }

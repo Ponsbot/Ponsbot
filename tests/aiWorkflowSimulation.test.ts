@@ -240,5 +240,5 @@ describe.runIf(process.env.LIVE_AI_TESTS === "true")("live AI workflow simulatio
     console.log(`AI_SIM_SUMMARY=${JSON.stringify({ total: results.length, passed: results.length - failures.length, failed: failures.length })}`);
     if (failures.length) console.log(`AI_SIM_FAILURES=${JSON.stringify(failures)}`);
     expect(failures.length).toBe(0);
-  }, 300_000);
+  }, 600_000);
 });

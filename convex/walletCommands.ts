@@ -17,7 +17,6 @@ export type WalletCommand =
       description?: string;
       website?: string;
       twitter?: string;
-      telegram?: string;
       pairToken?: string;
       devBuy?: { amount: string; unit: "eth" | "usd" };
     }
@@ -76,7 +75,7 @@ function labeledUrl(text: string, labels: string) {
 
 function quotedField(text: string, label: string, maxLength: number) {
   const quoted = text.match(new RegExp(`\\b(?:${label})\\s*(?:is|=|:)?\\s*["“]([^"”]+)["”]`, "i"))?.[1];
-  const plain = text.match(new RegExp(`\\b(?:${label})\\s*(?:is|=|:)+\\s*([^;]+?)(?=\\s+\\b(?:website|site|x|twitter|telegram|tg)\\b\\s*(?:is|=|:)|\\s+\\bdev\\s*buy\\b|$)`, "i"))?.[1];
+  const plain = text.match(new RegExp(`\\b(?:${label})\\s*(?:is|=|:)+\\s*([^;]+?)(?=\\s+\\b(?:website|site|x|twitter)\\b\\s*(?:is|=|:)|\\s+\\bdev\\s*buy\\b|$)`, "i"))?.[1];
   const value = (quoted || plain || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   return value ? value.slice(0, maxLength) : undefined;
 }
@@ -101,7 +100,6 @@ function parseLaunch(text: string): WalletCommand | null {
   const description = quotedField(text, "description|desc", 280);
   const website = labeledUrl(text, "website|site");
   const twitter = labeledUrl(text, "x|twitter");
-  const telegram = labeledUrl(text, "telegram|tg");
   const pairToken = text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with|pair\s+against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
@@ -120,7 +118,6 @@ function parseLaunch(text: string): WalletCommand | null {
     ...(description ? { description } : {}),
     ...(website ? { website } : {}),
     ...(twitter ? { twitter } : {}),
-    ...(telegram ? { telegram } : {}),
     ...(pairToken ? { pairToken: tokenIdentifier(pairToken) } : {}),
     ...(usdBuy || leadingUsdBuy ? { devBuy: { amount: cleanAmount((usdBuy || leadingUsdBuy)![1]), unit: "usd" as const } }
       : parsedEthBuy ? { devBuy: { amount: cleanAmount(parsedEthBuy[1]), unit: "eth" as const } } : {}),
@@ -295,7 +292,6 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       ...(optionalText("description", 280) ? { description: optionalText("description", 280) } : {}),
       ...(optionalUrl("website") ? { website: optionalUrl("website") } : {}),
       ...(optionalUrl("twitter") ? { twitter: optionalUrl("twitter") } : {}),
-      ...(optionalUrl("telegram") ? { telegram: optionalUrl("telegram") } : {}),
       ...(pairToken ? { pairToken } : {}),
       ...(devBuy ? { devBuy } : {}),
     };

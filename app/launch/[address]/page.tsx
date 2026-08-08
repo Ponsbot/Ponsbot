@@ -2,10 +2,23 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
-import { explorerAddress, explorerToken, getLaunch, shortAddress } from "@/lib/site-data";
+import { explorerToken, getLaunch, shortAddress } from "@/lib/site-data";
 
 type Props = { params: Promise<{ address: string }> };
-export async function generateMetadata({ params }: Props): Promise<Metadata> { const launch = await getLaunch((await params).address); return { title: launch ? `${launch.name} ($${launch.symbol})` : "Launch" }; }
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const address = (await params).address;
+  const launch = await getLaunch(address);
+  if (!launch) return { title: "Launch", description: "This token is not a Ponsbot launch." };
+  const title = `${launch.name} ($${launch.symbol})`;
+  const description = launch.description || `${launch.name} ($${launch.symbol}) was launched through Ponsbot on Pons V2.`;
+  return {
+    title,
+    description,
+    alternates: { canonical: `/launch/${address}` },
+    openGraph: { title, description, url: `/launch/${address}`, type: "website", images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot — wallet, trading, and Pons V2 launches on X" }] },
+    twitter: { card: "summary_large_image", title, description, images: ["/ponsbot-banner.png"] },
+  };
+}
 
 export default async function LaunchPage({ params }: Props) {
   const launch = await getLaunch((await params).address);

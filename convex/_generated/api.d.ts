@@ -13,7 +13,6 @@ import type * as llm from "../llm.js";
 import type * as ponsV2 from "../ponsV2.js";
 import type * as site from "../site.js";
 import type * as walletCommands from "../walletCommands.js";
-import type * as walletFeaturePrompt from "../walletFeaturePrompt.js";
 import type * as wallets from "../wallets.js";
 import type * as xReplies from "../xReplies.js";
 import type * as xReplyPolicy from "../xReplyPolicy.js";
@@ -32,7 +31,6 @@ declare const fullApi: ApiFromModules<{
   ponsV2: typeof ponsV2;
   site: typeof site;
   walletCommands: typeof walletCommands;
-  walletFeaturePrompt: typeof walletFeaturePrompt;
   wallets: typeof wallets;
   xReplies: typeof xReplies;
   xReplyPolicy: typeof xReplyPolicy;

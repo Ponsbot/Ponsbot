@@ -9,6 +9,7 @@
 .brand-logo{width:42px;height:42px;border-radius:50%;object-fit:cover;object-position:center;background:var(--lime)}
 .x-nav-link{display:flex;align-items:center;gap:7px;font-weight:800;color:var(--ink)}
 .x-nav-link img{width:20px;height:20px;object-fit:contain}
+.header-ca{position:absolute;left:50%;transform:translateX(-50%);color:var(--muted);font:600 10px/1 ui-monospace,SFMono-Regular,Consolas,monospace;letter-spacing:.035em;white-space:nowrap}
 .home-hero h1{margin-top:0}
 .message-stack{position:absolute;inset:0;z-index:2;pointer-events:none}
 .message-stack .message-bubble{bottom:auto;width:min(300px,72%);padding:14px 16px}
@@ -23,6 +24,7 @@
 .command-grid article{padding:28px;border:1px solid #3b3d35;border-radius:19px;background:#20211c}
 .command-grid h3{margin:0 0 12px;font-size:28px;letter-spacing:-.04em}
 .command-grid p{margin:0 0 24px;color:#aeb1a6;line-height:1.55}
+.command-grid ul{margin:0 0 24px;padding-left:19px;color:#c4c7bd;font-size:14px;line-height:1.55}.command-grid li+li{margin-top:7px}
 .command-grid code{display:block;padding:14px 16px;border-radius:10px;background:#12130f;color:var(--lime);font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace}
 .launch-guide{display:grid;grid-template-columns:1fr 1fr;gap:70px;margin-top:100px;padding:70px;border-radius:24px;background:#f5f3eb;color:var(--ink)}
 .launch-guide .eyebrow{color:var(--green)}
@@ -34,4 +36,5 @@
 .launch-detail-list span{color:var(--muted);font-size:14px;line-height:1.5}
 .how-page .example-panel{margin-top:18px}
 @media(max-width:900px){.message-stack .bubble-buy{right:1%}.message-stack .bubble-send{right:2%}.launch-guide{grid-template-columns:1fr;gap:30px;padding:45px}.command-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:900px){.header-ca{display:none}}
 @media(max-width:600px){.site-header{padding-inline:16px}.wordmark span:last-child{display:none}.site-header nav{gap:13px;font-size:10px}.site-header nav a:nth-child(2){display:none}.x-nav-link span{display:none}.hero-visual{min-height:480px}.message-stack .message-bubble{width:230px;padding:11px 13px;font-size:11px}.message-stack .bubble-pair{top:2%;left:0}.message-stack .bubble-buy{top:22%;right:0}.message-stack .bubble-launch{top:63%;left:0}.message-stack .bubble-send{top:82%;right:0}.command-section{margin-top:70px;padding-top:65px}.command-grid{grid-template-columns:1fr}.launch-guide{margin-top:70px;padding:28px 22px}.launch-detail-list p{grid-template-columns:1fr;gap:7px}.brand-logo{width:38px;height:38px}}

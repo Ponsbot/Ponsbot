@@ -305,7 +305,7 @@ const launchRecordValidator = v.object({
   ownerXUserId: v.string(), launchMode: v.literal("pons"),
   name: v.string(), symbol: v.string(), imageUri: v.string(), devBuyWei: v.string(),
   description: v.optional(v.string()), website: v.optional(v.string()),
-  twitter: v.optional(v.string()), telegram: v.optional(v.string()),
+  twitter: v.optional(v.string()),
   pairToken: v.optional(v.string()),
   tokenAddress: v.optional(v.string()), poolAddress: v.optional(v.string()),
   positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
@@ -449,7 +449,7 @@ export const reconcileTransaction = internalAction({
         ownerXUserId: current.launch.ownerXUserId, launchMode: current.launch.launchMode,
         name: current.launch.name, symbol: current.launch.symbol, imageUri: current.launch.imageUri,
         description: current.launch.description, website: current.launch.website, twitter: current.launch.twitter,
-        telegram: current.launch.telegram, devBuyWei: result.valueWei || current.launch.devBuyWei,
+        devBuyWei: result.valueWei || current.launch.devBuyWei,
         tokenAddress: result.tokenAddress, poolAddress: result.poolAddress, positionId: result.positionId,
         devBuySucceeded: result.devBuySucceeded,
       } : undefined;
@@ -491,7 +491,6 @@ function safeFailure(error: unknown) {
   if (/0\.02627 ETH maximum|initial dev buy exceeds/i.test(message)) return "⚠️ That developer buy is above the current maximum of 0.02627 ETH.";
   if (/website must use https/i.test(message)) return "🔗 Please send a secure website link beginning with https://.";
   if (/twitter link uses an unsupported host/i.test(message)) return "🔗 Please use an x.com link for the X social field.";
-  if (/telegram link uses an unsupported host/i.test(message)) return "🔗 Please use a t.me link for the Telegram social field.";
   if (/disabled|not configured|unavailable/i.test(message)) {
     console.error("wallet_configuration_failure", { message });
     return "🛠️ The wallet service is taking a quick break. Please try again shortly!";
@@ -622,7 +621,7 @@ export const executeCommand = internalAction({
           ownerXUserId: args.xUserId, launchMode: command.launchMode, name: command.name,
           symbol: command.symbol, imageUri: String(operation.imageUri || ""),
           description: launchMetadata!.description, website: launchMetadata!.website,
-          twitter: launchMetadata!.twitter, telegram: launchMetadata!.telegram,
+          twitter: launchMetadata!.twitter,
           pairToken: String(operation.pairToken || ""),
           devBuyWei: result.valueWei || "0", tokenAddress: result.tokenAddress,
           poolAddress: result.poolAddress, positionId: result.positionId,
@@ -735,7 +734,6 @@ function resolveLaunchMetadata(command: Extract<WalletCommand, { kind: "launch" 
     description: command.description?.trim() || DEFAULT_LAUNCH_DESCRIPTION,
     website: optionalUrl(command.website || DEFAULT_LAUNCH_WEBSITE, "website"),
     twitter: optionalSocialUrl(command.twitter || fallbackTwitter, "twitter", ["x.com", "twitter.com"]),
-    telegram: optionalSocialUrl(command.telegram, "telegram", ["t.me", "telegram.me"]),
   };
 }
 

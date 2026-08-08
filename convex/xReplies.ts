@@ -309,7 +309,7 @@ export const retryInteraction = internalAction({
       await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: ok ? "completed" : "rejected", responsePostId, ...(!ok ? { safeError: reply } : {}) });
     } catch (error) {
       console.error("x_reply_retry_failed", { postId, message: error instanceof Error ? error.message : "unknown" });
-      await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId, safeError: "the root line failed before confirmation" });
+      await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId, safeError: "the reply workflow failed before confirmation" });
     }
   },
 });
@@ -410,7 +410,7 @@ export const pollMentions = internalAction({
           await ctx.runAction(internal.wallets.ensureWallet, { xUserId: user.id });
         } catch (error) {
           console.error("x_wallet_provisioning_failed", { postId: mention.id, message: error instanceof Error ? error.message : "unknown" });
-          await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the wallet root could not be prepared" });
+          await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the wallet request could not be prepared" });
           continue;
         }
         const rate = await ctx.runMutation(internal.xReplies.consumeReplyLimit, { xUserId: user.id });
@@ -457,7 +457,7 @@ export const pollMentions = internalAction({
           processed += 1;
         } catch (error) {
           console.error("x_reply_processing_failed", { postId: mention.id, message: error instanceof Error ? error.message : "unknown" });
-          await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the root line failed before confirmation" });
+          await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the reply workflow failed before confirmation" });
         }
       }
       await ctx.runMutation(internal.xReplies.updatePollState, { newestSeenPostId: newestFetchedPostId || state?.newestSeenPostId });

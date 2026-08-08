@@ -5,7 +5,23 @@ import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { explorerAddress, explorerToken, getWalletHoldings, isPonsbotWallet, shortAddress } from "@/lib/site-data";
 
 type Props = { params: Promise<{ address: string }> };
-export async function generateMetadata({ params }: Props): Promise<Metadata> { const address = (await params).address; return { title: isAddress(address) ? `${shortAddress(address)} wallet` : "Wallet" }; }
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const address = (await params).address;
+  const valid = isAddress(address);
+  const title = valid ? `${shortAddress(address)} wallet` : "Wallet";
+  const description = valid
+    ? `View the public Robinhood Chain holdings for the Ponsbot wallet ${shortAddress(address)}.`
+    : "This is not a valid Ponsbot wallet.";
+  return {
+    title,
+    description,
+    ...(valid ? {
+      alternates: { canonical: `/wallet/${address}` },
+      openGraph: { title, description, url: `/wallet/${address}`, type: "website" as const, images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot — wallet, trading, and Pons V2 launches on X" }] },
+      twitter: { card: "summary_large_image" as const, title, description, images: ["/ponsbot-banner.png"] },
+    } : {}),
+  };
+}
 
 export default async function WalletPage({ params }: Props) {
   const address = (await params).address;
