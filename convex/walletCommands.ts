@@ -102,7 +102,7 @@ function parseLaunch(text: string): WalletCommand | null {
   const website = labeledUrl(text, "website|site");
   const twitter = labeledUrl(text, "x|twitter");
   const telegram = labeledUrl(text, "telegram|tg");
-  const pairToken = text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?|pair\s+against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
+  const pairToken = text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with|pair\s+against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
   const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));
@@ -160,12 +160,12 @@ export function parseWalletCommand(raw: string): WalletCommand {
     return { kind: "sell", amount: cleanAmount(amount), unit: "token", token, slippageBps: slippage };
   }
   if (/\b(?:make|create|open|set\s*up|start)\b[\s\S]*\bwallet\b|\bnew wallet\b/i.test(text)) return { kind: "create_wallet" };
+  if (/\b(?:balance|holdings?|portfolio|what\s+tokens|what(?:'s|\s+is)\s+in\s+(?:the|my)\s+wallet|how\s+much.*(?:eth|token|coin|wallet)|do\s+i\s+have\s+any|combien\s+j['’]?ai)\b/i.test(text)) {
+    const token = text.match(/\b(?:of|for|much|any)\s+\$?([a-zA-Z0-9]{1,42})\b/i)?.[1];
+    return { kind: "show_balance", ...(token ? { token } : {}) };
+  }
   if (/\bwallet\b|\b(?:deposit|funding|receiving|receive)\s+address\b|\bmy\s+address\b|\baddress\s+(?:to|for)\s+(?:fund|deposit|receive)\b|\bwhere\b[\s\S]{0,40}\bsend\b[\s\S]{0,20}\beth\b/i.test(text)) {
     return { kind: "show_wallet" };
-  }
-  if (/\b(?:balance|how much.*(?:eth|token|coin)|funds)\b/i.test(text)) {
-    const token = text.match(/\b(?:of|for)\s+\$?([a-zA-Z0-9]{1,42})\b/i)?.[1];
-    return { kind: "show_balance", ...(token ? { token } : {}) };
   }
   const recipient = /\b(?:send|transfer|give)\b/i.test(text) ? recipientAddress || recipientHandle : undefined;
   if (recipient) {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { intentClassifierPrompt, parameterExtractorPrompt, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
   it("keeps every help and ambiguity response within X's limit", () => {
@@ -24,5 +25,20 @@ describe("deterministic X wallet replies", () => {
     expect(parameterExtractorPrompt("send", false)).toContain('"recipient"');
     expect(parameterExtractorPrompt("launch", true)).toContain('"symbol"');
     expect(parameterExtractorPrompt("launch", true)).toContain("Attached image present: yes");
+  });
+
+  it("normalizes approved trading slang into grounded commands", () => {
+    const examples = [
+      ["put $100 into SNDK @Ponsbotfamily", "buy"],
+      ["@Ponsbotfamily gimme $5 of SNDK", "buy"],
+      ["@Ponsbotfamily I want twenty dollars worth of SNDK", "buy"],
+      ["send it: $200 into SNDK @Ponsbotfamily", "buy"],
+      ["dump all my SNDK @Ponsbotfamily", "sell"],
+      ["@Ponsbotfamily get rid of 5.5 SNDK", "sell"],
+    ] as const;
+    for (const [text, kind] of examples) {
+      expect(parseWalletCommand(canonicalCommandText(text)).kind, text).toBe(kind);
+      expect(groundedCanonicalCommand(text)?.kind, `grounding: ${text}`).toBe(kind);
+    }
   });
 });
