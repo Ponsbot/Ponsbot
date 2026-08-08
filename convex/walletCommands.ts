@@ -81,19 +81,19 @@ function quotedField(text: string, label: string, maxLength: number) {
 }
 
 function parseLaunch(text: string): WalletCommand | null {
-  if (!/\b(?:plant|launch|create|deploy|sprout)\b/i.test(text)
-    || !/\b(?:token|coin|ticker|symbol|plant)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b|\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)/i.test(text)) return null;
+  if (!/\b(?:launch|create|deploy)\b/i.test(text)
+    || !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b|\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)/i.test(text)) return null;
   const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?([a-zA-Z0-9]{1,12})\b/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s*\)/)
     || text.match(/\$([a-zA-Z][a-zA-Z0-9]{0,11})\b/)
     || text.match(/\b(?:token|coin)\s+([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:called|named)\b/i);
   const quotedName = text.match(/\b(?:called|named|name)\s*(?:is|=|:)?\s*["“]([^"”]{1,48})["”]/i)?.[1]
-    || text.match(/\b(?:plant|launch|create|deploy|sprout)\s+(?:a\s+)?(?:token|coin)?\s*["“]([^"”]{1,48})["”]/i)?.[1];
+    || text.match(/\b(?:launch|create|deploy)\s+(?:a\s+)?(?:token|coin)?\s*["“]([^"”]{1,48})["”]/i)?.[1];
   const namedName = text.match(/\b(?:called|named|name|call\s+it)\s*(?:is|=|:)?\s*([^,;|/]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*[,;|/]|$)/i)?.[1];
-  const nameBeforeTicker = text.match(/\b(?:plant|launch|create|deploy|sprout)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s+(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[a-zA-Z0-9]{1,12}\b/i)?.[1];
-  const plantName = text.match(/\b(?:plant|launch|create|deploy|sprout)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s*(?:called|named)?\s*([^,;|/$()]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*\$[a-zA-Z]|\s*\(|\s*[,;|/]|$)/i)?.[1];
-  const name = (quotedName || namedName || nameBeforeTicker || plantName || "").trim().replace(/^(?:a|the)\s+/i, "").slice(0, 48);
+  const nameBeforeTicker = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s+(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[a-zA-Z0-9]{1,12}\b/i)?.[1];
+  const launchName = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s*(?:called|named)?\s*([^,;|/$()]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*\$[a-zA-Z]|\s*\(|\s*[,;|/]|$)/i)?.[1];
+  const name = (quotedName || namedName || nameBeforeTicker || launchName || "").trim().replace(/^(?:a|the)\s+/i, "").slice(0, 48);
   const symbol = cleanSymbol(symbolMatch?.[1] || "");
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
 
@@ -270,7 +270,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     return { kind, ...(token ? { token } : {}) };
   }
   if (kind === "launch") {
-    const name = typeof item.name === "string" ? item.name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 48) : "";
+    const name = typeof item.name === "string" ? item.name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().replace(/^["'“”]+|["'“”,;:]+$/g, "").trim().slice(0, 48) : "";
     const symbol = typeof item.symbol === "string" ? cleanSymbol(item.symbol) : "";
     if (!name || !symbol) return null;
     const optionalText = (key: string, max: number) => typeof item[key] === "string" && item[key] ? String(item[key]).slice(0, max) : undefined;

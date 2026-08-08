@@ -1,15 +1,16 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export function SiteHeader() {
   return <header className="site-header">
-    <Link href="/" className="wordmark"><span className="mark">P</span><span>Ponsbot</span></Link>
-    <nav><Link href="/how-it-works">How it works</Link><Link href="/#launches">Launches</Link><a href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer">X ↗</a></nav>
+    <Link href="/" className="wordmark"><Image className="brand-logo" src="/ponsbot.png" alt="" width={42} height={42} priority /><span>Ponsbot</span></Link>
+    <nav><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer"><Image src="/x.png" alt="" width={16} height={16} /><span>X</span></a></nav>
   </header>;
 }
 
 export function SiteFooter() {
   return <footer className="site-footer">
-    <div><Link href="/" className="wordmark"><span className="mark">P</span><span>Ponsbot</span></Link><p>Wallet and launch tools for Robinhood Chain, delivered through X replies.</p></div>
+    <div><Link href="/" className="wordmark"><Image className="brand-logo" src="/ponsbot.png" alt="" width={42} height={42} /><span>Ponsbot</span></Link><p>Wallet and launch tools for Robinhood Chain, delivered through X replies.</p></div>
     <div><strong>Explore</strong><Link href="/how-it-works">How it works</Link><Link href="/#launches">Launches</Link><a href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer">@Ponsbotfamily</a></div>
     <div><strong>Notice</strong><p>Independent interface. Not operated or endorsed by Pons or Robinhood.</p></div>
   </footer>;
