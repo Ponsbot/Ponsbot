@@ -33,6 +33,11 @@ export default defineSchema({
     status: v.union(v.literal("active"), v.literal("frozen")), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_owner_x_user_id", ["ownerXUserId"]).index("by_address", ["address"]),
 
+  walletHoldingSnapshots: defineTable({
+    walletAddress: v.string(), tokenAddress: v.optional(v.string()), name: v.string(), symbol: v.string(),
+    displayBalance: v.string(), iconUrl: v.optional(v.string()), updatedAt: v.number(),
+  }).index("by_wallet_address", ["walletAddress"]),
+
   walletRequests: defineTable({
     requestId: v.string(), sourcePostId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), kind: v.string(),
     status: v.union(v.literal("accepted"), v.literal("simulating"), v.literal("prepared"), v.literal("broadcast"), v.literal("confirmed"), v.literal("rejected"), v.literal("failed")),

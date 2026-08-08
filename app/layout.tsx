@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ponsbot — Robinhood Chain wallet & launch bot",
-  description: "Create a Robinhood Chain wallet and launch through Pons from an X reply.",
+  title: { default: "Ponsbot", template: "%s · Ponsbot" },
+  description: "Create a Robinhood Chain wallet, view holdings, and launch on Pons V2 through X replies.",
   icons: { icon: "/ponsbot.png", apple: "/ponsbot.png" },
 };
 

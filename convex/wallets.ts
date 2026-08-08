@@ -468,6 +468,11 @@ function isPremium(subscriptionType?: string) {
   return subscriptionType === "Premium" || subscriptionType === "PremiumPlus";
 }
 
+function walletPageUrl(address: string) {
+  const site = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
+  return site ? `${site}/wallet/${address}` : addressUrl(address);
+}
+
 function safeFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "wallet request failed";
   if (/ETH transfer amount plus gas exceeds/i.test(message)) return "❌ There isn't enough ETH for the transfer plus gas. Add a little ETH and try again!";
@@ -555,7 +560,7 @@ export const executeCommand = internalAction({
     }
     if (!wallet || wallet.status !== "active") return { ok: false, message: "🔒 This wallet isn't available right now. Please try again shortly." };
     if (command.kind === "create_wallet" || command.kind === "show_wallet") {
-      return { ok: true, message: `👛 Your Robinhood Chain wallet is ready!\nYour wallet: ${addressUrl(wallet.address)}` };
+      return { ok: true, message: `👛 Your Robinhood Chain wallet is ready!\nYour wallet: ${walletPageUrl(wallet.address)}` };
     }
     if (command.kind === "show_balance") {
       try {
@@ -564,7 +569,7 @@ export const executeCommand = internalAction({
           expectedAddress: wallet.address, ownerReference: `x:${args.xUserId}`,
           ...(command.token ? { token: command.token } : {}),
         });
-        return { ok: true, message: command.token ? `📊 ${command.token} balance: ${balance.display}` : `📊 Here's your wallet balance:\n${balance.display}` };
+        return { ok: true, message: command.token ? `📊 ${command.token} balance: ${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` : `📊 Here's your wallet balance:\n${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` };
       } catch (error) {
         return { ok: false, message: safeFailure(error) };
       }

@@ -8,22 +8,16 @@
  * @module
  */
 
-import type * as ai from "../ai.js";
-import type * as automation from "../automation.js";
 import type * as crons from "../crons.js";
-import type * as data from "../data.js";
-import type * as generatedContent from "../generatedContent.js";
-import type * as queries from "../queries.js";
-import type * as seed from "../seed.js";
-import type * as telegram from "../telegram.js";
-import type * as terminalSupport from "../terminalSupport.js";
+import type * as llm from "../llm.js";
+import type * as ponsV2 from "../ponsV2.js";
+import type * as site from "../site.js";
 import type * as walletCommands from "../walletCommands.js";
 import type * as walletFeaturePrompt from "../walletFeaturePrompt.js";
 import type * as wallets from "../wallets.js";
-import type * as workKinds from "../workKinds.js";
-import type * as x from "../x.js";
 import type * as xReplies from "../xReplies.js";
 import type * as xReplyPolicy from "../xReplyPolicy.js";
+import type * as xText from "../xText.js";
 import type * as xWalletIntent from "../xWalletIntent.js";
 
 import type {
@@ -33,22 +27,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  ai: typeof ai;
-  automation: typeof automation;
   crons: typeof crons;
-  data: typeof data;
-  generatedContent: typeof generatedContent;
-  queries: typeof queries;
-  seed: typeof seed;
-  telegram: typeof telegram;
-  terminalSupport: typeof terminalSupport;
+  llm: typeof llm;
+  ponsV2: typeof ponsV2;
+  site: typeof site;
   walletCommands: typeof walletCommands;
   walletFeaturePrompt: typeof walletFeaturePrompt;
   wallets: typeof wallets;
-  workKinds: typeof workKinds;
-  x: typeof x;
   xReplies: typeof xReplies;
   xReplyPolicy: typeof xReplyPolicy;
+  xText: typeof xText;
   xWalletIntent: typeof xWalletIntent;
 }>;
 
