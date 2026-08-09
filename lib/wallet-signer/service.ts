@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { CdpClient } from "@coinbase/cdp-sdk";
-import { createPublicClient, decodeEventLog, encodeFunctionData, encodePacked, formatEther, formatUnits, http, keccak256, parseAbi, parseEther, parseSignature, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, zeroAddress, type Address, type Hex } from "viem";
+import { createPublicClient, decodeEventLog, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, http, keccak256, parseAbi, parseAbiParameters, parseEther, parseSignature, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
 import { checkedUsdToEthWei, ethUsdPrice } from "./pricing";
 
@@ -11,6 +11,7 @@ const tokenAbi = parseAbi([
   "function name() view returns (string)",
   "function nonces(address owner) view returns (uint256)",
   "function allowance(address owner,address spender) view returns (uint256)",
+  "function approve(address spender,uint256 amount) returns (bool)",
   "function transfer(address recipient,uint256 amount) returns (bool)",
 ]);
 const routerAbi = parseAbi([
@@ -29,9 +30,21 @@ const ponsFactoryAbi = parseAbi([
   "function launchFee() view returns (uint256)",
   "function launchToken((string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials,address creatorFeeRecipient,uint16 creatorTaxBps,bool buybackEnabled,bytes32 expectedEconomics,bytes32 salt) params,uint256 launchConfigId,address pairToken,address[] snipeTaxExemptions) payable returns (address token,address curve)",
   "event TokenLaunched(address indexed token,address indexed curve,address indexed deployer,address pairToken,uint256 launchConfigId,uint256 graduationThreshold)",
+  "function getLaunchedToken(address token) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists) launched)",
+  "function memeHook() view returns (address)",
 ]);
+const ponsCurveAbi = parseAbi([
+  "function buy(uint256 quoteIn,uint256 minTokensOut,address recipient) payable returns (uint256 tokensOut)",
+  "function sell(uint256 tokensIn,uint256 minQuoteOut,address recipient) returns (uint256 quoteOut)",
+]);
+const v4QuoterAbi = parseAbi([
+  "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)",
+]);
+const universalRouterAbi = parseAbi(["function execute(bytes commands,bytes[] inputs,uint256 deadline) payable"]);
+const permit2Abi = parseAbi(["function allowance(address owner,address token,address spender) view returns (uint160 amount,uint48 expiration,uint48 nonce)"]);
 const ponsRouterAbi = parseAbi([
   "function launchAndBuy((string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials,address creatorFeeRecipient,uint16 creatorTaxBps,bool buybackEnabled,bytes32 expectedEconomics,bytes32 salt) params,uint256 launchConfigId,address pairToken,uint256 quoteIn,uint256 minTokensOut,address recipient,address[] snipeTaxExemptions) payable returns (address token,address curve,uint256 tokensOut)",
+  "event Launched(address indexed token,address indexed curve,address indexed recipient,address launcher,uint256 quoteSpent,uint256 tokensReceived)",
 ]);
 const BUILTIN_TOKENS = [
   "0xB90A19fF0Af67f7779afF50A882A9CfF42446400", "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC",
@@ -45,9 +58,14 @@ const SWAP_QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7";
 const WETH = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
 const PONS_FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e";
 const PONS_ROUTER = "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948";
+const V4_QUOTER = "0x8dc178efb8111bb0973dd9d722ebeff267c98f94";
+const UNIVERSAL_ROUTER = "0x8876789976decbfcbbbe364623c63652db8c0904";
+const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const DEAD = "0x000000000000000000000000000000000000dEaD";
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const V3_FEES = [100, 500, 3_000, 10_000] as const;
+const ROUTE_CACHE_MS = 60_000;
+const routeCache = new Map<string, { path: Hex; expiresAt: number }>();
 let cdpClient: CdpClient | undefined;
 
 function cdp() {
@@ -93,22 +111,23 @@ export async function provisionWallet(ownerReference: string): Promise<{ walletR
   return { walletRef: account.address, address: account.address };
 }
 
-export async function walletBalance(address: `0x${string}`, token?: string): Promise<{ display: string }> {
+export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string }> {
   const client = rpcClient();
   if (!token || /^eth$/i.test(token)) {
     const eth = formatEther(await client.getBalance({ address }));
     if (token) return { display: `${trimDecimal(eth)} ETH` };
     const holdings = [`${trimDecimal(eth)} ETH`];
-    for (const tokenAddress of candidateTokens()) {
+    const tokenHoldings = await Promise.all([...new Set([...candidateTokens(), ...knownTokens].map((value) => value.toLowerCase()))].map(async (tokenAddress) => {
       try {
         const [balance, decimals, symbol] = await Promise.all([
-          client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
-          client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "decimals" }),
-          client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "symbol" }),
+          client.readContract({ address: tokenAddress as Address, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
+          client.readContract({ address: tokenAddress as Address, abi: tokenAbi, functionName: "decimals" }),
+          client.readContract({ address: tokenAddress as Address, abi: tokenAbi, functionName: "symbol" }),
         ]);
-        if (balance > 0n) holdings.push(`${trimDecimal(formatUnits(balance, decimals))} ${symbol}`);
-      } catch { /* Ignore a misconfigured optional candidate. */ }
-    }
+        return balance > 0n ? `${trimDecimal(formatUnits(balance, decimals))} ${symbol}` : undefined;
+      } catch { return undefined; }
+    }));
+    holdings.push(...tokenHoldings.filter((value): value is string => Boolean(value)));
     return { display: holdings.join("\n") };
   }
   const normalized = token.replace(/^\$/, "");
@@ -152,6 +171,52 @@ async function resolveToken(identifier: string) {
   throw new Error("token lookup failed; use an allowlisted ticker or contract address");
 }
 
+async function resolveActivePonsCurve(token: Address) {
+  try {
+    const launched = await rpcClient().readContract({
+      address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token],
+    });
+    if (!launched.exists) return undefined;
+    return launched;
+  } catch {
+    return undefined;
+  }
+}
+
+type V4PoolKey = { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address };
+
+function encodeV4ExactInput(poolKey: V4PoolKey, zeroForOne: boolean, amountIn: bigint, minimum: bigint) {
+  const swap = encodeAbiParameters(
+    parseAbiParameters("((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 amountIn,uint128 amountOutMinimum,uint256 minHopPriceX36,bytes hookData)"),
+    [{ poolKey, zeroForOne, amountIn, amountOutMinimum: minimum, minHopPriceX36: 0n, hookData: "0x" }],
+  );
+  const output = zeroForOne ? poolKey.currency1 : poolKey.currency0;
+  const input = zeroForOne ? poolKey.currency0 : poolKey.currency1;
+  const takeAll = encodeAbiParameters(parseAbiParameters("address currency,uint256 minAmount"), [output, minimum]);
+  const settleAll = encodeAbiParameters(parseAbiParameters("address currency,uint256 maxAmount"), [input, amountIn]);
+  return encodeAbiParameters(parseAbiParameters("bytes actions,bytes[] params"), ["0x060f0c", [swap, takeAll, settleAll]]);
+}
+
+async function prepareGraduatedPonsV4Buy(request: ExecutionRequest, owner: Address, token: Address, launched: {
+  pairToken: Address; poolFee: number; tickSpacing: number;
+}, value: bigint, slippageBps: number) {
+  if (launched.pairToken !== zeroAddress) throw new Error("this graduated Pons V2 token trades against its paired asset, not ETH");
+  const hook = await rpcClient().readContract({ address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "memeHook" });
+  const currency0 = zeroAddress;
+  const currency1 = token;
+  const poolKey = { currency0, currency1, fee: launched.poolFee, tickSpacing: launched.tickSpacing, hooks: hook };
+  const zeroForOne = true;
+  const quote = await rpcClient().simulateContract({
+    address: V4_QUOTER, abi: v4QuoterAbi, functionName: "quoteExactInputSingle",
+    args: [{ poolKey, zeroForOne, exactAmount: value, hookData: "0x" }],
+  });
+  const minimum = quote.result[0] * BigInt(10_000 - slippageBps) / 10_000n;
+  const v4Input = encodeV4ExactInput(poolKey, zeroForOne, value, minimum);
+  const deadline = BigInt(Math.floor(Date.now() / 1000) + 10 * 60);
+  const data = encodeFunctionData({ abi: universalRouterAbi, functionName: "execute", args: ["0x10", [v4Input], deadline] });
+  return prepareSigned(request, UNIVERSAL_ROUTER, data, value);
+}
+
 async function bestV3Route(tokenIn: Address, tokenOut: Address, quoter: Address, amountIn: bigint) {
   const candidates: Hex[] = [];
   for (const fee of V3_FEES) candidates.push(encodePacked(["address", "uint24", "address"], [tokenIn, fee, tokenOut]));
@@ -163,16 +228,25 @@ async function bestV3Route(tokenIn: Address, tokenOut: Address, quoter: Address,
       ));
     }
   }
-  let best: { path: Hex; amountOut: bigint } | undefined;
-  for (const path of candidates) {
-    try {
-      const result = await rpcClient().simulateContract({
-        address: quoter, abi: quoterAbi, functionName: "quoteExactInput", args: [path, amountIn],
-      });
-      if (result.result[0] > 0n && (!best || result.result[0] > best.amountOut)) best = { path, amountOut: result.result[0] };
-    } catch { /* Missing or unusable route. */ }
+  const cacheKey = `${tokenIn.toLowerCase()}:${tokenOut.toLowerCase()}`;
+  const cached = routeCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) candidates.unshift(cached.path);
+  const uniqueCandidates = [...new Set(candidates)];
+  const quoted: Array<{ path: Hex; amountOut: bigint } | undefined> = [];
+  for (let offset = 0; offset < uniqueCandidates.length; offset += 5) {
+    quoted.push(...await Promise.all(uniqueCandidates.slice(offset, offset + 5).map(async (path) => {
+      try {
+        const result = await rpcClient().simulateContract({
+          address: quoter, abi: quoterAbi, functionName: "quoteExactInput", args: [path, amountIn],
+        });
+        return result.result[0] > 0n ? { path, amountOut: result.result[0] } : undefined;
+      } catch { return undefined; }
+    })));
   }
+  const best = quoted.filter((item): item is { path: Hex; amountOut: bigint } => Boolean(item))
+    .reduce<{ path: Hex; amountOut: bigint } | undefined>((current, item) => !current || item.amountOut > current.amountOut ? item : current, undefined);
   if (!best) throw new Error("quote returned no output");
+  routeCache.set(cacheKey, { path: best.path, expiresAt: Date.now() + ROUTE_CACHE_MS });
   return best;
 }
 
@@ -217,9 +291,75 @@ async function prepareSigned(request: ExecutionRequest, to: Address, data: Hex, 
     address: account.address, transaction: serializeTransaction(transaction), idempotencyKey: request.idempotencyKey,
   });
   return {
-    transactionHash: keccak256(signature), status: "prepared" as const,
+    transactionHash: keccak256(signature), status: "prepared" as const, toAddress: to,
     signedTransaction: signature, valueWei: value.toString(),
   };
+}
+
+async function approveAndWait(request: ExecutionRequest, token: Address, spender: Address, suffix: string) {
+  const data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [spender, 2n ** 256n - 1n] });
+  const prepared = await prepareSigned({ ...request, idempotencyKey: `${request.idempotencyKey}:${suffix}` }, token, data, 0n);
+  const client = rpcClient();
+  const hash = await client.sendRawTransaction({ serializedTransaction: prepared.signedTransaction as Hex });
+  if (hash.toLowerCase() !== prepared.transactionHash.toLowerCase()) throw new Error("approval broadcast returned an unexpected transaction hash");
+  const receipt = await client.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 120_000 });
+  if (receipt.status !== "success") throw new Error("token approval reverted");
+  return hash;
+}
+
+async function prepareGraduatedPonsV4Sell(request: ExecutionRequest, owner: Address, token: Address, launched: {
+  pairToken: Address; poolFee: number; tickSpacing: number;
+}, amount: bigint, slippageBps: number) {
+  const client = rpcClient();
+  let approvalTransactionHash: Hex | undefined;
+  const tokenAllowance = await client.readContract({ address: token, abi: tokenAbi, functionName: "allowance", args: [owner, PERMIT2] });
+  if (tokenAllowance < amount) {
+    approvalTransactionHash = await approveAndWait(request, token, PERMIT2, "permit2-approval");
+  }
+  const hook = await client.readContract({ address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "memeHook" });
+  const pair = launched.pairToken;
+  const tokenIsCurrency0 = BigInt(token) < BigInt(pair);
+  const poolKey = {
+    currency0: tokenIsCurrency0 ? token : pair,
+    currency1: tokenIsCurrency0 ? pair : token,
+    fee: launched.poolFee, tickSpacing: launched.tickSpacing, hooks: hook,
+  };
+  const zeroForOne = tokenIsCurrency0;
+  const quote = await client.simulateContract({
+    address: V4_QUOTER, abi: v4QuoterAbi, functionName: "quoteExactInputSingle",
+    args: [{ poolKey, zeroForOne, exactAmount: amount, hookData: "0x" }],
+  });
+  const minimum = quote.result[0] * BigInt(10_000 - slippageBps) / 10_000n;
+  const [, , nonce] = await client.readContract({ address: PERMIT2, abi: permit2Abi, functionName: "allowance", args: [owner, token, UNIVERSAL_ROUTER] });
+  const now = Math.floor(Date.now() / 1000);
+  const permit = {
+    details: { token, amount, expiration: now + 30 * 24 * 60 * 60, nonce },
+    spender: UNIVERSAL_ROUTER as Address, sigDeadline: BigInt(now + 10 * 60),
+  };
+  const account = await cdp().evm.getOrCreateAccount({ name: accountName(request.ownerReference) });
+  const signature = await account.signTypedData({
+    domain: { name: "Permit2", chainId: ROBINHOOD_CHAIN_ID, verifyingContract: PERMIT2 },
+    types: {
+      PermitDetails: [
+        { name: "token", type: "address" }, { name: "amount", type: "uint160" },
+        { name: "expiration", type: "uint48" }, { name: "nonce", type: "uint48" },
+      ],
+      PermitSingle: [
+        { name: "details", type: "PermitDetails" }, { name: "spender", type: "address" },
+        { name: "sigDeadline", type: "uint256" },
+      ],
+    },
+    primaryType: "PermitSingle",
+    message: permit,
+  });
+  const permitInput = encodeAbiParameters(
+    parseAbiParameters("((address token,uint160 amount,uint48 expiration,uint48 nonce) details,address spender,uint256 sigDeadline) permit,bytes signature"),
+    [permit, signature],
+  );
+  const v4Input = encodeV4ExactInput(poolKey, zeroForOne, amount, minimum);
+  const deadline = BigInt(now + 10 * 60);
+  const data = encodeFunctionData({ abi: universalRouterAbi, functionName: "execute", args: ["0x0a10", [permitInput, v4Input], deadline] });
+  return { ...(await prepareSigned(request, UNIVERSAL_ROUTER, data, 0n)), approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? token : undefined };
 }
 
 function launchSalt(request: ExecutionRequest) {
@@ -236,13 +376,14 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
   const pairToken = operation.pairToken as Address;
   const launchConfigId = BigInt(operation.launchConfigId);
   const owner = request.expectedFrom as Address;
+  let approvalTransactionHash: Hex | undefined;
   const [expectedEconomics, launchFee] = await Promise.all([
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "previewLaunchEconomics", args: [launchConfigId, pairToken] }),
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "launchFee" }),
   ]);
   const params = {
     name: operation.name, symbol: operation.symbol, logo: operation.imageUri, description: operation.description,
-    socials: { twitter: operation.socials.twitter, telegram: "", discord: "", website: operation.socials.website, farcaster: "" },
+    socials: { twitter: operation.socials.twitter, telegram: operation.socials.telegram, discord: "", website: operation.socials.website, farcaster: "" },
     creatorFeeRecipient: owner, creatorTaxBps: 0, buybackEnabled: false,
     expectedEconomics, salt: launchSalt(request),
   } as const;
@@ -255,12 +396,26 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     const prepared = await prepareSigned(request, factory, data, launchFee);
     return { ...prepared, tokenAddress: simulation.result[0], poolAddress: simulation.result[1], devBuySucceeded: false };
   }
-  if (pairToken !== zeroAddress) throw new Error("initial launch buys currently require the ETH pair");
   if (!operation.devBuy) throw new Error("initial launch buy amount is missing");
-  const quoteIn = operation.devBuy.unit === "usd" ? await checkedUsdToEthWei(operation.devBuy.amount) : parseEther(operation.devBuy.amount);
-  if (quoteIn > parseEther("0.02627")) throw new Error("initial dev buy exceeds the 0.02627 ETH maximum");
-  await enforceEthLimit(quoteIn);
-  const value = launchFee + quoteIn;
+  const nativePair = pairToken === zeroAddress;
+  let quoteIn: bigint;
+  if (nativePair) {
+    if (operation.devBuy.unit === "pair") throw new Error("an ETH-paired developer buy must use ETH or USD");
+    quoteIn = operation.devBuy.unit === "usd" ? await checkedUsdToEthWei(operation.devBuy.amount) : parseEther(operation.devBuy.amount);
+    if (quoteIn > parseEther("0.02627")) throw new Error("initial dev buy exceeds the 0.02627 ETH maximum");
+    await enforceEthLimit(quoteIn);
+  } else {
+    if (operation.devBuy.unit !== "pair") throw new Error("a non-ETH developer buy must specify an amount of the paired asset");
+    const [decimals, allowance] = await Promise.all([
+      client.readContract({ address: pairToken, abi: tokenAbi, functionName: "decimals" }),
+      client.readContract({ address: pairToken, abi: tokenAbi, functionName: "allowance", args: [owner, router] }),
+    ]);
+    quoteIn = parseUnits(operation.devBuy.amount, decimals);
+    if (allowance < quoteIn) {
+      approvalTransactionHash = await approveAndWait(request, pairToken, router, "pair-approval");
+    }
+  }
+  const value = launchFee + (nativePair ? quoteIn : 0n);
   const first = await client.simulateContract({
     account: owner, address: router, abi: ponsRouterAbi, functionName: "launchAndBuy",
     args: [params, launchConfigId, pairToken, quoteIn, 0n, owner, []], value,
@@ -271,7 +426,7 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     args: [params, launchConfigId, pairToken, quoteIn, minimum, owner, []],
   });
   const prepared = await prepareSigned(request, router, data, value);
-  return { ...prepared, tokenAddress: first.result[0], poolAddress: first.result[1], devBuySucceeded: true };
+  return { ...prepared, tokenAddress: first.result[0], poolAddress: first.result[1], devBuySucceeded: true, approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? pairToken : undefined };
 }
 
 export async function executeTransaction(request: ExecutionRequest) {
@@ -312,6 +467,18 @@ export async function executeTransaction(request: ExecutionRequest) {
     const resolved = await resolveToken(operation.token);
     const value = operation.unit === "usd" ? await checkedUsdToEthWei(operation.amount) : parseEther(operation.amount);
     await enforceEthLimit(value);
+    const pons = await resolveActivePonsCurve(resolved.address);
+    if (pons) {
+      if (pons.phase === 2) return prepareGraduatedPonsV4Buy(request, owner, resolved.address, pons, value, operation.slippageBps);
+      if (pons.phase !== 0) throw new Error("this Pons V2 token is still finalizing its Uniswap V4 pool");
+      if (pons.pairToken !== zeroAddress) throw new Error("this Pons V2 curve buys with its paired asset, not ETH");
+      const simulation = await rpcClient().simulateContract({
+        account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "buy", args: [value, 0n, owner], value,
+      });
+      const minimum = simulation.result * BigInt(10_000 - operation.slippageBps) / 10_000n;
+      const data = encodeFunctionData({ abi: ponsCurveAbi, functionName: "buy", args: [value, minimum, owner] });
+      return prepareSigned(request, pons.curve, data, value);
+    }
     const quote = await bestV3Route(operation.wethAddress as Address, resolved.address, operation.quoterAddress as Address, value);
     const minimum = quote.amountOut * BigInt(10_000 - operation.slippageBps) / 10_000n;
     const data = encodeFunctionData({
@@ -324,6 +491,22 @@ export async function executeTransaction(request: ExecutionRequest) {
     const resolved = await resolveToken(operation.token);
     const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit);
     const client = rpcClient();
+    const pons = await resolveActivePonsCurve(resolved.address);
+    if (pons) {
+      if (pons.phase === 2) return prepareGraduatedPonsV4Sell(request, owner, resolved.address, pons, amount, operation.slippageBps);
+      if (pons.phase !== 0) throw new Error("this Pons V2 token is still finalizing its Uniswap V4 pool");
+      const allowance = await client.readContract({ address: resolved.address, abi: tokenAbi, functionName: "allowance", args: [owner, pons.curve] });
+      let approvalTransactionHash: Hex | undefined;
+      if (allowance < amount) {
+        approvalTransactionHash = await approveAndWait(request, resolved.address, pons.curve, "curve-approval");
+      }
+      const simulation = await client.simulateContract({
+        account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "sell", args: [amount, 0n, owner],
+      });
+      const minimum = simulation.result * BigInt(10_000 - operation.slippageBps) / 10_000n;
+      const data = encodeFunctionData({ abi: ponsCurveAbi, functionName: "sell", args: [amount, minimum, owner] });
+      return { ...(await prepareSigned(request, pons.curve, data, 0n)), approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? resolved.address : undefined };
+    }
     const allowance = await client.readContract({ address: resolved.address, abi: tokenAbi, functionName: "allowance", args: [owner, operation.routerAddress as Address] });
     const quote = await bestV3Route(resolved.address, operation.wethAddress as Address, operation.quoterAddress as Address, amount);
     const minimum = quote.amountOut * BigInt(10_000 - operation.slippageBps) / 10_000n;
@@ -394,36 +577,55 @@ export async function transactionStatus(request: TransactionStatusRequest) {
   if (transaction.from.toLowerCase() !== request.expectedFrom.toLowerCase()) throw new Error("on-chain transaction sender mismatch");
   if (!transaction.to || transaction.to.toLowerCase() !== request.expectedTo.toLowerCase()) throw new Error("on-chain transaction destination mismatch");
   if (transaction.value.toString() !== request.expectedValueWei) throw new Error("on-chain transaction value mismatch");
+  let receipt;
   try {
-    const receipt = await client.getTransactionReceipt({ hash: request.transactionHash as Hex });
-    const result: {
+    receipt = await client.getTransactionReceipt({ hash: request.transactionHash as Hex });
+  } catch {
+    return { transactionHash: request.transactionHash, status: "pending" as const, valueWei: request.expectedValueWei };
+  }
+  const result: {
       transactionHash: string; status: "confirmed" | "reverted"; blockNumber: string; valueWei: string;
       tokenAddress?: string; poolAddress?: string; devBuySucceeded?: boolean;
-    } = {
+  } = {
       transactionHash: request.transactionHash,
       status: receipt.status === "success" ? "confirmed" as const : "reverted" as const,
       blockNumber: receipt.blockNumber.toString(), valueWei: request.expectedValueWei,
     };
-    if (receipt.status === "success" && request.operationType.startsWith("pons_v2_launch")) {
+  if (receipt.status === "success" && request.operationType.startsWith("pons_v2_launch")) {
       const factory = (process.env.PONS_V2_FACTORY_ADDRESS || "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e").toLowerCase();
+      let verifiedOpeningBuy = false;
       for (const log of receipt.logs) {
-        if (log.address.toLowerCase() !== factory) continue;
-        try {
-          const decoded = decodeEventLog({ abi: ponsFactoryAbi, data: log.data, topics: log.topics });
-          if (decoded.eventName !== "TokenLaunched") continue;
-          if (decoded.args.deployer.toLowerCase() !== request.expectedFrom.toLowerCase()) throw new Error("launch deployer mismatch");
-          result.tokenAddress = decoded.args.token;
-          result.poolAddress = decoded.args.curve;
-          result.devBuySucceeded = request.operationType === "pons_v2_launch_and_buy";
-          break;
-        } catch (error) {
-          if (error instanceof Error && error.message === "launch deployer mismatch") throw error;
+        if (log.address.toLowerCase() === factory) {
+          try {
+            const decoded = decodeEventLog({ abi: ponsFactoryAbi, data: log.data, topics: log.topics });
+            if (decoded.eventName !== "TokenLaunched") continue;
+            if (decoded.args.deployer.toLowerCase() !== request.expectedFrom.toLowerCase()) throw new Error("launch deployer mismatch");
+            result.tokenAddress = decoded.args.token;
+            result.poolAddress = decoded.args.curve;
+          } catch (error) {
+            if (error instanceof Error && error.message === "launch deployer mismatch") throw error;
+          }
+        }
+        if (request.operationType === "pons_v2_launch_and_buy" && log.address.toLowerCase() === PONS_ROUTER.toLowerCase()) {
+          try {
+            const decoded = decodeEventLog({ abi: ponsRouterAbi, data: log.data, topics: log.topics });
+            if (decoded.eventName !== "Launched") continue;
+            if (decoded.args.launcher.toLowerCase() !== request.expectedFrom.toLowerCase()
+              || decoded.args.recipient.toLowerCase() !== request.expectedFrom.toLowerCase()
+              || decoded.args.quoteSpent <= 0n || decoded.args.tokensReceived <= 0n) {
+              throw new Error("opening developer buy event mismatch");
+            }
+            if (result.tokenAddress && (decoded.args.token.toLowerCase() !== result.tokenAddress.toLowerCase()
+              || decoded.args.curve.toLowerCase() !== result.poolAddress?.toLowerCase())) throw new Error("opening developer buy launch mismatch");
+            verifiedOpeningBuy = true;
+          } catch (error) {
+            if (error instanceof Error && /opening developer buy/.test(error.message)) throw error;
+          }
         }
       }
       if (!result.tokenAddress || !result.poolAddress) throw new Error("verified Pons launch event was not found");
-    }
-    return result;
-  } catch {
-    return { transactionHash: request.transactionHash, status: "pending" as const, valueWei: request.expectedValueWei };
+      if (request.operationType === "pons_v2_launch_and_buy" && !verifiedOpeningBuy) throw new Error("verified opening developer buy event was not found");
+      result.devBuySucceeded = request.operationType === "pons_v2_launch_and_buy" ? verifiedOpeningBuy : false;
   }
+  return result;
 }

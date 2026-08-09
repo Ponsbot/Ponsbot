@@ -27,8 +27,8 @@ const launchOperation = z.object({
   factoryAddress: address, launchAndBuyRouter: address, name: z.string().min(1).max(48),
   symbol: z.string().regex(/^[A-Z0-9]{1,12}$/), imageUri: z.string().max(2_048),
   description: z.string().max(280),
-  devBuy: z.object({ amount, unit: z.enum(["eth", "usd"]) }).strict().nullable(),
-  socials: z.object({ website: z.string().max(2_048), twitter: z.string().max(2_048) }).strict(),
+  devBuy: z.object({ amount, unit: z.enum(["eth", "usd", "pair"]) }).strict().nullable(),
+  socials: z.object({ website: z.string().max(2_048), twitter: z.string().max(2_048), telegram: z.string().max(2_048) }).strict(),
   feeWalletSource: z.literal("reply_wallet"), launchConfigId: z.string().regex(/^\d+$/),
   pairToken: address, method: z.enum(["launchAndBuy", "launchToken"]),
 }).strict();
@@ -43,7 +43,7 @@ export const walletRequestSchema = z.object({
 
 export const balanceRequestSchema = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID), walletRef: address, expectedAddress: address, ownerReference,
-  token: z.string().min(1).max(50).optional(),
+  token: z.string().min(1).max(50).optional(), knownTokens: z.array(address).max(100).optional(),
 }).strict();
 
 export const executionRequestSchema = z.object({

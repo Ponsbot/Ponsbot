@@ -4,7 +4,7 @@ import { api } from "@/convex/_generated/api";
 
 export type PublicLaunch = {
   name: string; symbol: string; imageUri: string; description?: string;
-  website?: string; twitter?: string; tokenAddress?: string;
+  website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; creatorAddress?: string; createdAt: number;
 };
 

@@ -5,6 +5,7 @@ import { authorizeSigner, broadcastTransaction, executeTransaction, provisionWal
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 function errorResponse(error: unknown) {
   if (error instanceof ZodError) {
@@ -52,7 +53,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       if (input.walletRef.toLowerCase() !== input.expectedAddress.toLowerCase()) throw new Error("wallet reference mismatch");
       const expected = await provisionWallet(input.ownerReference);
       if (expected.address.toLowerCase() !== input.expectedAddress.toLowerCase()) throw new Error("wallet owner mismatch");
-      return NextResponse.json(await walletBalance(input.expectedAddress as `0x${string}`, input.token));
+      return NextResponse.json(await walletBalance(input.expectedAddress as `0x${string}`, input.token, input.knownTokens as `0x${string}`[] | undefined));
     }
     if (path === "v1/transactions/execute") {
       const input = executionRequestSchema.parse(body);

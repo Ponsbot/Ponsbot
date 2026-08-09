@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
-const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://ponsbot-git-main-clawhammer.vercel.app";
+const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://ponsbot-one.vercel.app";
 const siteUrl = configuredSiteUrl.startsWith("http") ? configuredSiteUrl : `https://${configuredSiteUrl}`;
 const description = "Claim a Robinhood Chain wallet, check holdings, buy, sell, send assets, and launch tokens on Pons V2 directly from X with Ponsbot.";
 

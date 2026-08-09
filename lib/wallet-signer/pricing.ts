@@ -3,6 +3,7 @@ import { parseUnits } from "viem";
 const CACHE_MS = 30_000;
 const MAX_DEVIATION_BPS = 300;
 const REQUEST_TIMEOUT_MS = 4_000;
+const MAX_SOURCE_AGE_MS = 5 * 60_000;
 let cached: { price: number; expiresAt: number } | undefined;
 
 async function fetchJson(url: string) {
@@ -11,15 +12,25 @@ async function fetchJson(url: string) {
   return await response.json() as unknown;
 }
 
+function assertFresh(timestampMs: number, source: string) {
+  const age = Date.now() - timestampMs;
+  if (!Number.isFinite(timestampMs) || age < -60_000 || age > MAX_SOURCE_AGE_MS) {
+    throw new Error(`${source} ETH/USD price is stale`);
+  }
+}
+
 async function coinbaseEthUsd() {
-  const payload = await fetchJson("https://api.coinbase.com/v2/prices/ETH-USD/spot") as { data?: { amount?: string } };
-  return Number(payload.data?.amount);
+  const payload = await fetchJson("https://api.exchange.coinbase.com/products/ETH-USD/ticker") as { price?: string; time?: string };
+  const timestamp = Date.parse(payload.time || "");
+  assertFresh(timestamp, "Coinbase");
+  return Number(payload.price);
 }
 
 async function coinGeckoEthUsd() {
-  const payload = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd") as {
-    ethereum?: { usd?: number };
+  const payload = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_last_updated_at=true") as {
+    ethereum?: { usd?: number; last_updated_at?: number };
   };
+  assertFresh(Number(payload.ethereum?.last_updated_at) * 1_000, "CoinGecko");
   return Number(payload.ethereum?.usd);
 }
 

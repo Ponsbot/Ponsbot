@@ -10,8 +10,8 @@ import { fitXReply, xWeightedLength } from "./xText";
 
 const X_API = "https://api.x.com/2";
 const X_MENTION_PAGE_SIZE = 100;
-const X_MENTION_MAX_PAGES_PER_POLL = 10;
-const X_POLL_LEASE_MS = 2 * 60_000;
+const X_MENTION_MAX_PAGES_PER_POLL = 1;
+const X_POLL_LEASE_MS = 15 * 60_000;
 
 function repliesEnabled() {
   return process.env.X_REPLIES_ENABLED === "true";
@@ -109,6 +109,21 @@ async function publishReply(text: string, sourcePostId: string) {
   return payload.data.id;
 }
 
+class ReplyPublicationUncertainError extends Error {}
+
+async function publishReplyOnce(ctx: ActionCtx, text: string, sourcePostId: string) {
+  const reserved = await ctx.runMutation(internal.xReplies.beginReplyPublication, { postId: sourcePostId });
+  if (!reserved) throw new ReplyPublicationUncertainError("reply publication was already attempted");
+  try {
+    return await publishReply(text, sourcePostId);
+  } catch (error) {
+    await ctx.runMutation(internal.xReplies.updateInteraction, {
+      postId: sourcePostId, status: "failed", safeError: "reply publication outcome requires manual review",
+    });
+    throw new ReplyPublicationUncertainError(error instanceof Error ? error.message : "X reply outcome is unknown");
+  }
+}
+
 export const getPollState = internalQuery({
   args: {},
   handler: async (ctx) => await ctx.db.query("xReplyState").withIndex("by_key", (q) => q.eq("key", "mentions")).unique(),
@@ -194,12 +209,23 @@ export const reserveInteraction = internalMutation({
 export const updateInteraction = internalMutation({
   args: {
     postId: v.string(),
-    status: v.union(v.literal("received"), v.literal("processing"), v.literal("completed"), v.literal("rejected"), v.literal("failed")),
+    status: v.union(v.literal("received"), v.literal("processing"), v.literal("publishing"), v.literal("completed"), v.literal("rejected"), v.literal("failed")),
     commandKind: v.optional(v.string()), responsePostId: v.optional(v.string()), safeError: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
     if (interaction) await ctx.db.patch(interaction._id, { status: args.status, commandKind: args.commandKind, responsePostId: args.responsePostId, safeError: args.safeError, updatedAt: Date.now() });
+  },
+});
+
+export const beginReplyPublication = internalMutation({
+  args: { postId: v.string() },
+  handler: async (ctx, { postId }) => {
+    const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", postId)).unique();
+    if (!interaction || interaction.publicationAttempted || interaction.status === "publishing" || interaction.responsePostId
+      || interaction.status === "completed" || interaction.status === "rejected") return false;
+    await ctx.db.patch(interaction._id, { status: "publishing", publicationAttempted: true, updatedAt: Date.now() });
+    return true;
   },
 });
 
@@ -259,6 +285,15 @@ export const scheduleInteractionRetry = internalMutation({
   handler: async (ctx, args) => {
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
     if (!interaction || interaction.status === "completed" || interaction.status === "rejected") return;
+    // Once publication begins, a network or persistence failure is ambiguous:
+    // X may already have accepted the reply. Never auto-republish it.
+    if (interaction.status === "publishing") {
+      await ctx.db.patch(interaction._id, {
+        status: "failed", nextRetryAt: undefined,
+        safeError: "reply publication outcome requires manual review", updatedAt: Date.now(),
+      });
+      return;
+    }
     const retryCount = (interaction.retryCount || 0) + 1;
     if (retryCount > 5) {
       await ctx.db.patch(interaction._id, { status: "failed", retryCount, nextRetryAt: undefined, safeError: args.safeError, updatedAt: Date.now() });
@@ -305,10 +340,11 @@ export const retryInteraction = internalAction({
         reply = result.message;
         ok = result.ok;
       }
-      const responsePostId = await publishReply(reply, postId);
+      const responsePostId = await publishReplyOnce(ctx, reply, postId);
       await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: ok ? "completed" : "rejected", responsePostId, ...(!ok ? { safeError: reply } : {}) });
     } catch (error) {
       console.error("x_reply_retry_failed", { postId, message: error instanceof Error ? error.message : "unknown" });
+      if (error instanceof ReplyPublicationUncertainError) return;
       await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId, safeError: "the reply workflow failed before confirmation" });
     }
   },
@@ -394,6 +430,18 @@ export const pollMentions = internalAction({
           postId: mention.id, authorXUserId: user.id, text: directText, ...(firstMedia?.url ? { mediaUrl: firstMedia.url } : {}),
         });
         if (!reserved) continue;
+        // Charge the cheap, deterministic limiter before either AI stage or
+        // wallet provisioning so irrelevant/ambiguous spam cannot create AI cost.
+        const rate = await ctx.runMutation(internal.xReplies.consumeReplyLimit, { xUserId: user.id });
+        if (!rate.allowed) {
+          const reply = rateLimitMessage(rate.reason);
+          const responsePostId = await publishReplyOnce(ctx, reply, mention.id);
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId: mention.id, status: "rejected", commandKind: "rate_limited", responsePostId, safeError: rate.reason,
+          });
+          processed += 1;
+          continue;
+        }
         const intent = await parseXWalletIntent(directText, Boolean(firstMedia?.url));
         if (intent.kind === "irrelevant") {
           await ctx.runMutation(internal.xReplies.updateInteraction, {
@@ -413,22 +461,12 @@ export const pollMentions = internalAction({
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the wallet request could not be prepared" });
           continue;
         }
-        const rate = await ctx.runMutation(internal.xReplies.consumeReplyLimit, { xUserId: user.id });
-        if (!rate.allowed) {
-          const reply = rateLimitMessage(rate.reason);
-          const responsePostId = await publishReply(reply, mention.id);
-          await ctx.runMutation(internal.xReplies.updateInteraction, {
-            postId: mention.id, status: "rejected", commandKind: "rate_limited", responsePostId, safeError: rate.reason,
-          });
-          processed += 1;
-          continue;
-        }
         const intentKind = intent.kind === "command" ? intent.command.kind : intent.kind === "help" ? `help:${intent.topic}` : "unknown_wallet";
         await ctx.runMutation(internal.xReplies.updateInteraction, { postId: mention.id, status: "processing", commandKind: intentKind });
         try {
           if (intent.kind === "help") {
             const reply = await helpReply(intent.topic);
-            const responsePostId = await publishReply(reply, mention.id);
+            const responsePostId = await publishReplyOnce(ctx, reply, mention.id);
             await ctx.runMutation(internal.xReplies.updateInteraction, {
               postId: mention.id, status: "completed", commandKind: `help:${intent.topic}`, responsePostId,
             });
@@ -437,7 +475,7 @@ export const pollMentions = internalAction({
           }
           if (intent.kind === "unknown_wallet") {
             const reply = unknownWalletMessage();
-            const responsePostId = await publishReply(reply, mention.id);
+            const responsePostId = await publishReplyOnce(ctx, reply, mention.id);
             await ctx.runMutation(internal.xReplies.updateInteraction, { postId: mention.id, status: "rejected", commandKind: "unknown_wallet", responsePostId, safeError: "wallet intent was ambiguous" });
             processed += 1;
             continue;
@@ -452,11 +490,12 @@ export const pollMentions = internalAction({
             ...(firstMedia?.url ? { mediaUrl: firstMedia.url } : {}),
             ...(recipientAddress ? { recipientAddress } : {}),
           });
-          const responsePostId = await publishReply(result.message, mention.id);
+          const responsePostId = await publishReplyOnce(ctx, result.message, mention.id);
           await ctx.runMutation(internal.xReplies.updateInteraction, { postId: mention.id, status: result.ok ? "completed" : "rejected", commandKind: command.kind, responsePostId, ...(!result.ok ? { safeError: result.message } : {}) });
           processed += 1;
         } catch (error) {
           console.error("x_reply_processing_failed", { postId: mention.id, message: error instanceof Error ? error.message : "unknown" });
+          if (error instanceof ReplyPublicationUncertainError) continue;
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the reply workflow failed before confirmation" });
         }
       }

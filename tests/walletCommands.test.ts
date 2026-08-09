@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
 
 describe("X wallet commands", () => {
+  it("parses paired-asset developer buys and Telegram launch links", () => {
+    expect(parseWalletCommand("launch Ponsbot ticker PONSBOT pair with MSFT dev buy 2 MSFT telegram https://t.me/ponsbotfamily")).toMatchObject({
+      kind: "launch", pairToken: "MSFT", devBuy: { amount: "2", unit: "pair" }, telegram: "https://t.me/ponsbotfamily",
+    });
+  });
   it("parses buys with default and custom slippage", () => {
     expect(parseWalletCommand("@Ponsbot buy $25 of $ROOT")).toEqual({ kind: "buy", amount: "25", unit: "usd", token: "ROOT", slippageBps: 250 });
     expect(parseWalletCommand("buy $1,000 of ROOT")).toEqual({ kind: "buy", amount: "1000", unit: "usd", token: "ROOT", slippageBps: 250 });
