@@ -29,4 +29,22 @@ describe("wallet signer operation policy", () => {
       amount: "0", unit: "eth",
     } })).toThrow();
   });
+
+  it("rejects invalid units and percentages at the signer boundary", () => {
+    const contracts = {
+      routerAddress: "0x3333333333333333333333333333333333333333",
+      quoterAddress: "0x4444444444444444444444444444444444444444",
+      wethAddress: "0x5555555555555555555555555555555555555555",
+      ponsFactoryAddress: "0x6666666666666666666666666666666666666666",
+      fee: 10_000,
+    };
+    expect(() => executionRequestSchema.parse({ ...base, operation: {
+      type: "uniswap_v3_buy", token: "0x7777777777777777777777777777777777777777",
+      amount: "50", unit: "percent", slippageBps: 100, ...contracts,
+    } })).toThrow();
+    expect(() => executionRequestSchema.parse({ ...base, operation: {
+      type: "uniswap_v3_sell", token: "0x7777777777777777777777777777777777777777",
+      amount: "101", unit: "percent", slippageBps: 100, ...contracts,
+    } })).toThrow();
+  });
 });

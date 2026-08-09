@@ -63,4 +63,22 @@ export default defineSchema({
 
   walletRateLimits: defineTable({ ownerXUserId: v.string(), day: v.string(), count: v.number(), updatedAt: v.number() })
     .index("by_owner_x_user_id", ["ownerXUserId"]),
+
+  walletExecutionLocks: defineTable({
+    walletId: v.id("cryptoWallets"), requestId: v.string(), leaseUntil: v.number(), updatedAt: v.number(),
+  }).index("by_wallet_id", ["walletId"]),
+
+  protocolContracts: defineTable({
+    key: v.string(), address: v.string(), normalizedAddress: v.string(), active: v.boolean(), updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  tokenRegistry: defineTable({
+    address: v.string(), normalizedAddress: v.string(), symbol: v.string(), name: v.string(), decimals: v.number(),
+    pairCandidate: v.boolean(), pairApproved: v.boolean(), active: v.boolean(), verifiedAt: v.optional(v.number()), updatedAt: v.number(),
+  }).index("by_normalized_address", ["normalizedAddress"]).index("by_symbol", ["symbol"]).index("by_pair_candidate", ["pairCandidate"]),
+
+  walletTokenIndex: defineTable({
+    walletId: v.id("cryptoWallets"), tokenAddress: v.string(), normalizedTokenAddress: v.string(), symbol: v.string(),
+    involvedByLaunch: v.boolean(), involvedByTransaction: v.boolean(), createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_wallet", ["walletId"]).index("by_wallet_token", ["walletId", "normalizedTokenAddress"]),
 });

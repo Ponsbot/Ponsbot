@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
-import { discoverPonsV2PairAssets, PONS_V2_FACTORY, PONS_V2_LAUNCH_AND_BUY_ROUTER } from "./ponsV2";
 
 const ROBINHOOD_CHAIN_ID = 4663;
 const NON_PREMIUM_DAILY_LIMIT = 10;
@@ -11,9 +11,6 @@ const PREMIUM_DAILY_LIMIT = 50;
 const PROVISIONING_LEASE_MS = 2 * 60_000;
 const MAX_RECONCILIATION_ATTEMPTS = 20;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
-const VERIFIED_SWAP_ROUTER = "0xcaf681a66d020601342297493863e78c959e5cb2";
-const VERIFIED_SWAP_QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7";
-const VERIFIED_WETH = "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73";
 const DEFAULT_LAUNCH_WEBSITE = "";
 const DEFAULT_LAUNCH_DESCRIPTION = "Launched from an X reply through Pons.";
 const ROBINHOOD_EXPLORER_TX_BASE = "https://robinhoodchain.blockscout.com/tx";
@@ -32,7 +29,7 @@ type SubmittedTransaction = {
   devBuySucceeded?: boolean;
   toAddress?: string;
   callKind?: string;
-  approvalTransactionHash?: string;
+  approvalRequired?: boolean;
   approvalTokenAddress?: string;
 };
 type CommandResult = { ok: boolean; message: string; transactionHash?: string };
@@ -124,6 +121,7 @@ async function signerRequest<T>(path: string, body: unknown): Promise<T> {
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(path.endsWith("/execute") ? 45_000 : 20_000),
   });
 
   const raw = await response.text();
@@ -370,37 +368,104 @@ export const markTransactionBroadcast = internalMutation({
   },
 });
 
-export const recordConfirmedApproval = internalMutation({
-  args: { requestId: v.string(), walletId: v.id("cryptoWallets"), tokenAddress: v.string(), transactionHash: v.string() },
+export const acquireWalletExecutionLock = internalMutation({
+  args: { walletId: v.id("cryptoWallets"), requestId: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const current = await ctx.db.query("walletExecutionLocks").withIndex("by_wallet_id", (q) => q.eq("walletId", args.walletId)).unique();
+    if (current && current.requestId !== args.requestId && current.leaseUntil > now) return false;
+    const value = { requestId: args.requestId, leaseUntil: now + 5 * 60_000, updatedAt: now };
+    if (current) await ctx.db.patch(current._id, value);
+    else await ctx.db.insert("walletExecutionLocks", { walletId: args.walletId, ...value });
+    return true;
+  },
+});
+
+export const releaseWalletExecutionLock = internalMutation({
+  args: { walletId: v.id("cryptoWallets"), requestId: v.string() },
+  handler: async (ctx, args) => {
+    const current = await ctx.db.query("walletExecutionLocks").withIndex("by_wallet_id", (q) => q.eq("walletId", args.walletId)).unique();
+    if (current?.requestId === args.requestId) await ctx.db.delete(current._id);
+  },
+});
+
+export const recordApprovalPrepared = internalMutation({
+  args: { requestId: v.string(), walletId: v.id("cryptoWallets"), tokenAddress: v.string(), transactionHash: v.string(), signedTransaction: v.string() },
   handler: async (ctx, args) => {
     const approvalRequestId = `${args.requestId}:approval`;
     const existing = await ctx.db.query("walletTransactions").withIndex("by_request_id", (q) => q.eq("requestId", approvalRequestId)).unique();
-    if (existing) return;
+    if (existing) return existing;
     const now = Date.now();
-    await ctx.db.insert("walletTransactions", {
+    const id = await ctx.db.insert("walletTransactions", {
       requestId: approvalRequestId, walletId: args.walletId, chainId: ROBINHOOD_CHAIN_ID,
       to: args.tokenAddress.toLowerCase(), valueWei: "0", callKind: "erc20_approval",
-      transactionHash: args.transactionHash, status: "confirmed", createdAt: now, updatedAt: now,
+      transactionHash: args.transactionHash, signedTransaction: args.signedTransaction,
+      status: "prepared", createdAt: now, updatedAt: now,
     });
+    return await ctx.db.get(id);
+  },
+});
+
+export const updateApprovalStatus = internalMutation({
+  args: {
+    requestId: v.string(),
+    status: v.union(v.literal("broadcast"), v.literal("confirmed"), v.literal("reverted"), v.literal("invalid")),
+    blockNumber: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const transaction = await ctx.db.query("walletTransactions")
+      .withIndex("by_request_id", (q) => q.eq("requestId", `${args.requestId}:approval`)).unique();
+    if (transaction) await ctx.db.patch(transaction._id, { status: args.status, blockNumber: args.blockNumber, updatedAt: Date.now() });
   },
 });
 
 export const resolveKnownToken = internalQuery({
-  args: { identifier: v.string() },
-  handler: async (ctx, { identifier }) => {
+  args: { identifier: v.string(), walletId: v.optional(v.id("cryptoWallets")) },
+  handler: async (ctx, { identifier, walletId }) => {
     const normalized = identifier.replace(/^\$/, "").toLowerCase();
     if (safeAddress(normalized)) return identifier;
-    const candidates = await ctx.db.query("tokenLaunches").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).take(20);
-    const matches = candidates.filter((launch) => launch.tokenAddress && launch.symbol.toLowerCase() === normalized);
-    if (matches.length > 1) throw new Error("that ticker matches more than one Ponsbot token; use the contract address");
-    return matches[0]?.tokenAddress || identifier;
+    const matches = new Set<string>();
+    if (walletId) {
+      const walletTokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", walletId)).collect();
+      for (const item of walletTokens) if (item.symbol.toLowerCase() === normalized) matches.add(item.tokenAddress);
+    }
+    const registered = await ctx.db.query("tokenRegistry").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).collect();
+    for (const item of registered) if (item.active) matches.add(item.address);
+    const launches = await ctx.db.query("tokenLaunches").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).take(100);
+    for (const launch of launches) if (launch.tokenAddress) matches.add(launch.tokenAddress);
+    if (matches.size > 1) throw new Error("that ticker matches more than one token; use the contract address");
+    return [...matches][0] || identifier;
   },
 });
 
-export const listKnownTokenAddresses = internalQuery({
-  args: {},
-  handler: async (ctx) => (await ctx.db.query("tokenLaunches").order("desc").take(100))
-    .map((launch) => launch.tokenAddress).filter((address): address is string => Boolean(address)),
+export const listWalletTokenAddresses = internalQuery({
+  args: { walletId: v.id("cryptoWallets") },
+  handler: async (ctx, { walletId }) => (await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", walletId)).collect())
+    .map((item) => item.tokenAddress),
+});
+
+export const indexWalletToken = internalMutation({
+  args: {
+    walletId: v.id("cryptoWallets"), tokenAddress: v.string(), symbol: v.string(),
+    involvedByLaunch: v.boolean(), involvedByTransaction: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const normalizedTokenAddress = args.tokenAddress.toLowerCase();
+    const existing = await ctx.db.query("walletTokenIndex").withIndex("by_wallet_token", (q) => q.eq("walletId", args.walletId).eq("normalizedTokenAddress", normalizedTokenAddress)).unique();
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        symbol: args.symbol.toUpperCase(), involvedByLaunch: existing.involvedByLaunch || args.involvedByLaunch,
+        involvedByTransaction: existing.involvedByTransaction || args.involvedByTransaction, updatedAt: now,
+      });
+    } else {
+      await ctx.db.insert("walletTokenIndex", {
+        walletId: args.walletId, tokenAddress: args.tokenAddress, normalizedTokenAddress,
+        symbol: args.symbol.toUpperCase(), involvedByLaunch: args.involvedByLaunch,
+        involvedByTransaction: args.involvedByTransaction, createdAt: now, updatedAt: now,
+      });
+    }
+  },
 });
 
 export const recordBroadcastExecution = internalMutation({
@@ -529,11 +594,15 @@ export const reconcileTransaction = internalAction({
         expectedValueWei: current.transaction.valueWei,
         expectedTo: current.transaction.to,
       };
+      const expectedFactory = current.transaction.callKind.startsWith("pons_v2_launch")
+        ? (await ctx.runQuery(internal.registry.runtimeConfig, {})).contracts.pons_v2_factory
+        : undefined;
+      const verifiedStatusBody = expectedFactory ? { ...statusBody, expectedFactory } : statusBody;
       const result = current.request.status === "prepared"
         ? await signerRequest<SubmittedTransaction>("/v1/transactions/broadcast", {
-          ...statusBody, signedTransaction: current.transaction.signedTransaction,
+          ...verifiedStatusBody, signedTransaction: current.transaction.signedTransaction,
         })
-        : await signerRequest<SubmittedTransaction>("/v1/transactions/status", statusBody);
+        : await signerRequest<SubmittedTransaction>("/v1/transactions/status", verifiedStatusBody);
       if (result.status === "broadcast" || result.status === "pending") {
         if (current.request.status === "prepared") await ctx.runMutation(internal.wallets.markTransactionBroadcast, { requestId: args.requestId });
         else await ctx.runMutation(internal.wallets.deferReconciliation, { requestId: args.requestId, attempt: (current.request.reconciliationAttempts || 0) + 1 });
@@ -674,11 +743,15 @@ export const executeCommand = internalAction({
     }
     if (command.kind === "show_balance") {
       try {
-        const knownTokens = command.token ? undefined : await ctx.runQuery(internal.wallets.listKnownTokenAddresses, {});
+        await ctx.runMutation(internal.registry.ensureInitialized, {});
+        const knownTokens = command.token ? undefined : await ctx.runQuery(internal.wallets.listWalletTokenAddresses, { walletId: wallet._id });
+        const resolvedToken = command.token && !/^eth$/i.test(command.token)
+          ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
+          : command.token;
         const balance = await signerRequest<{ display: string }>("/v1/wallets/balance", {
           chainId: ROBINHOOD_CHAIN_ID, walletRef: wallet.signerWalletRef,
           expectedAddress: wallet.address, ownerReference: `x:${args.xUserId}`,
-          ...(command.token ? { token: command.token } : {}),
+          ...(resolvedToken ? { token: resolvedToken } : {}),
           ...(knownTokens ? { knownTokens } : {}),
         });
         return { ok: true, message: command.token ? `📊 ${command.token} balance: ${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` : `📊 Here's your wallet balance:\n${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` };
@@ -693,11 +766,16 @@ export const executeCommand = internalAction({
     });
     if (!reserved.inserted) {
       const prior = reserved.request;
+      const priorMessage = prior?.status === "confirmed" && prior.transactionHash
+        ? `✅ This request was already completed!\nYour TXN: ${transactionUrl(prior.transactionHash)}`
+        : prior?.status === "failed" || prior?.status === "rejected"
+          ? "❌ This request did not complete. Check the earlier reply or try a new post."
+          : prior?.transactionHash
+            ? `⏳ This request is already onchain and still being confirmed.\nYour TXN: ${transactionUrl(prior.transactionHash)}`
+            : "⏳ This request is already being processed. I'll keep it moving!";
       return {
         ok: prior?.status === "confirmed",
-        message: prior?.transactionHash
-          ? `✅ This request was already completed!\nYour TXN: ${transactionUrl(prior.transactionHash)}`
-          : "⏳ This request is already being processed. I'll keep it moving!",
+        message: priorMessage,
         ...(prior?.transactionHash ? { transactionHash: prior.transactionHash } : {}),
       };
     }
@@ -717,22 +795,42 @@ export const executeCommand = internalAction({
         return { ok: false, message: "⏰ You've reached today's wallet action limit. It resets at 00:00 UTC, then you're ready to go again!" };
       }
       const warning = limit.remaining === 2 ? "\n⚠️ 2 wallet actions remain today." : limit.remaining === 1 ? "\n⚠️ 1 wallet action remains today." : limit.remaining === 0 ? "\n⏰ Today's wallet limit is now reached." : "";
+      let executionLockHeld = false;
       try {
+        for (let attempt = 0; attempt < 60 && !executionLockHeld; attempt += 1) {
+          executionLockHeld = await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
+          if (!executionLockHeld) await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        if (!executionLockHeld) throw new Error("another wallet transaction is still being prepared; please try again shortly");
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "simulating" });
+        await ctx.runMutation(internal.registry.ensureInitialized, {});
+        if (command.kind === "launch") await ctx.runAction(internal.ponsV2.refreshRegistry, {});
+        const registry = await ctx.runQuery(internal.registry.runtimeConfig, {});
         const commandToken = "token" in command && typeof command.token === "string"
-          ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token })
+          ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
           : undefined;
-        const operation = await operationFor(command, args.mediaUrl, undefined, args.recipientAddress, userContext.user.username, commandToken);
-        const result = await submit(wallet, args.xUserId, requestId, operation);
+        const operation = await operationFor(command, args.mediaUrl, undefined, args.recipientAddress, userContext.user.username, commandToken, registry);
+        const result = await submitWithApproval(ctx, wallet, args.xUserId, requestId, operation);
         if (!/^0x[a-fA-F0-9]{64}$/.test(result.transactionHash)) throw new Error("signer returned an invalid transaction hash");
         if (result.status === "reverted") throw new Error("transaction reverted");
-        if (result.approvalTransactionHash && result.approvalTokenAddress) {
-          if (!/^0x[a-fA-F0-9]{64}$/.test(result.approvalTransactionHash) || !safeAddress(result.approvalTokenAddress)) {
-            throw new Error("signer returned invalid approval metadata");
-          }
-          await ctx.runMutation(internal.wallets.recordConfirmedApproval, {
-            requestId, walletId: wallet._id, tokenAddress: result.approvalTokenAddress,
-            transactionHash: result.approvalTransactionHash,
+        if (commandToken && safeAddress(commandToken) && "token" in command && typeof command.token === "string") {
+          await ctx.runMutation(internal.wallets.indexWalletToken, {
+            walletId: wallet._id, tokenAddress: commandToken, symbol: command.token.replace(/^\$/, ""),
+            involvedByLaunch: false, involvedByTransaction: true,
+          });
+        }
+        if (command.kind === "launch" && result.tokenAddress && safeAddress(result.tokenAddress)) {
+          await ctx.runMutation(internal.wallets.indexWalletToken, {
+            walletId: wallet._id, tokenAddress: result.tokenAddress, symbol: command.symbol,
+            involvedByLaunch: true, involvedByTransaction: Boolean(command.devBuy),
+          });
+        }
+        if (command.kind === "launch" && command.devBuy && typeof operation.pairToken === "string"
+          && safeAddress(operation.pairToken) && !/^0x0{40}$/i.test(operation.pairToken)) {
+          const pair = registry.pairs.find((item) => item.address.toLowerCase() === String(operation.pairToken).toLowerCase());
+          await ctx.runMutation(internal.wallets.indexWalletToken, {
+            walletId: wallet._id, tokenAddress: operation.pairToken, symbol: pair?.symbol || operation.pairToken,
+            involvedByLaunch: true, involvedByTransaction: true,
           });
         }
         const launchMetadata = command.kind === "launch" ? resolveLaunchMetadata(command, userContext.user.username) : undefined;
@@ -791,6 +889,8 @@ export const executeCommand = internalAction({
         const userMessage = fundingMessage(message, wallet.address);
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "failed", safeError: message });
         return { ok: false, message: `${userMessage}${warning}` };
+      } finally {
+        if (executionLockHeld) await ctx.runMutation(internal.wallets.releaseWalletExecutionLock, { walletId: wallet._id, requestId });
       }
     }
     return { ok: false, message: "✨ I can create your wallet, show balances, buy, sell, send, burn, and launch through Pons. Tell me what you'd like to do!" };
@@ -804,33 +904,47 @@ async function operationFor(
   recipientAddress?: string,
   launcherUsername?: string,
   tokenOverride?: string,
+  registry?: { contracts: Record<string, string>; pairs: Array<{ address: string; symbol: string; pairApproved: boolean; active: boolean }> },
 ): Promise<Record<string, unknown>> {
   if (command.kind === "send") {
     const recipient = safeAddress(command.recipient) ? command.recipient : recipientAddress;
     if (!recipient || !safeAddress(recipient) || recipient.toLowerCase() === DEAD_ADDRESS.toLowerCase()) throw new Error("invalid transfer destination");
     const nativeEth = !command.token || /^eth$/i.test(command.token);
-    return { type: nativeEth ? "eth_transfer" : "erc20_transfer", recipient, amount: command.amount, unit: command.unit, ...(nativeEth ? {} : { token: tokenOverride || command.token }) };
+    if (nativeEth) return { type: "eth_transfer", recipient, amount: command.amount, unit: command.unit };
+    const quoterAddress = registry?.contracts.swap_quoter;
+    const wethAddress = registry?.contracts.weth;
+    if (!quoterAddress || !wethAddress || !safeAddress(quoterAddress) || !safeAddress(wethAddress)) throw new Error("swap contracts are missing from the registry");
+    return { type: "erc20_transfer", recipient, amount: command.amount, unit: command.unit, token: tokenOverride || command.token, quoterAddress, wethAddress, fee: 10_000 };
   }
   if (command.kind === "burn") {
-    return { type: "erc20_burn_to_dead", deadAddress: DEAD_ADDRESS, amount: command.amount, unit: command.unit, token: tokenOverride || command.token };
+    const quoterAddress = registry?.contracts.swap_quoter;
+    const wethAddress = registry?.contracts.weth;
+    if (!quoterAddress || !wethAddress || !safeAddress(quoterAddress) || !safeAddress(wethAddress)) throw new Error("swap contracts are missing from the registry");
+    return { type: "erc20_burn_to_dead", deadAddress: DEAD_ADDRESS, amount: command.amount, unit: command.unit, token: tokenOverride || command.token, quoterAddress, wethAddress, fee: 10_000 };
   }
   if (command.kind === "buy" || command.kind === "sell") {
+    const routerAddress = registry?.contracts.swap_router;
+    const quoterAddress = registry?.contracts.swap_quoter;
+    const wethAddress = registry?.contracts.weth;
+    const ponsFactoryAddress = registry?.contracts.pons_v2_factory;
+    if (!routerAddress || !quoterAddress || !wethAddress || !ponsFactoryAddress || !safeAddress(routerAddress) || !safeAddress(quoterAddress) || !safeAddress(wethAddress) || !safeAddress(ponsFactoryAddress)) {
+      throw new Error("swap contracts are missing from the registry");
+    }
     return {
       type: command.kind === "buy" ? "uniswap_v3_buy" : "uniswap_v3_sell",
       token: tokenOverride || command.token, amount: command.amount, unit: command.unit, slippageBps: command.slippageBps,
-      routerAddress: VERIFIED_SWAP_ROUTER, quoterAddress: VERIFIED_SWAP_QUOTER,
-      wethAddress: VERIFIED_WETH, fee: 10_000,
+      routerAddress, quoterAddress, wethAddress, ponsFactoryAddress, fee: 10_000,
     };
   }
   if (command.kind === "claim_fees") throw new Error("Pons creator-fee claims are not configured");
   if (command.kind === "launch") {
-    const factoryAddress = process.env.PONS_V2_FACTORY_ADDRESS || PONS_V2_FACTORY;
-    const launchAndBuyRouter = process.env.PONS_V2_LAUNCH_AND_BUY_ROUTER || PONS_V2_LAUNCH_AND_BUY_ROUTER;
+    const factoryAddress = registry?.contracts.pons_v2_factory || "";
+    const launchAndBuyRouter = registry?.contracts.pons_v2_launch_router || "";
     if (!safeAddress(factoryAddress)) throw new Error("Pons factory is not configured");
     if (!safeAddress(launchAndBuyRouter)) throw new Error("Pons launch-and-buy router is not configured");
     const imageUri = await normalizeImage(mediaUrl);
     const metadata = resolveLaunchMetadata(command, launcherUsername);
-    const pairToken = await resolveLaunchPair(command.pairToken);
+    const pairToken = resolveLaunchPair(command.pairToken, registry?.pairs || []);
     return {
       type: command.devBuy ? "pons_v2_launch_and_buy" : "pons_v2_launch", launchMode: command.launchMode,
       factoryAddress, launchAndBuyRouter,
@@ -847,11 +961,68 @@ async function operationFor(
   throw new Error("operation is read-only");
 }
 
-async function resolveLaunchPair(identifier?: string) {
+async function submitWithApproval(
+  ctx: ActionCtx,
+  wallet: Doc<"cryptoWallets">,
+  xUserId: string,
+  requestId: string,
+  operation: Record<string, unknown>,
+) {
+  let result = await submit(wallet, xUserId, requestId, operation);
+  if (!result.approvalRequired) return result;
+  if (!result.approvalTokenAddress || !safeAddress(result.approvalTokenAddress)
+    || !result.signedTransaction || !/^0x[a-fA-F0-9]+$/.test(result.signedTransaction)
+    || !/^0x[a-fA-F0-9]{64}$/.test(result.transactionHash)) {
+    throw new Error("signer returned invalid approval metadata");
+  }
+  const approvalRecord = await ctx.runMutation(internal.wallets.recordApprovalPrepared, {
+    requestId, walletId: wallet._id, tokenAddress: result.approvalTokenAddress,
+    transactionHash: result.transactionHash, signedTransaction: result.signedTransaction,
+  });
+  const requestBody = {
+    chainId: ROBINHOOD_CHAIN_ID, ownerReference: `x:${xUserId}`,
+    walletRef: wallet.signerWalletRef, expectedFrom: wallet.address,
+    expectedTo: result.approvalTokenAddress, transactionHash: result.transactionHash,
+    operationType: "erc20_approval", expectedValueWei: "0",
+  };
+  if (approvalRecord?.status === "confirmed") {
+    result = await submit(wallet, xUserId, requestId, operation);
+    if (result.approvalRequired) throw new Error("confirmed token approval did not satisfy the requested operation");
+    return result;
+  }
+  if (approvalRecord?.status === "reverted" || approvalRecord?.status === "invalid") throw new Error("previous token approval failed");
+  if (!approvalRecord || approvalRecord.status === "prepared") {
+    const broadcast = await signerRequest<SubmittedTransaction>("/v1/transactions/broadcast", {
+      ...requestBody, signedTransaction: result.signedTransaction,
+    });
+    if (broadcast.status === "reverted") {
+      await ctx.runMutation(internal.wallets.updateApprovalStatus, { requestId, status: "reverted" });
+      throw new Error("token approval reverted");
+    }
+    await ctx.runMutation(internal.wallets.updateApprovalStatus, { requestId, status: "broadcast" });
+  }
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const status = await signerRequest<SubmittedTransaction>("/v1/transactions/status", requestBody);
+    if (status.status === "confirmed") {
+      await ctx.runMutation(internal.wallets.updateApprovalStatus, { requestId, status: "confirmed", blockNumber: status.blockNumber });
+      result = await submit(wallet, xUserId, requestId, operation);
+      if (result.approvalRequired) throw new Error("token approval did not satisfy the requested operation");
+      return result;
+    }
+    if (status.status === "reverted") {
+      await ctx.runMutation(internal.wallets.updateApprovalStatus, { requestId, status: "reverted", blockNumber: status.blockNumber });
+      throw new Error("token approval reverted");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error("token approval confirmation timed out; retrying later is safe");
+}
+
+function resolveLaunchPair(identifier: string | undefined, assets: Array<{ address: string; symbol: string; pairApproved: boolean; active: boolean }>) {
   if (!identifier || /^eth$/i.test(identifier)) return "0x0000000000000000000000000000000000000000";
-  const assets = await discoverPonsV2PairAssets();
   const normalized = identifier.replace(/^\$/, "").toLowerCase();
-  const match = assets.find((asset) => asset.symbol.toLowerCase() === normalized || asset.address.toLowerCase() === normalized);
+  const match = assets.find((asset) => asset.active && asset.pairApproved
+    && (asset.symbol.toLowerCase() === normalized || asset.address.toLowerCase() === normalized));
   if (!match) throw new Error("requested Pons V2 pair is not currently approved");
   return match.address;
 }

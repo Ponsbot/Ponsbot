@@ -46,18 +46,6 @@ const ponsRouterAbi = parseAbi([
   "function launchAndBuy((string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials,address creatorFeeRecipient,uint16 creatorTaxBps,bool buybackEnabled,bytes32 expectedEconomics,bytes32 salt) params,uint256 launchConfigId,address pairToken,uint256 quoteIn,uint256 minTokensOut,address recipient,address[] snipeTaxExemptions) payable returns (address token,address curve,uint256 tokensOut)",
   "event Launched(address indexed token,address indexed curve,address indexed recipient,address launcher,uint256 quoteSpent,uint256 tokensReceived)",
 ]);
-const BUILTIN_TOKENS = [
-  "0xB90A19fF0Af67f7779afF50A882A9CfF42446400", "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC",
-  "0x12f190a9F9d7D37a250758b26824B97CE941bF54", "0xe93237C50D904957Cf27E7B1133b510C669c2e74",
-  "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35", "0xdF0992E440dD0be65BD8439b609d6D4366bf1CB5",
-  "0x6330D8C3178a418788dF01a47479c0ce7CCF450b", "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
-  "0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A",
-] as Address[];
-const SWAP_ROUTER = "0xcaf681a66d020601342297493863e78c959e5cb2";
-const SWAP_QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7";
-const WETH = "0x0bd7d308f8e1639fab988df18a8011f41eacad73";
-const PONS_FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e";
-const PONS_ROUTER = "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948";
 const V4_QUOTER = "0x8dc178efb8111bb0973dd9d722ebeff267c98f94";
 const UNIVERSAL_ROUTER = "0x8876789976decbfcbbbe364623c63652db8c0904";
 const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
@@ -93,11 +81,6 @@ function accountName(ownerReference: string) {
   return `ponsbot-rh-${digest.slice(0, 25)}`;
 }
 
-function candidateTokens() {
-  return [...new Set([...BUILTIN_TOKENS, ...(process.env.PONS_V2_PAIR_CANDIDATES || "").split(/[\s,;]+/)
-    .filter((value): value is Address => /^0x[a-fA-F0-9]{40}$/.test(value))].map((value) => value.toLowerCase()))] as Address[];
-}
-
 export function authorizeSigner(header: string | null) {
   const expected = process.env.WALLET_SIGNER_TOKEN;
   const supplied = header?.startsWith("Bearer ") ? header.slice(7) : "";
@@ -117,7 +100,7 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
     const eth = formatEther(await client.getBalance({ address }));
     if (token) return { display: `${trimDecimal(eth)} ETH` };
     const holdings = [`${trimDecimal(eth)} ETH`];
-    const tokenHoldings = await Promise.all([...new Set([...candidateTokens(), ...knownTokens].map((value) => value.toLowerCase()))].map(async (tokenAddress) => {
+    const tokenHoldings = await Promise.all([...new Set(knownTokens.map((value) => value.toLowerCase()))].map(async (tokenAddress) => {
       try {
         const [balance, decimals, symbol] = await Promise.all([
           client.readContract({ address: tokenAddress as Address, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
@@ -130,21 +113,14 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
     holdings.push(...tokenHoldings.filter((value): value is string => Boolean(value)));
     return { display: holdings.join("\n") };
   }
-  const normalized = token.replace(/^\$/, "");
-  const candidates = /^0x[a-fA-F0-9]{40}$/.test(normalized) ? [normalized as Address] : candidateTokens();
-  for (const tokenAddress of candidates) {
-    try {
-      const [balance, decimals, symbol] = await Promise.all([
-        client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
-        client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "decimals" }),
-        client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "symbol" }),
-      ]);
-      if (symbol.toLowerCase() === normalized.toLowerCase() || tokenAddress.toLowerCase() === normalized.toLowerCase()) {
-        return { display: `${trimDecimal(formatUnits(balance, decimals))} ${symbol}` };
-      }
-    } catch { /* Try the next verified candidate. */ }
-  }
-  throw new Error("token lookup failed; use a verified ticker or contract address");
+  if (!/^0x[a-fA-F0-9]{40}$/.test(token)) throw new Error("token lookup was not resolved by the registry");
+  const tokenAddress = token as Address;
+  const [balance, decimals, symbol] = await Promise.all([
+    client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
+    client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "decimals" }),
+    client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "symbol" }),
+  ]);
+  return { display: `${trimDecimal(formatUnits(balance, decimals))} ${symbol}` };
 }
 
 function trimDecimal(value: string) {
@@ -155,26 +131,20 @@ function trimDecimal(value: string) {
 
 async function resolveToken(identifier: string) {
   const normalized = identifier.replace(/^\$/, "");
+  if (!/^0x[a-fA-F0-9]{40}$/.test(normalized)) throw new Error("token lookup was not resolved by the registry");
   const client = rpcClient();
-  const candidates = /^0x[a-fA-F0-9]{40}$/.test(normalized) ? [normalized as Address] : candidateTokens();
-  for (const address of candidates) {
-    try {
-      const [symbol, decimals] = await Promise.all([
-        client.readContract({ address, abi: tokenAbi, functionName: "symbol" }),
-        client.readContract({ address, abi: tokenAbi, functionName: "decimals" }),
-      ]);
-      if (address.toLowerCase() === normalized.toLowerCase() || symbol.toLowerCase() === normalized.toLowerCase()) {
-        return { address, symbol, decimals };
-      }
-    } catch { /* Try the next allowlisted address. */ }
-  }
-  throw new Error("token lookup failed; use an allowlisted ticker or contract address");
+  const address = normalized as Address;
+  const [symbol, decimals] = await Promise.all([
+    client.readContract({ address, abi: tokenAbi, functionName: "symbol" }),
+    client.readContract({ address, abi: tokenAbi, functionName: "decimals" }),
+  ]);
+  return { address, symbol, decimals };
 }
 
-async function resolveActivePonsCurve(token: Address) {
+async function resolveActivePonsCurve(token: Address, factory: Address) {
   try {
     const launched = await rpcClient().readContract({
-      address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token],
+      address: factory, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token],
     });
     if (!launched.exists) return undefined;
     return launched;
@@ -199,9 +169,9 @@ function encodeV4ExactInput(poolKey: V4PoolKey, zeroForOne: boolean, amountIn: b
 
 async function prepareGraduatedPonsV4Buy(request: ExecutionRequest, owner: Address, token: Address, launched: {
   pairToken: Address; poolFee: number; tickSpacing: number;
-}, value: bigint, slippageBps: number) {
+}, value: bigint, slippageBps: number, factory: Address) {
   if (launched.pairToken !== zeroAddress) throw new Error("this graduated Pons V2 token trades against its paired asset, not ETH");
-  const hook = await rpcClient().readContract({ address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "memeHook" });
+  const hook = await rpcClient().readContract({ address: factory, abi: ponsFactoryAbi, functionName: "memeHook" });
   const currency0 = zeroAddress;
   const currency1 = token;
   const poolKey = { currency0, currency1, fee: launched.poolFee, tickSpacing: launched.tickSpacing, hooks: hook };
@@ -296,27 +266,24 @@ async function prepareSigned(request: ExecutionRequest, to: Address, data: Hex, 
   };
 }
 
-async function approveAndWait(request: ExecutionRequest, token: Address, spender: Address, suffix: string) {
-  const data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [spender, 2n ** 256n - 1n] });
-  const prepared = await prepareSigned({ ...request, idempotencyKey: `${request.idempotencyKey}:${suffix}` }, token, data, 0n);
-  const client = rpcClient();
-  const hash = await client.sendRawTransaction({ serializedTransaction: prepared.signedTransaction as Hex });
-  if (hash.toLowerCase() !== prepared.transactionHash.toLowerCase()) throw new Error("approval broadcast returned an unexpected transaction hash");
-  const receipt = await client.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 120_000 });
-  if (receipt.status !== "success") throw new Error("token approval reverted");
-  return hash;
+async function prepareApproval(request: ExecutionRequest, token: Address, spender: Address, amount: bigint, suffix: string) {
+  const data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [spender, amount] });
+  return {
+    ...(await prepareSigned({ ...request, idempotencyKey: `${request.idempotencyKey}:${suffix}` }, token, data, 0n)),
+    approvalRequired: true as const,
+    approvalTokenAddress: token,
+  };
 }
 
 async function prepareGraduatedPonsV4Sell(request: ExecutionRequest, owner: Address, token: Address, launched: {
   pairToken: Address; poolFee: number; tickSpacing: number;
-}, amount: bigint, slippageBps: number) {
+}, amount: bigint, slippageBps: number, factory: Address) {
   const client = rpcClient();
-  let approvalTransactionHash: Hex | undefined;
   const tokenAllowance = await client.readContract({ address: token, abi: tokenAbi, functionName: "allowance", args: [owner, PERMIT2] });
   if (tokenAllowance < amount) {
-    approvalTransactionHash = await approveAndWait(request, token, PERMIT2, "permit2-approval");
+    return prepareApproval(request, token, PERMIT2, amount, "permit2-approval");
   }
-  const hook = await client.readContract({ address: PONS_FACTORY, abi: ponsFactoryAbi, functionName: "memeHook" });
+  const hook = await client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "memeHook" });
   const pair = launched.pairToken;
   const tokenIsCurrency0 = BigInt(token) < BigInt(pair);
   const poolKey = {
@@ -359,7 +326,7 @@ async function prepareGraduatedPonsV4Sell(request: ExecutionRequest, owner: Addr
   const v4Input = encodeV4ExactInput(poolKey, zeroForOne, amount, minimum);
   const deadline = BigInt(now + 10 * 60);
   const data = encodeFunctionData({ abi: universalRouterAbi, functionName: "execute", args: ["0x0a10", [permitInput, v4Input], deadline] });
-  return { ...(await prepareSigned(request, UNIVERSAL_ROUTER, data, 0n)), approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? token : undefined };
+  return prepareSigned(request, UNIVERSAL_ROUTER, data, 0n);
 }
 
 function launchSalt(request: ExecutionRequest) {
@@ -376,7 +343,6 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
   const pairToken = operation.pairToken as Address;
   const launchConfigId = BigInt(operation.launchConfigId);
   const owner = request.expectedFrom as Address;
-  let approvalTransactionHash: Hex | undefined;
   const [expectedEconomics, launchFee] = await Promise.all([
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "previewLaunchEconomics", args: [launchConfigId, pairToken] }),
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "launchFee" }),
@@ -412,7 +378,7 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     ]);
     quoteIn = parseUnits(operation.devBuy.amount, decimals);
     if (allowance < quoteIn) {
-      approvalTransactionHash = await approveAndWait(request, pairToken, router, "pair-approval");
+      return prepareApproval(request, pairToken, router, quoteIn, "pair-approval");
     }
   }
   const value = launchFee + (nativePair ? quoteIn : 0n);
@@ -426,22 +392,12 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     args: [params, launchConfigId, pairToken, quoteIn, minimum, owner, []],
   });
   const prepared = await prepareSigned(request, router, data, value);
-  return { ...prepared, tokenAddress: first.result[0], poolAddress: first.result[1], devBuySucceeded: true, approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? pairToken : undefined };
+  return { ...prepared, tokenAddress: first.result[0], poolAddress: first.result[1], devBuySucceeded: true };
 }
 
 export async function executeTransaction(request: ExecutionRequest) {
   const operation = request.operation;
   const owner = request.expectedFrom as Address;
-  if ((operation.type === "uniswap_v3_buy" || operation.type === "uniswap_v3_sell")
-    && (operation.routerAddress.toLowerCase() !== SWAP_ROUTER.toLowerCase()
-      || operation.quoterAddress.toLowerCase() !== SWAP_QUOTER.toLowerCase()
-      || operation.wethAddress.toLowerCase() !== WETH.toLowerCase()
-      || operation.fee !== 10_000)) throw new Error("swap contract policy rejected the request");
-  if ((operation.type === "pons_v2_launch" || operation.type === "pons_v2_launch_and_buy")
-    && (operation.factoryAddress.toLowerCase() !== PONS_FACTORY.toLowerCase()
-      || operation.launchAndBuyRouter.toLowerCase() !== PONS_ROUTER.toLowerCase())) {
-    throw new Error("Pons contract policy rejected the request");
-  }
   if (operation.type === "erc20_burn_to_dead" && operation.deadAddress.toLowerCase() !== DEAD.toLowerCase()) {
     throw new Error("burn destination policy rejected the request");
   }
@@ -454,8 +410,8 @@ export async function executeTransaction(request: ExecutionRequest) {
     const resolved = await resolveToken(operation.token);
     const recipient = operation.type === "erc20_transfer" ? operation.recipient : operation.deadAddress;
     const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit, {
-      weth: WETH, quoter: SWAP_QUOTER,
-      fee: 10_000,
+      weth: operation.wethAddress as Address, quoter: operation.quoterAddress as Address,
+      fee: operation.fee,
     });
     if (amount <= 0n) throw new Error("token amount resolved to zero");
     const balance = await rpcClient().readContract({ address: resolved.address, abi: tokenAbi, functionName: "balanceOf", args: [owner] });
@@ -467,9 +423,9 @@ export async function executeTransaction(request: ExecutionRequest) {
     const resolved = await resolveToken(operation.token);
     const value = operation.unit === "usd" ? await checkedUsdToEthWei(operation.amount) : parseEther(operation.amount);
     await enforceEthLimit(value);
-    const pons = await resolveActivePonsCurve(resolved.address);
+    const pons = await resolveActivePonsCurve(resolved.address, operation.ponsFactoryAddress as Address);
     if (pons) {
-      if (pons.phase === 2) return prepareGraduatedPonsV4Buy(request, owner, resolved.address, pons, value, operation.slippageBps);
+      if (pons.phase === 2) return prepareGraduatedPonsV4Buy(request, owner, resolved.address, pons, value, operation.slippageBps, operation.ponsFactoryAddress as Address);
       if (pons.phase !== 0) throw new Error("this Pons V2 token is still finalizing its Uniswap V4 pool");
       if (pons.pairToken !== zeroAddress) throw new Error("this Pons V2 curve buys with its paired asset, not ETH");
       const simulation = await rpcClient().simulateContract({
@@ -491,21 +447,20 @@ export async function executeTransaction(request: ExecutionRequest) {
     const resolved = await resolveToken(operation.token);
     const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit);
     const client = rpcClient();
-    const pons = await resolveActivePonsCurve(resolved.address);
+    const pons = await resolveActivePonsCurve(resolved.address, operation.ponsFactoryAddress as Address);
     if (pons) {
-      if (pons.phase === 2) return prepareGraduatedPonsV4Sell(request, owner, resolved.address, pons, amount, operation.slippageBps);
+      if (pons.phase === 2) return prepareGraduatedPonsV4Sell(request, owner, resolved.address, pons, amount, operation.slippageBps, operation.ponsFactoryAddress as Address);
       if (pons.phase !== 0) throw new Error("this Pons V2 token is still finalizing its Uniswap V4 pool");
       const allowance = await client.readContract({ address: resolved.address, abi: tokenAbi, functionName: "allowance", args: [owner, pons.curve] });
-      let approvalTransactionHash: Hex | undefined;
       if (allowance < amount) {
-        approvalTransactionHash = await approveAndWait(request, resolved.address, pons.curve, "curve-approval");
+        return prepareApproval(request, resolved.address, pons.curve, amount, "curve-approval");
       }
       const simulation = await client.simulateContract({
         account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "sell", args: [amount, 0n, owner],
       });
       const minimum = simulation.result * BigInt(10_000 - operation.slippageBps) / 10_000n;
       const data = encodeFunctionData({ abi: ponsCurveAbi, functionName: "sell", args: [amount, minimum, owner] });
-      return { ...(await prepareSigned(request, pons.curve, data, 0n)), approvalTransactionHash, approvalTokenAddress: approvalTransactionHash ? resolved.address : undefined };
+      return prepareSigned(request, pons.curve, data, 0n);
     }
     const allowance = await client.readContract({ address: resolved.address, abi: tokenAbi, functionName: "allowance", args: [owner, operation.routerAddress as Address] });
     const quote = await bestV3Route(resolved.address, operation.wethAddress as Address, operation.quoterAddress as Address, amount);
@@ -592,7 +547,8 @@ export async function transactionStatus(request: TransactionStatusRequest) {
       blockNumber: receipt.blockNumber.toString(), valueWei: request.expectedValueWei,
     };
   if (receipt.status === "success" && request.operationType.startsWith("pons_v2_launch")) {
-      const factory = (process.env.PONS_V2_FACTORY_ADDRESS || "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e").toLowerCase();
+      const factory = (request.expectedFactory || (request.operationType === "pons_v2_launch" ? request.expectedTo : "")).toLowerCase();
+      if (!factory) throw new Error("expected Pons factory is missing from receipt verification");
       let verifiedOpeningBuy = false;
       for (const log of receipt.logs) {
         if (log.address.toLowerCase() === factory) {
@@ -606,7 +562,7 @@ export async function transactionStatus(request: TransactionStatusRequest) {
             if (error instanceof Error && error.message === "launch deployer mismatch") throw error;
           }
         }
-        if (request.operationType === "pons_v2_launch_and_buy" && log.address.toLowerCase() === PONS_ROUTER.toLowerCase()) {
+        if (request.operationType === "pons_v2_launch_and_buy" && log.address.toLowerCase() === request.expectedTo.toLowerCase()) {
           try {
             const decoded = decodeEventLog({ abi: ponsRouterAbi, data: log.data, topics: log.topics });
             if (decoded.eventName !== "Launched") continue;

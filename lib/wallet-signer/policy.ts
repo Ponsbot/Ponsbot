@@ -6,22 +6,35 @@ const ownerReference = z.string().regex(/^x:\d{1,30}$/);
 const amount = z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/).max(80)
   .refine((value) => Number(value) > 0, "amount must be positive");
 const token = z.string().min(1).max(50);
-const amountUnit = z.enum(["eth", "usd", "token", "percent"]);
+const percentageAmount = amount.refine((value) => Number(value) <= 100, "percentage cannot exceed 100");
 
 const transferOperation = z.object({
   type: z.literal("eth_transfer"), recipient: address, amount, unit: z.enum(["eth", "usd"]),
 }).strict();
 const erc20TransferOperation = z.object({
-  type: z.literal("erc20_transfer"), recipient: address, amount, unit: amountUnit, token,
-}).strict();
+  type: z.literal("erc20_transfer"), recipient: address, amount, unit: z.enum(["usd", "token", "percent"]), token,
+  quoterAddress: address, wethAddress: address, fee: z.literal(10_000),
+}).strict().superRefine((operation, ctx) => {
+  if (operation.unit === "percent" && !percentageAmount.safeParse(operation.amount).success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "percentage cannot exceed 100", path: ["amount"] });
+});
 const burnOperation = z.object({
   type: z.literal("erc20_burn_to_dead"), deadAddress: address, amount, unit: z.enum(["usd", "token", "percent"]), token,
+  quoterAddress: address, wethAddress: address, fee: z.literal(10_000),
+}).strict().superRefine((operation, ctx) => {
+  if (operation.unit === "percent" && !percentageAmount.safeParse(operation.amount).success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "percentage cannot exceed 100", path: ["amount"] });
+});
+const buyOperation = z.object({
+  type: z.literal("uniswap_v3_buy"), token, amount, unit: z.enum(["eth", "usd"]),
+  slippageBps: z.number().int().min(10).max(2_000),
+  routerAddress: address, quoterAddress: address, wethAddress: address, ponsFactoryAddress: address, fee: z.literal(10_000),
 }).strict();
-const swapOperation = z.object({
-  type: z.enum(["uniswap_v3_buy", "uniswap_v3_sell"]), token, amount,
-  unit: amountUnit, slippageBps: z.number().int().min(10).max(2_000),
-  routerAddress: address, quoterAddress: address, wethAddress: address, fee: z.literal(10_000),
-}).strict();
+const sellOperation = z.object({
+  type: z.literal("uniswap_v3_sell"), token, amount, unit: z.enum(["token", "percent"]),
+  slippageBps: z.number().int().min(10).max(2_000),
+  routerAddress: address, quoterAddress: address, wethAddress: address, ponsFactoryAddress: address, fee: z.literal(10_000),
+}).strict().superRefine((operation, ctx) => {
+  if (operation.unit === "percent" && !percentageAmount.safeParse(operation.amount).success) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "percentage cannot exceed 100", path: ["amount"] });
+});
 const launchOperation = z.object({
   type: z.enum(["pons_v2_launch", "pons_v2_launch_and_buy"]), launchMode: z.literal("pons"),
   factoryAddress: address, launchAndBuyRouter: address, name: z.string().min(1).max(48),
@@ -33,8 +46,8 @@ const launchOperation = z.object({
   pairToken: address, method: z.enum(["launchAndBuy", "launchToken"]),
 }).strict();
 
-export const signerOperationSchema = z.discriminatedUnion("type", [
-  transferOperation, erc20TransferOperation, burnOperation, swapOperation, launchOperation,
+export const signerOperationSchema = z.union([
+  transferOperation, erc20TransferOperation, burnOperation, buyOperation, sellOperation, launchOperation,
 ]);
 
 export const walletRequestSchema = z.object({
@@ -55,6 +68,7 @@ export const executionRequestSchema = z.object({
 const transactionRequest = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID), ownerReference, walletRef: address, expectedFrom: address,
   expectedTo: address,
+  expectedFactory: address.optional(),
   transactionHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/), operationType: z.string().min(1).max(80),
   expectedValueWei: z.string().regex(/^\d+$/),
 }).strict();

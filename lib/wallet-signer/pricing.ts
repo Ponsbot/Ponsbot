@@ -45,9 +45,16 @@ export async function ethUsdPrice() {
   const midpoint = (coinbase + coinGecko) / 2;
   const deviationBps = Math.abs(coinbase - coinGecko) / midpoint * 10_000;
   if (deviationBps > MAX_DEVIATION_BPS) throw new Error("ETH/USD price sources disagree");
-  const price = Math.min(coinbase, coinGecko);
+  // A higher ETH/USD price converts the requested dollars into less ETH, so
+  // the wallet never spends more ETH merely because the feeds differ.
+  const price = conservativeEthUsdPrice(coinbase, coinGecko);
   cached = { price, expiresAt: Date.now() + CACHE_MS };
   return price;
+}
+
+export function conservativeEthUsdPrice(first: number, second: number) {
+  if (!validPrice(first) || !validPrice(second)) throw new Error("ETH/USD price source returned an invalid value");
+  return Math.max(first, second);
 }
 
 export function usdToEthWei(usd: string, ethUsd: number) {

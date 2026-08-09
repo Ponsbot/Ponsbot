@@ -1,18 +1,6 @@
 import { createPublicClient, http, parseAbi, zeroAddress, type Address } from "viem";
-
-export const PONS_V2_FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
-export const PONS_V2_LAUNCH_AND_BUY_ROUTER = "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948" as Address;
-export const PONS_V2_PAIR_CANDIDATES = [
-  "0xB90A19fF0Af67f7779afF50A882A9CfF42446400", // SNDK
-  "0x86923f96303D656E4aa86D9d42D1e57ad2023fdC", // AMD
-  "0x12f190a9F9d7D37a250758b26824B97CE941bF54", // AMZN
-  "0xe93237C50D904957Cf27E7B1133b510C669c2e74", // MSFT
-  "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35", // META
-  "0xdF0992E440dD0be65BD8439b609d6D4366bf1CB5", // CRCL
-  "0x6330D8C3178a418788dF01a47479c0ce7CCF450b", // COIN
-  "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD", // MU
-  "0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A", // PLTR
-] as const satisfies readonly Address[];
+import { internal } from "./_generated/api";
+import { internalAction } from "./_generated/server";
 
 const factoryAbi = parseAbi([
   "function approvedPairTokens(address asset) view returns (bool)",
@@ -44,11 +32,9 @@ export async function discoverPonsV2PairAssets(options: {
   candidates?: Address[];
 } = {}): Promise<PonsPairAsset[]> {
   const rpcUrl = options.rpcUrl || process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
-  const factory = options.factory || (process.env.PONS_V2_FACTORY_ADDRESS as Address | undefined) || PONS_V2_FACTORY;
-  const configured = options.candidates || [
-    ...PONS_V2_PAIR_CANDIDATES,
-    ...parsePairCandidates(process.env.PONS_V2_PAIR_CANDIDATES || ""),
-  ];
+  const factory = options.factory;
+  if (!factory) throw new Error("Pons V2 factory is required from the contract registry");
+  const configured = options.candidates || [];
   const client = createPublicClient({ transport: http(rpcUrl) });
   const verifiedAt = Date.now();
   const results: PonsPairAsset[] = [{
@@ -83,3 +69,30 @@ export function formatPonsPairReply(assets: PonsPairAsset[]) {
   const labels = assets.map((asset) => asset.native ? "ETH" : `${asset.symbol} (${asset.name})`);
   return `🔗 Pons V2 currently accepts these launch pairs: ${labels.join(", ")}. I verified the ERC-20 options against the factory just now!`;
 }
+
+export const refreshRegistry = internalAction({
+  args: {},
+  handler: async (ctx): Promise<PonsPairAsset[]> => {
+    await ctx.runMutation(internal.registry.ensureInitialized, {});
+    const config = await ctx.runQuery(internal.registry.runtimeConfig, {});
+    const factory = config.contracts.pons_v2_factory as Address | undefined;
+    if (!factory) throw new Error("Pons V2 factory is missing from the contract registry");
+    const assets = await discoverPonsV2PairAssets({
+      factory,
+      candidates: config.pairs.map((item) => item.address as Address),
+    });
+    const verified = new Map(assets.filter((item) => !item.native).map((item) => [item.address.toLowerCase(), item]));
+    const verifiedAt = Date.now();
+    for (const candidate of config.pairs) {
+      const asset = verified.get(candidate.normalizedAddress);
+      await ctx.runMutation(internal.registry.updatePairVerification, {
+        address: candidate.address,
+        symbol: asset?.symbol || candidate.symbol,
+        name: asset?.name || candidate.name,
+        decimals: asset?.decimals ?? candidate.decimals,
+        approved: Boolean(asset), verifiedAt,
+      });
+    }
+    return assets;
+  },
+});

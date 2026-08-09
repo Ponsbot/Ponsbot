@@ -11,6 +11,7 @@
 import type * as crons from "../crons.js";
 import type * as llm from "../llm.js";
 import type * as ponsV2 from "../ponsV2.js";
+import type * as registry from "../registry.js";
 import type * as site from "../site.js";
 import type * as walletCommands from "../walletCommands.js";
 import type * as wallets from "../wallets.js";
@@ -29,6 +30,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   llm: typeof llm;
   ponsV2: typeof ponsV2;
+  registry: typeof registry;
   site: typeof site;
   walletCommands: typeof walletCommands;
   wallets: typeof wallets;

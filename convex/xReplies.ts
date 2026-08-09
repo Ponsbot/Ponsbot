@@ -5,7 +5,7 @@ import type { ActionCtx } from "./_generated/server";
 import { parseWalletCommand } from "./walletCommands";
 import { shouldSuppressXResponse } from "./xReplyPolicy";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
-import { discoverPonsV2PairAssets, formatPonsPairReply } from "./ponsV2";
+import { formatPonsPairReply } from "./ponsV2";
 import { fitXReply, xWeightedLength } from "./xText";
 
 const X_API = "https://api.x.com/2";
@@ -40,10 +40,10 @@ function rateLimitMessage(reason: string) {
   return "🛠️ I'm handling lots of wallet requests right now. Please try again shortly!";
 }
 
-async function helpReply(topic: Parameters<typeof walletHelpMessage>[0]) {
+async function helpReply(ctx: ActionCtx, topic: Parameters<typeof walletHelpMessage>[0]) {
   if (topic !== "pairs") return walletHelpMessage(topic);
   try {
-    return formatPonsPairReply(await discoverPonsV2PairAssets());
+    return formatPonsPairReply(await ctx.runAction(internal.ponsV2.refreshRegistry, {}));
   } catch (error) {
     console.error("pons_v2_pair_discovery_failed", { message: error instanceof Error ? error.message : "unknown" });
     return "⚠️ ETH is a Pons V2 launch pair, but I couldn't verify the ERC-20 allowlist just now. I won't guess, so please ask me again shortly!";
@@ -85,7 +85,7 @@ async function xAuthorization(method: "GET" | "POST", url: string, query: URLSea
 
 async function xGet<T>(path: string, query: URLSearchParams): Promise<T> {
   const url = `${X_API}${path}`;
-  const response = await fetch(`${url}?${query}`, { headers: { authorization: await xAuthorization("GET", url, query) } });
+  const response = await fetch(`${url}?${query}`, { headers: { authorization: await xAuthorization("GET", url, query) }, signal: AbortSignal.timeout(20_000) });
   const payload = await response.json().catch(() => ({})) as T & { detail?: string };
   if (!response.ok) throw new Error(payload.detail || `X GET failed (${response.status})`);
   return payload;
@@ -103,6 +103,7 @@ async function publishReply(text: string, sourcePostId: string) {
     method: "POST",
     headers: { authorization: await xAuthorization("POST", url), "content-type": "application/json" },
     body: JSON.stringify({ text, reply: { in_reply_to_tweet_id: sourcePostId } }),
+    signal: AbortSignal.timeout(20_000),
   });
   const payload = await response.json().catch(() => ({})) as { data?: { id?: string }; detail?: string };
   if (!response.ok || !payload.data?.id) throw new Error(payload.detail || `X reply failed (${response.status})`);
@@ -324,7 +325,7 @@ export const retryInteraction = internalAction({
       }
       let reply: string;
       let ok = true;
-      if (intent.kind === "help") reply = await helpReply(intent.topic);
+      if (intent.kind === "help") reply = await helpReply(ctx, intent.topic);
       else if (intent.kind === "unknown_wallet") { reply = unknownWalletMessage(); ok = false; }
       else {
         await ctx.runAction(internal.wallets.ensureWallet, { xUserId: current.user.xUserId });
@@ -465,7 +466,7 @@ export const pollMentions = internalAction({
         await ctx.runMutation(internal.xReplies.updateInteraction, { postId: mention.id, status: "processing", commandKind: intentKind });
         try {
           if (intent.kind === "help") {
-            const reply = await helpReply(intent.topic);
+            const reply = await helpReply(ctx, intent.topic);
             const responsePostId = await publishReplyOnce(ctx, reply, mention.id);
             await ctx.runMutation(internal.xReplies.updateInteraction, {
               postId: mention.id, status: "completed", commandKind: `help:${intent.topic}`, responsePostId,

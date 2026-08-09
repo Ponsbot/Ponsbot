@@ -8,7 +8,7 @@ Ponsbot is a focused X reply bot for Robinhood Chain wallets and Pons V2 token l
 - Two-stage AI intent classification and command extraction
 - Per-X-user Robinhood Chain wallets
 - Wallet command parsing and prepared responses
-- Pons V2 factory and launch-and-buy router documented
+- Pons V2 contracts and pair assets maintained in updateable Convex registries
 - All transaction execution disabled by default
 - Pons signer integration still requires a dedicated security pass before use
 
@@ -21,8 +21,7 @@ Ponsbot is a focused X reply bot for Robinhood Chain wallets and Pons V2 token l
 ## Pons reference
 
 - Chain: Robinhood Chain (`4663`)
-- V2 factory: `0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e`
-- Launch-and-buy router: `0xe33E9E479dF8802cb0866d5d05258bEc4cF62948`
+- Factory, launch router, swap contracts, and approved pair candidates are read from Convex tables at runtime
 - Factory method: `launchToken(TokenParams,uint256,address)`
 - Router method: `launchAndBuy(...)`
 - Token metadata: name, symbol, logo, description, socials, fee wallet

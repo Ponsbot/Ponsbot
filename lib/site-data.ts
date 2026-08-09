@@ -89,8 +89,8 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
   const base = "https://robinhoodchain-mainnet-explorer-api.rpc.caldera.xyz/api/v2";
   try {
     const [accountResponse, tokensResponse] = await Promise.all([
-      fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 } }),
-      fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 } }),
+      fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
+      fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
     ]);
     if (!accountResponse.ok || !tokensResponse.ok) throw new Error("explorer unavailable");
     const account = await accountResponse.json() as { coin_balance?: string };
