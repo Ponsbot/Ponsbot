@@ -54,11 +54,32 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       if (expected.address.toLowerCase() !== input.expectedAddress.toLowerCase()) throw new Error("wallet owner mismatch");
       return NextResponse.json(await walletBalance(input.expectedAddress as `0x${string}`, input.token));
     }
-    if (path === "v1/transactions/execute") return NextResponse.json(await executeTransaction(executionRequestSchema.parse(body)));
-    if (path === "v1/transactions/broadcast") return NextResponse.json(await broadcastTransaction(broadcastRequestSchema.parse(body)));
-    if (path === "v1/transactions/status") return NextResponse.json(await transactionStatus(transactionStatusRequestSchema.parse(body)));
+    if (path === "v1/transactions/execute") {
+      const input = executionRequestSchema.parse(body);
+      await assertWalletOwner(input.ownerReference, input.walletRef, input.expectedFrom);
+      return NextResponse.json(await executeTransaction(input));
+    }
+    if (path === "v1/transactions/broadcast") {
+      const input = broadcastRequestSchema.parse(body);
+      await assertWalletOwner(input.ownerReference, input.walletRef, input.expectedFrom);
+      return NextResponse.json(await broadcastTransaction(input));
+    }
+    if (path === "v1/transactions/status") {
+      const input = transactionStatusRequestSchema.parse(body);
+      await assertWalletOwner(input.ownerReference, input.walletRef, input.expectedFrom);
+      return NextResponse.json(await transactionStatus(input));
+    }
     return NextResponse.json({ error: "not found" }, { status: 404 });
   } catch (error) {
     return errorResponse(error);
+  }
+}
+
+async function assertWalletOwner(ownerReference: string, walletRef: string, expectedFrom: string) {
+  if (walletRef.toLowerCase() !== expectedFrom.toLowerCase()) throw new Error("wallet reference mismatch");
+  const expected = await provisionWallet(ownerReference);
+  if (expected.walletRef.toLowerCase() !== walletRef.toLowerCase()
+    || expected.address.toLowerCase() !== expectedFrom.toLowerCase()) {
+    throw new Error("wallet owner mismatch");
   }
 }

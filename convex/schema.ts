@@ -58,7 +58,8 @@ export default defineSchema({
     twitter: v.optional(v.string()), pairToken: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()),
     poolAddress: v.optional(v.string()), positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
     createdAt: v.number(), updatedAt: v.number(),
-  }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"]).index("by_token_address", ["tokenAddress"]),
+  }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
+    .index("by_token_address", ["tokenAddress"]).index("by_symbol", ["symbol"]),
 
   walletRateLimits: defineTable({ ownerXUserId: v.string(), day: v.string(), count: v.number(), updatedAt: v.number() })
     .index("by_owner_x_user_id", ["ownerXUserId"]),

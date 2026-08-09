@@ -9,6 +9,7 @@ const ROBINHOOD_CHAIN_ID = 4663;
 const NON_PREMIUM_DAILY_LIMIT = 10;
 const PREMIUM_DAILY_LIMIT = 50;
 const PROVISIONING_LEASE_MS = 2 * 60_000;
+const MAX_RECONCILIATION_ATTEMPTS = 20;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 const VERIFIED_SWAP_ROUTER = "0xcaf681a66d020601342297493863e78c959e5cb2";
 const VERIFIED_SWAP_QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7";
@@ -31,6 +32,16 @@ type SubmittedTransaction = {
   devBuySucceeded?: boolean;
 };
 type CommandResult = { ok: boolean; message: string; transactionHash?: string };
+
+function operationDestination(operation: Record<string, unknown>) {
+  const destination = operation.type === "pons_v2_launch" ? operation.factoryAddress
+    : operation.type === "pons_v2_launch_and_buy" ? operation.launchAndBuyRouter
+      : operation.recipient || operation.routerAddress || operation.lockerAddress || operation.padAddress || operation.deadAddress;
+  if (typeof destination !== "string" || !safeAddress(destination)) {
+    throw new Error("transaction destination is missing or invalid");
+  }
+  return destination;
+}
 
 function executionEnabled() {
   return process.env.X_CRYPTO_EXECUTION_ENABLED === "true";
@@ -352,6 +363,47 @@ export const markTransactionBroadcast = internalMutation({
   },
 });
 
+export const resolveKnownToken = internalQuery({
+  args: { identifier: v.string() },
+  handler: async (ctx, { identifier }) => {
+    const normalized = identifier.replace(/^\$/, "").toLowerCase();
+    if (safeAddress(normalized)) return identifier;
+    const candidates = await ctx.db.query("tokenLaunches").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).take(20);
+    const matches = candidates.filter((launch) => launch.tokenAddress && launch.symbol.toLowerCase() === normalized);
+    if (matches.length > 1) throw new Error("that ticker matches more than one Ponsbot token; use the contract address");
+    return matches[0]?.tokenAddress || identifier;
+  },
+});
+
+export const recordBroadcastExecution = internalMutation({
+  args: {
+    requestId: v.string(), walletId: v.id("cryptoWallets"), to: v.string(), valueWei: v.string(),
+    callKind: v.string(), transactionHash: v.string(), launch: v.optional(launchRecordValidator),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const existing = await ctx.db.query("walletTransactions").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
+    if (!existing) await ctx.db.insert("walletTransactions", {
+      requestId: args.requestId, walletId: args.walletId, chainId: ROBINHOOD_CHAIN_ID,
+      to: args.to, valueWei: args.valueWei, callKind: args.callKind,
+      transactionHash: args.transactionHash, status: "broadcast", createdAt: now, updatedAt: now,
+    });
+    if (args.launch) {
+      const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
+      if (!launch) await ctx.db.insert("tokenLaunches", {
+        requestId: args.requestId, walletId: args.walletId, transactionHash: args.transactionHash,
+        ...args.launch, createdAt: now, updatedAt: now,
+      });
+    }
+    const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
+    if (request) await ctx.db.patch(request._id, {
+      status: "broadcast", transactionHash: args.transactionHash, reconciliationAttempts: 0,
+      nextReconcileAt: now + 15_000, safeError: undefined, updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(15_000, internal.wallets.reconcileTransaction, { requestId: args.requestId });
+  },
+});
+
 export const recordConfirmedExecution = internalMutation({
   args: {
     requestId: v.string(), walletId: v.id("cryptoWallets"), to: v.string(), valueWei: v.string(),
@@ -398,6 +450,13 @@ export const deferReconciliation = internalMutation({
   handler: async (ctx, args) => {
     const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (!request || (request.status !== "prepared" && request.status !== "broadcast")) return;
+    if (args.attempt >= MAX_RECONCILIATION_ATTEMPTS) {
+      await ctx.db.patch(request._id, {
+        status: "failed", safeError: "transaction status requires manual review",
+        reconciliationAttempts: args.attempt, nextReconcileAt: undefined, updatedAt: Date.now(),
+      });
+      return;
+    }
     const delay = Math.min(15 * 60_000, 15_000 * 2 ** Math.min(args.attempt, 6));
     await ctx.db.patch(request._id, { reconciliationAttempts: args.attempt, nextReconcileAt: Date.now() + delay, updatedAt: Date.now() });
     await ctx.scheduler.runAfter(delay, internal.wallets.reconcileTransaction, { requestId: args.requestId });
@@ -429,6 +488,7 @@ export const reconcileTransaction = internalAction({
         transactionHash: current.request.transactionHash,
         operationType: current.transaction.callKind,
         expectedValueWei: current.transaction.valueWei,
+        expectedTo: current.transaction.to,
       };
       const result = current.request.status === "prepared"
         ? await signerRequest<SubmittedTransaction>("/v1/transactions/broadcast", {
@@ -444,13 +504,15 @@ export const reconcileTransaction = internalAction({
         await ctx.runMutation(internal.wallets.recordRevertedExecution, { requestId: args.requestId, blockNumber: result.blockNumber });
         return;
       }
-      if (current.request.kind === "launch" && (!result.tokenAddress || !result.poolAddress || !result.positionId)) throw new Error("launch receipt was incomplete");
+      if (current.request.kind === "launch" && (!result.tokenAddress || !result.poolAddress)) throw new Error("launch receipt was incomplete");
       const launch = current.launch ? {
         ownerXUserId: current.launch.ownerXUserId, launchMode: current.launch.launchMode,
         name: current.launch.name, symbol: current.launch.symbol, imageUri: current.launch.imageUri,
         description: current.launch.description, website: current.launch.website, twitter: current.launch.twitter,
         devBuyWei: result.valueWei || current.launch.devBuyWei,
-        tokenAddress: result.tokenAddress, poolAddress: result.poolAddress, positionId: result.positionId,
+        tokenAddress: result.tokenAddress || current.launch.tokenAddress,
+        poolAddress: result.poolAddress || current.launch.poolAddress,
+        positionId: result.positionId || current.launch.positionId,
         devBuySucceeded: result.devBuySucceeded,
       } : undefined;
       await ctx.runMutation(internal.wallets.recordConfirmedExecution, {
@@ -550,6 +612,10 @@ export const executeCommand = internalAction({
       ? validateStructuredWalletCommand(JSON.parse(args.parsedCommandJson) as unknown)
       : null;
     const command = structured || parseWalletCommand(args.text);
+    if (command.kind === "unknown") return { ok: false, message: command.reason };
+    if (command.kind === "claim_fees") {
+      return { ok: false, message: "Creator-fee claims aren't available through Ponsbot yet. No wallet action was used." };
+    }
     const userContext = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.xUserId });
     if (!userContext) return { ok: false, message: "❌ I couldn't connect this X account to its wallet. Please try again!" };
     let wallet = userContext.wallet;
@@ -574,8 +640,6 @@ export const executeCommand = internalAction({
         return { ok: false, message: safeFailure(error) };
       }
     }
-    if (command.kind === "unknown") return { ok: false, message: command.reason };
-
     const requestId = `x:${args.sourcePostId}:${command.kind}`;
     const reserved = await ctx.runMutation(internal.wallets.reserveWalletRequest, {
       requestId, sourcePostId: args.sourcePostId, ownerXUserId: args.xUserId,
@@ -609,10 +673,10 @@ export const executeCommand = internalAction({
       const warning = limit.remaining === 2 ? "\n⚠️ 2 wallet actions remain today." : limit.remaining === 1 ? "\n⚠️ 1 wallet action remains today." : limit.remaining === 0 ? "\n⏰ Today's wallet limit is now reached." : "";
       try {
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "simulating" });
-        const claimToken = command.kind === "claim_fees"
-          ? await ctx.runQuery(internal.wallets.resolveClaimToken, { ownerXUserId: args.xUserId, identifier: command.token })
+        const commandToken = "token" in command && typeof command.token === "string"
+          ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token })
           : undefined;
-        const operation = await operationFor(command, args.mediaUrl, claimToken, args.recipientAddress, userContext.user.username);
+        const operation = await operationFor(command, args.mediaUrl, undefined, args.recipientAddress, userContext.user.username, commandToken);
         const result = await submit(wallet, args.xUserId, requestId, operation);
         if (!/^0x[a-fA-F0-9]{64}$/.test(result.transactionHash)) throw new Error("signer returned an invalid transaction hash");
         if (result.status === "reverted") throw new Error("transaction reverted");
@@ -627,10 +691,11 @@ export const executeCommand = internalAction({
           poolAddress: result.poolAddress, positionId: result.positionId,
           devBuySucceeded: result.devBuySucceeded,
         } : undefined;
+        const to = operationDestination(operation);
         if (result.status === "prepared") {
           if (!result.signedTransaction || !/^0x[a-fA-F0-9]+$/.test(result.signedTransaction)) throw new Error("signer returned an invalid prepared transaction");
           await ctx.runMutation(internal.wallets.recordPreparedExecution, {
-            requestId, walletId: wallet._id, to: String(operation.recipient || operation.lockerAddress || operation.padAddress || operation.deadAddress || ""),
+            requestId, walletId: wallet._id, to,
             valueWei: result.valueWei || "0", callKind: String(operation.type), transactionHash: result.transactionHash,
             signedTransaction: result.signedTransaction,
             launch: launchBase,
@@ -643,15 +708,21 @@ export const executeCommand = internalAction({
           if (reconciled?.request.status === "failed") throw new Error(reconciled.request.safeError || "transaction reverted");
           return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, "submitted")}${warning}` };
         }
-        if (result.status === "broadcast" || result.status === "pending") throw new Error("signer returned an unpersisted broadcast");
+        if (result.status === "broadcast" || result.status === "pending") {
+          await ctx.runMutation(internal.wallets.recordBroadcastExecution, {
+            requestId, walletId: wallet._id, to, valueWei: result.valueWei || "0",
+            callKind: String(operation.type), transactionHash: result.transactionHash, launch: launchBase,
+          });
+          return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, "submitted")}${warning}` };
+        }
         if (command.kind === "launch" && (!result.tokenAddress || !safeAddress(result.tokenAddress))) {
           throw new Error("launch receipt did not contain a token address");
         }
-        if (command.kind === "launch" && (!result.poolAddress || !safeAddress(result.poolAddress) || !result.positionId)) {
+        if (command.kind === "launch" && (!result.poolAddress || !safeAddress(result.poolAddress))) {
           throw new Error("launch receipt did not contain its curve position");
         }
         await ctx.runMutation(internal.wallets.recordConfirmedExecution, {
-          requestId, walletId: wallet._id, to: String(operation.recipient || operation.lockerAddress || operation.padAddress || operation.deadAddress || ""),
+          requestId, walletId: wallet._id, to,
           valueWei: result.valueWei || "0", callKind: String(operation.type), transactionHash: result.transactionHash,
           blockNumber: result.blockNumber, launch: launchBase,
         });
@@ -676,20 +747,21 @@ async function operationFor(
   claimToken?: string,
   recipientAddress?: string,
   launcherUsername?: string,
+  tokenOverride?: string,
 ): Promise<Record<string, unknown>> {
   if (command.kind === "send") {
     const recipient = safeAddress(command.recipient) ? command.recipient : recipientAddress;
     if (!recipient || !safeAddress(recipient) || recipient.toLowerCase() === DEAD_ADDRESS.toLowerCase()) throw new Error("invalid transfer destination");
     const nativeEth = !command.token || /^eth$/i.test(command.token);
-    return { type: nativeEth ? "eth_transfer" : "erc20_transfer", recipient, amount: command.amount, unit: command.unit, ...(nativeEth ? {} : { token: command.token }) };
+    return { type: nativeEth ? "eth_transfer" : "erc20_transfer", recipient, amount: command.amount, unit: command.unit, ...(nativeEth ? {} : { token: tokenOverride || command.token }) };
   }
   if (command.kind === "burn") {
-    return { type: "erc20_burn_to_dead", deadAddress: DEAD_ADDRESS, amount: command.amount, unit: command.unit, token: command.token };
+    return { type: "erc20_burn_to_dead", deadAddress: DEAD_ADDRESS, amount: command.amount, unit: command.unit, token: tokenOverride || command.token };
   }
   if (command.kind === "buy" || command.kind === "sell") {
     return {
       type: command.kind === "buy" ? "uniswap_v3_buy" : "uniswap_v3_sell",
-      token: command.token, amount: command.amount, unit: command.unit, slippageBps: command.slippageBps,
+      token: tokenOverride || command.token, amount: command.amount, unit: command.unit, slippageBps: command.slippageBps,
       routerAddress: VERIFIED_SWAP_ROUTER, quoterAddress: VERIFIED_SWAP_QUOTER,
       wethAddress: VERIFIED_WETH, fee: 10_000,
     };
