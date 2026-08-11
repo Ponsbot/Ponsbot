@@ -1,13 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
-import { LaunchCard } from "@/components/LaunchCard";
+import { LaunchGrid } from "@/components/LaunchGrid";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { listLaunches } from "@/lib/site-data";
 
 export const revalidate = 30;
 
 export default async function Home() {
-  const launches = await listLaunches(18);
+  const launches = await listLaunches(60);
   return <main>
     <SiteHeader />
     <section className="home-hero">
@@ -29,7 +29,7 @@ export default async function Home() {
     </section>
     <section className="launch-section" id="launches">
       <div className="section-heading row"><div><p className="eyebrow">Fresh from Ponsbot</p><h2>Launches</h2></div></div>
-      {launches.length ? <div className="launch-grid">{launches.map((launch) => <LaunchCard key={launch.tokenAddress} launch={launch} />)}</div> : <div className="empty-state"><span>✦</span><h3>The first launches are on their way.</h3><p>New tokens will appear here after they launch on Pons V2.</p></div>}
+      {launches.length ? <LaunchGrid launches={launches} /> : <div className="empty-state"><span>✦</span><h3>The first launches are on their way.</h3><p>New tokens will appear here after they launch on Pons V2.</p></div>}
     </section>
     <SiteFooter />
   </main>;
