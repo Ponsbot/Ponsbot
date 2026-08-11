@@ -7,8 +7,8 @@ import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletComma
 import { formatUnits } from "viem";
 
 const ROBINHOOD_CHAIN_ID = 4663;
-const NON_PREMIUM_DAILY_LIMIT = 10;
-const PREMIUM_DAILY_LIMIT = 50;
+const NON_PREMIUM_DAILY_LIMIT = 25;
+const PREMIUM_DAILY_LIMIT = 100;
 const PROVISIONING_LEASE_MS = 2 * 60_000;
 const MAX_RECONCILIATION_ATTEMPTS = 20;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
