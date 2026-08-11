@@ -38,3 +38,5 @@
 @media(max-width:900px){.message-stack .bubble-buy{right:1%}.message-stack .bubble-send{right:2%}.launch-guide{grid-template-columns:1fr;gap:30px;padding:45px}.command-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:900px){.header-ca{display:none}}
 @media(max-width:600px){.site-header{padding-inline:16px}.wordmark span:last-child{display:none}.site-header nav{gap:13px;font-size:10px}.site-header nav a:nth-child(2){display:none}.x-nav-link span{display:none}.hero-visual{min-height:480px}.message-stack .message-bubble{width:230px;padding:11px 13px;font-size:11px}.message-stack .bubble-pair{top:2%;left:0}.message-stack .bubble-buy{top:22%;right:0}.message-stack .bubble-launch{top:63%;left:0}.message-stack .bubble-send{top:82%;right:0}.command-section{margin-top:70px;padding-top:65px}.command-grid{grid-template-columns:1fr}.launch-guide{margin-top:70px;padding:28px 22px}.launch-detail-list p{grid-template-columns:1fr;gap:7px}.brand-logo{width:38px;height:38px}}
+
+.launch-card-mcap{display:block;margin-top:12px;color:var(--green);font-size:13px;letter-spacing:-.01em}

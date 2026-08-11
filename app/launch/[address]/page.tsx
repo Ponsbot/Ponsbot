@@ -16,7 +16,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title,
     description,
     alternates: { canonical: `/launch/${address}` },
-    openGraph: { title, description, url: `/launch/${address}`, type: "website", images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot — wallet, trading, and Pons V2 launches on X" }] },
+    openGraph: { title, description, url: `/launch/${address}`, type: "website", images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot - wallet, trading, and Pons V2 launches on X" }] },
     twitter: { card: "summary_large_image", title, description, images: ["/ponsbot-banner.png"] },
   };
 }
@@ -36,11 +36,13 @@ export default async function LaunchPage({ params }: Props) {
           <div className="facts">
             <div className="fact"><span>Token</span><strong>{shortAddress(launch.tokenAddress)}</strong></div>
             <div className="fact"><span>Launched</span><strong>{new Date(launch.createdAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</strong></div>
+            {launch.launcherUsername ? <div className="fact"><span>Launched by</span><strong><a href={`https://x.com/${launch.launcherUsername.replace(/^@/, "")}`} target="_blank" rel="noreferrer">@{launch.launcherUsername.replace(/^@/, "")}</a></strong></div> : null}
             {launch.creatorAddress ? <div className="fact"><span>Creator wallet</span><strong>{shortAddress(launch.creatorAddress)}</strong></div> : null}
             <div className="fact"><span>Network</span><strong>Robinhood Chain</strong></div>
+            {launch.marketCapUsd !== undefined ? <div className="fact"><span>Market cap</span><strong>{new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 2 }).format(launch.marketCapUsd)}</strong></div> : null}
           </div>
           <div className="detail-actions">
-            <a className="button button-dark" href={`https://ponsfamily.com/token/${launch.tokenAddress}`} target="_blank" rel="noreferrer">View on Pons ↗</a>
+            <a className="button button-dark" href={`https://www.ponsfamily.com/launchpad/${launch.tokenAddress}`} target="_blank" rel="noreferrer">View on Pons ↗</a>
             <a className="button button-quiet" href={explorerToken(launch.tokenAddress)} target="_blank" rel="noreferrer">View token ↗</a>
             {launch.creatorAddress ? <Link className="button button-quiet" href={`/wallet/${launch.creatorAddress}`}>Creator wallet</Link> : null}
             {launch.website ? <a className="button button-quiet" href={launch.website} target="_blank" rel="noreferrer">Website ↗</a> : null}

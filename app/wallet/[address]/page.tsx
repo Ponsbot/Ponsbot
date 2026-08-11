@@ -18,7 +18,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     description,
     ...(valid ? {
       alternates: { canonical: `/wallet/${address}` },
-      openGraph: { title, description, url: `/wallet/${address}`, type: "website" as const, images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot — wallet, trading, and Pons V2 launches on X" }] },
+      openGraph: { title, description, url: `/wallet/${address}`, type: "website" as const, images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot - wallet, trading, and Pons V2 launches on X" }] },
       twitter: { card: "summary_large_image" as const, title, description, images: ["/ponsbot-banner.png"] },
     } : {}),
   };

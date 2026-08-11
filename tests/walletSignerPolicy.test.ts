@@ -13,6 +13,10 @@ describe("wallet signer operation policy", () => {
       type: "eth_transfer", recipient: "0x2222222222222222222222222222222222222222",
       amount: "0.01", unit: "eth",
     } }).operation.type).toBe("eth_transfer");
+    expect(executionRequestSchema.parse({ ...base, operation: {
+      type: "eth_transfer", recipient: "0x2222222222222222222222222222222222222222",
+      amount: "100", unit: "percent",
+    } }).operation.type).toBe("eth_transfer");
   });
 
   it("rejects arbitrary calls and extra fields", () => {
@@ -38,6 +42,10 @@ describe("wallet signer operation policy", () => {
       ponsFactoryAddress: "0x6666666666666666666666666666666666666666",
       fee: 10_000,
     };
+    expect(() => executionRequestSchema.parse({ ...base, operation: {
+      type: "eth_transfer", recipient: "0x2222222222222222222222222222222222222222",
+      amount: "101", unit: "percent",
+    } })).toThrow();
     expect(() => executionRequestSchema.parse({ ...base, operation: {
       type: "uniswap_v3_buy", token: "0x7777777777777777777777777777777777777777",
       amount: "50", unit: "percent", slippageBps: 100, ...contracts,

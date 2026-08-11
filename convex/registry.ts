@@ -7,9 +7,20 @@ const BOOTSTRAP_CONTRACTS = {
   swap_router: "0xcaf681a66d020601342297493863e78c959e5cb2",
   swap_quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  v4_quoter: process.env.PONS_V4_QUOTER_ADDRESS || "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  universal_router: process.env.PONS_V4_UNIVERSAL_ROUTER_ADDRESS || "0x8876789976decbfcbbbe364623c63652db8c0904",
+  permit2: process.env.PONS_PERMIT2_ADDRESS || "0x000000000022D473030F116dDEE9F6B43aC78BA3",
 } as const;
+const ENV_MANAGED_CONTRACTS = new Set(["v4_quoter", "universal_router", "permit2"]);
 
 const BOOTSTRAP_PAIRS = [
+  ["0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", "NVDA", "NVIDIA"],
+  ["0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea", "SPCX", "SpaceX"],
+  ["0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3", "GOOGL", "Alphabet Class A"],
+  ["0x322f0929c4625ed5bad873c95208d54e1c003b2d", "TSLA", "Tesla"],
+  ["0x1b0e319c6a659f002271b69db8a7df2f911c153e", "GME", "GameStop"],
+  ["0xaf3d76f1834a1d425780943c99ea8a608f8a93f9", "AAPL", "Apple"],
+  ["0x117cc2133c37b721f49de2a7a74833232b3b4c0c", "SPY", "SPDR S&P 500 ETF Trust"],
   ["0xB90A19fF0Af67f7779afF50A882A9CfF42446400", "SNDK", "Sandisk"],
   ["0x86923f96303D656E4aa86D9d42D1e57ad2023fdC", "AMD", "AMD"],
   ["0x12f190a9F9d7D37a250758b26824B97CE941bF54", "AMZN", "Amazon"],
@@ -19,6 +30,7 @@ const BOOTSTRAP_PAIRS = [
   ["0x6330D8C3178a418788dF01a47479c0ce7CCF450b", "COIN", "Coinbase"],
   ["0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD", "MU", "Micron"],
   ["0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A", "PLTR", "Palantir"],
+  ["0x5fc5360d0400a0fd4f2af552add042d716f1d168", "USDG", "Global Dollar"],
 ] as const;
 
 export const ensureInitialized = internalMutation({
@@ -27,8 +39,12 @@ export const ensureInitialized = internalMutation({
     const now = Date.now();
     const previouslyInitialized = Boolean(await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique());
     for (const [key, address] of Object.entries(BOOTSTRAP_CONTRACTS)) {
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error(`${key} contract address is invalid`);
       const existing = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", key)).unique();
       if (!existing) await ctx.db.insert("protocolContracts", { key, address, normalizedAddress: address.toLowerCase(), active: true, updatedAt: now });
+      else if (ENV_MANAGED_CONTRACTS.has(key) && existing.address.toLowerCase() !== address.toLowerCase()) {
+        await ctx.db.patch(existing._id, { address, normalizedAddress: address.toLowerCase(), active: true, updatedAt: now });
+      }
     }
     for (const [address, symbol, name] of BOOTSTRAP_PAIRS) {
       const normalizedAddress = address.toLowerCase();

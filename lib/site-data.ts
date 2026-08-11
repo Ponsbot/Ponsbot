@@ -1,11 +1,13 @@
 import { ConvexHttpClient } from "convex/browser";
 import { formatEther, formatUnits, isAddress } from "viem";
 import { api } from "@/convex/_generated/api";
+import { addMarketCaps } from "@/lib/token-market-cap";
 
 export type PublicLaunch = {
   name: string; symbol: string; imageUri: string; description?: string;
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; creatorAddress?: string; createdAt: number;
+  pairToken?: string; poolAddress?: string; launcherUsername?: string; marketCapUsd?: number; marketCapUpdatedAt?: number;
 };
 
 const PREVIEW_WALLET = "0x0000000000000000000000000000000000000b07";
@@ -23,6 +25,9 @@ function previewLaunch(tokenAddress: string): PublicLaunch {
     transactionHash: `0x${"1".repeat(64)}`,
     devBuySucceeded: true,
     creatorAddress: "0x0000000000000000000000000000000000000B07",
+    launcherUsername: "PonsbotPreview",
+    marketCapUsd: 125_000,
+    marketCapUpdatedAt: Date.now(),
     createdAt: 1_755_000_000_000,
   };
 }
@@ -31,7 +36,8 @@ export async function listLaunches(limit = 24): Promise<PublicLaunch[]> {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) return [];
   try {
-    return await new ConvexHttpClient(url).query(api.site.listLaunches, { limit });
+    const launches = await new ConvexHttpClient(url).query(api.site.listLaunches, { limit });
+    return await addMarketCaps(launches);
   } catch (error) {
     console.error("public_launch_list_failed", error instanceof Error ? error.message : "unknown");
     return [];
@@ -44,7 +50,9 @@ export async function getLaunch(tokenAddress: string): Promise<PublicLaunch | nu
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) return null;
   try {
-    return await new ConvexHttpClient(url).query(api.site.getLaunch, { tokenAddress });
+    const launch = await new ConvexHttpClient(url).query(api.site.getLaunch, { tokenAddress });
+    if (!launch) return null;
+    return (await addMarketCaps([launch]))[0];
   } catch (error) {
     console.error("public_launch_lookup_failed", error instanceof Error ? error.message : "unknown");
     return null;
@@ -77,15 +85,6 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     { address: "0x0000000000000000000000000000000000000A11", name: "Ponsbot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png" },
     { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },
   ], available: true };
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (convexUrl) {
-    try {
-      const snapshots = await new ConvexHttpClient(convexUrl).query(api.site.getWalletSnapshot, { walletAddress: address });
-      if (snapshots.length) return { holdings: snapshots.map((item) => ({ address: item.tokenAddress, name: item.name, symbol: item.symbol, balance: item.displayBalance, iconUrl: item.iconUrl })), available: true };
-    } catch (error) {
-      console.error("public_wallet_snapshot_failed", error instanceof Error ? error.message : "unknown");
-    }
-  }
   const base = "https://robinhoodchain-mainnet-explorer-api.rpc.caldera.xyz/api/v2";
   try {
     const [accountResponse, tokensResponse] = await Promise.all([

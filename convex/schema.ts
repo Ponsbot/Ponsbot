@@ -49,11 +49,13 @@ export default defineSchema({
     requestId: v.string(), walletId: v.id("cryptoWallets"), chainId: v.number(), to: v.string(), valueWei: v.string(),
     callKind: v.string(), transactionHash: v.string(), signedTransaction: v.optional(v.string()),
     status: v.union(v.literal("prepared"), v.literal("broadcast"), v.literal("confirmed"), v.literal("reverted"), v.literal("invalid")),
-    blockNumber: v.optional(v.string()), createdAt: v.number(), updatedAt: v.number(),
+    blockNumber: v.optional(v.string()), claimedDisplay: v.optional(v.string()), tradeOutputDisplay: v.optional(v.string()),
+    tradeOutputTokenAddress: v.optional(v.string()), tradeOutputBalanceBefore: v.optional(v.string()), involvedPairTokenAddress: v.optional(v.string()),
+    createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_transaction_hash", ["transactionHash"]),
 
   tokenLaunches: defineTable({
-    requestId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), launchMode: v.literal("pons"),
+    requestId: v.string(), ownerXUserId: v.string(), launcherUsername: v.optional(v.string()), walletId: v.id("cryptoWallets"), launchMode: v.literal("pons"),
     name: v.string(), symbol: v.string(), imageUri: v.string(), description: v.optional(v.string()), website: v.optional(v.string()),
     twitter: v.optional(v.string()), telegram: v.optional(v.string()), pairToken: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()), normalizedTokenAddress: v.optional(v.string()),
     poolAddress: v.optional(v.string()), positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),

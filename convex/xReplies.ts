@@ -5,7 +5,6 @@ import type { ActionCtx } from "./_generated/server";
 import { parseWalletCommand } from "./walletCommands";
 import { shouldSuppressXResponse } from "./xReplyPolicy";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
-import { formatPonsPairReply } from "./ponsV2";
 import { fitXReply, xWeightedLength } from "./xText";
 
 const X_API = "https://api.x.com/2";
@@ -42,12 +41,8 @@ function rateLimitMessage(reason: string) {
 
 async function helpReply(ctx: ActionCtx, topic: Parameters<typeof walletHelpMessage>[0]) {
   if (topic !== "pairs") return walletHelpMessage(topic);
-  try {
-    return formatPonsPairReply(await ctx.runAction(internal.ponsV2.refreshRegistry, {}));
-  } catch (error) {
-    console.error("pons_v2_pair_discovery_failed", { message: error instanceof Error ? error.message : "unknown" });
-    return "⚠️ ETH is a Pons V2 launch pair, but I couldn't verify the ERC-20 allowlist just now. I won't guess, so please ask me again shortly!";
-  }
+  const labels = ["NVDA", "SPCX", "GOOGL", "TSLA", "GME", "AAPL", "SPY", "SNDK", "AMD", "AMZN", "MSFT", "META", "CRCL", "COIN", "MU", "PLTR", "USDG", "ETH"];
+  return `🔗 You can pair your Pons V2 launch with: ${labels.join(", ")}.`;
 }
 
 function oauthEncode(value: string) {
@@ -329,7 +324,7 @@ export const retryInteraction = internalAction({
       else if (intent.kind === "unknown_wallet") { reply = unknownWalletMessage(); ok = false; }
       else {
         await ctx.runAction(internal.wallets.ensureWallet, { xUserId: current.user.xUserId });
-        const recipientAddress = intent.command.kind === "send"
+        const recipientAddress = intent.command.kind === "send" || intent.command.kind === "buy_and_send"
           ? current.interaction.recipientAddress || await resolveXRecipient(ctx, postId, intent.command.recipient)
           : undefined;
         const result = await ctx.runAction(internal.wallets.executeCommand, {
@@ -482,7 +477,7 @@ export const pollMentions = internalAction({
             continue;
           }
           const command = intent.command;
-          const recipientAddress = command.kind === "send"
+          const recipientAddress = command.kind === "send" || command.kind === "buy_and_send"
             ? await resolveXRecipient(ctx, mention.id, command.recipient)
             : undefined;
           const result = await ctx.runAction(internal.wallets.executeCommand, {

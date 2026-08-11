@@ -22,9 +22,27 @@ describe("deterministic X wallet replies", () => {
 
   it("uses operation-specific parameter prompts", () => {
     expect(parameterExtractorPrompt("buy", false)).toContain('"slippageBps"');
+    expect(parameterExtractorPrompt("buy", false)).toContain('"eth|usd|pair"');
+    expect(parameterExtractorPrompt("buy", false)).toContain("buy 5 MSFT of PONSBOT");
+    expect(parameterExtractorPrompt("buy_and_send", false)).toContain('"recipient"');
+    expect(parameterExtractorPrompt("buy_and_send", false)).toContain("purchased tokens");
     expect(parameterExtractorPrompt("send", false)).toContain('"recipient"');
     expect(parameterExtractorPrompt("launch", true)).toContain('"symbol"');
     expect(parameterExtractorPrompt("launch", true)).toContain("Attached image present: yes");
+    expect(parameterExtractorPrompt("claim_fees", false)).toContain("native-pair fees");
+  });
+
+  it("explains live creator-fee claims and paired-asset trades", () => {
+    expect(walletHelpMessage("fees")).toContain("claim my fees");
+    expect(walletHelpMessage("fees")).not.toContain("not currently supported");
+    expect(walletHelpMessage("buy_sell")).toContain("buy 5 MSFT of PONSBOT");
+  });
+
+  it("recognizes the one supported combined operation", () => {
+    expect(intentClassifierPrompt()).toContain('"buy_and_send"');
+    expect(groundedCanonicalCommand("Buy $100 $PONSBOT and send it to @USER")).toMatchObject({
+      kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "@USER",
+    });
   });
 
   it("normalizes approved trading slang into grounded commands", () => {

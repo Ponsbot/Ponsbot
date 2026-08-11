@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, transactionStatusRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
-import { authorizeSigner, broadcastTransaction, executeTransaction, provisionWallet, transactionStatus, walletBalance } from "@/lib/wallet-signer/service";
+import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
+import { authorizeSigner, broadcastTransaction, executeTransaction, ponsPairInfo, provisionWallet, transactionStatus, walletBalance } from "@/lib/wallet-signer/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -54,6 +54,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       const expected = await provisionWallet(input.ownerReference);
       if (expected.address.toLowerCase() !== input.expectedAddress.toLowerCase()) throw new Error("wallet owner mismatch");
       return NextResponse.json(await walletBalance(input.expectedAddress as `0x${string}`, input.token, input.knownTokens as `0x${string}`[] | undefined));
+    }
+    if (path === "v1/tokens/pons-pair") {
+      const input = ponsPairRequestSchema.parse(body);
+      return NextResponse.json(await ponsPairInfo(input.token as `0x${string}`, input.factoryAddress as `0x${string}`));
     }
     if (path === "v1/transactions/execute") {
       const input = executionRequestSchema.parse(body);

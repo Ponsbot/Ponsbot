@@ -26,12 +26,12 @@ describe("X wallet commands", () => {
     });
   });
 
-  it("enforces the initial dev-buy maximum", () => {
-    expect(parseWalletCommand('launch "cap test" ticker CAP with 0.02627 eth dev buy')).toMatchObject({
-      kind: "launch", devBuy: { amount: "0.02627", unit: "eth" },
+  it("accepts developer buys without a hard-coded launch cap", () => {
+    expect(parseWalletCommand('launch "cap test" ticker CAP with 0.1 eth dev buy')).toMatchObject({
+      kind: "launch", devBuy: { amount: "0.1", unit: "eth" },
     });
-    expect(parseWalletCommand('launch "cap test" ticker CAP with 0.02628 eth dev buy')).toEqual({
-      kind: "unknown", reason: "The maximum initial dev buy is 0.02627 ETH.",
+    expect(parseWalletCommand('launch Ponsbot ticker PONSBOT pair with MSFT dev buy $100 of MSFT')).toMatchObject({
+      kind: "launch", pairToken: "MSFT", devBuy: { amount: "100", unit: "usd" },
     });
   });
 
@@ -55,6 +55,18 @@ describe("X wallet commands", () => {
       name: "Ponsbot",
       description: "direct on X",
     });
+  });
+
+  it("parses a buy followed by sending exactly the purchase", () => {
+    expect(parseWalletCommand("Buy $100 $PONSBOT and send it to @USER")).toEqual({
+      kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT",
+      recipient: "@USER", slippageBps: 250,
+    });
+    expect(parseWalletCommand("buy 0.02 ETH of PONSBOT then transfer it to 0x1111111111111111111111111111111111111111 slippage 1%")).toEqual({
+      kind: "buy_and_send", amount: "0.02", unit: "eth", token: "PONSBOT",
+      recipient: "0x1111111111111111111111111111111111111111", slippageBps: 100,
+    });
+    expect(parseWalletCommand("buy $100 of PONSBOT and send it")).toMatchObject({ kind: "unknown" });
   });
 
   it("parses flexibly arranged launch names and tickers", () => {
@@ -123,6 +135,15 @@ describe("X wallet commands", () => {
     expect(parseWalletCommand("claim my fees for $ROOT")).toEqual({ kind: "claim_fees", token: "ROOT" });
   });
 
+  it("validates AI-extracted paired-asset buys", () => {
+    expect(validateStructuredWalletCommand({
+      kind: "buy", amount: "5", unit: "pair", token: "PONSBOT", pairAsset: "MSFT", slippageBps: 250,
+    })).toEqual({ kind: "buy", amount: "5", unit: "pair", token: "PONSBOT", pairAsset: "MSFT", slippageBps: 250 });
+    expect(validateStructuredWalletCommand({
+      kind: "buy", amount: "5", unit: "pair", token: "PONSBOT", slippageBps: 250,
+    })).toBeNull();
+  });
+
   it("accepts USD-denominated burns", () => {
     expect(parseWalletCommand("burn $25 of $ROOT")).toEqual({ kind: "burn", amount: "25", unit: "usd", token: "ROOT" });
     expect(parseWalletCommand("burn 10 usd worth of ROOT")).toEqual({ kind: "burn", amount: "10", unit: "usd", token: "ROOT" });
@@ -145,6 +166,10 @@ describe("X wallet commands", () => {
     });
     expect(validateStructuredWalletCommand({ kind: "send", amount: "-25", unit: "token", token: "ROOT", recipient: "@friend" })).toBeNull();
     expect(validateStructuredWalletCommand({ kind: "burn", amount: "101", unit: "percent", token: "ROOT" })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "@friend", slippageBps: 250 })).toEqual({
+      kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "@friend", slippageBps: 250,
+    });
+    expect(validateStructuredWalletCommand({ kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "friend" })).toBeNull();
     expect(validateStructuredWalletCommand({ kind: "launch", name: "Root", symbol: "ROOT", launchMode: "other" })).toMatchObject({
       kind: "launch", launchMode: "pons", name: "Root", symbol: "ROOT",
     });
