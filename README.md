@@ -1,28 +1,34 @@
 # Ponsbot
 
-Ponsbot is a focused X reply bot for Robinhood Chain wallets and Pons V2 token launches.
+Ponsbot brings Robinhood Chain wallets and Pons V2 launches directly to X. Mention [@Ponsbotfamily](https://x.com/Ponsbotfamily) in a post, describe what you want in ordinary language, and receive one clear confirmation when it is complete.
 
-## Current state
+## What you can do
 
-- Pons-inspired landing page
-- Two-stage AI intent classification and command extraction
-- Per-X-user Robinhood Chain wallets
-- Wallet command parsing and prepared responses
-- Pons V2 contracts and pair assets maintained in updateable Convex registries
-- All transaction execution disabled by default
-- Pons signer integration still requires a dedicated security pass before use
+- Claim your personal Robinhood Chain wallet and retrieve the same address anytime.
+- View your ETH and token holdings on a public Ponsbot wallet page.
+- Buy and sell supported tokens with dollar, ETH, token, percentage, or paired-asset amounts where applicable.
+- Send ETH or tokens to a wallet address or another X user.
+- Buy a token and send the purchased amount to someone in one request.
+- Burn tokens by amount or percentage.
+- Launch tokens on Pons V2, with optional artwork, description, website, X account, Telegram link, pairing asset, and developer buy.
+- Claim creator fees after launch. ETH-pair fees can be claimed together; fees in other paired assets are claimed for each launch individually.
 
-## Local setup
+## Example posts
 
-1. Copy `.env.example` to `.env.local` and add your test-environment credentials.
-2. Run `npm install` if dependencies are not already present.
-3. Run `npm run dev`.
+```text
+@Ponsbotfamily what's my wallet?
+@Ponsbotfamily show my balance
+@Ponsbotfamily buy $25 of PONSBOT
+@Ponsbotfamily send 25 PONSBOT to @user
+@Ponsbotfamily buy $100 of PONSBOT and send it to @user
+@Ponsbotfamily launch Ponsbot ticker $PONSBOT, pair with MSFT, dev buy $100 of MSFT
+@Ponsbotfamily claim my fees for $PONSBOT
+```
 
-## Pons reference
+## Launching on Pons V2
 
-- Chain: Robinhood Chain (`4663`)
-- Factory, launch router, swap contracts, and approved pair candidates are read from Convex tables at runtime
-- Factory method: `launchToken(TokenParams,uint256,address)`
-- Router method: `launchAndBuy(...)`
-- Token metadata: name, symbol, logo, description, socials, fee wallet
-- Launch configuration and pair economics must be read and verified immediately before production enablement
+Token launches are available to verified X accounts. A name and ticker are required; all other launch details are optional. Supported pairing assets currently include NVDA, SPCX, GOOGL, TSLA, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, USDG, and ETH.
+
+When a non-ETH pairing asset is selected, the developer buy is made in that paired asset. You can provide an exact asset amount, such as `dev buy 2 MSFT`, or a dollar or ETH amount that Ponsbot converts into the paired asset before launching.
+
+Learn more on the [How It Works](https://ponsbot-one.vercel.app/how-it-works) page.

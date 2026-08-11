@@ -808,7 +808,7 @@ export const executeCommand = internalAction({
       }
       const warning = limit.remaining === 2 ? "\n⚠️ 2 wallet actions remain today." : limit.remaining === 1 ? "\n⚠️ 1 wallet action remains today." : limit.remaining === 0 ? "\n⏰ Today's wallet limit is now reached." : "";
       let executionLockHeld = false;
-      let pairFundingCompleted = false;
+      let pairFunding: { transactionHash: string; asset: string } | undefined;
       try {
         for (let attempt = 0; attempt < 60 && !executionLockHeld; attempt += 1) {
           executionLockHeld = await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
@@ -856,15 +856,18 @@ export const executeCommand = internalAction({
               message: `✅ Success! Bought ${formatUnits(purchased, after.decimals)} ${assetLabel(command.token)} and sent it to ${destinationLabel(command.recipient)}!\nBuy TXN: ${transactionUrl(buy.transactionHash)}\nSend TXN: ${transactionUrl(sent.transactionHash)}${warning}`,
             };
           } catch (error) {
-            throw new Error(`The buy completed, but the send did not. The purchased tokens remain in your wallet. ${safeFailure(error)}`);
+            throw new Error(`The buy completed, but the send did not. The purchased tokens remain in your wallet. Buy TXN: ${transactionUrl(buy.transactionHash)} ${safeFailure(error)}`);
           }
         }
         let executionCommand: Exclude<WalletCommand, { kind: "unknown" }> = command;
         if (command.kind === "buy" && commandToken) {
           const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, requestId, command, commandToken, registry);
           executionCommand = funded.command;
-          pairFundingCompleted = Boolean(funded.fundingTransactionHash);
-          if (pairFundingCompleted) await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
+          if (funded.fundingTransactionHash) {
+            const pair = registry.pairs.find((item) => item.address.toLowerCase() === String(funded.command.pairAsset).toLowerCase());
+            pairFunding = { transactionHash: funded.fundingTransactionHash, asset: pair?.symbol || "paired asset" };
+            await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
+          }
         }
         if (command.kind === "launch" && command.devBuy && command.devBuy.unit !== "pair") {
           const pairToken = resolveLaunchPair(command.pairToken, registry.pairs);
@@ -874,7 +877,8 @@ export const executeCommand = internalAction({
               command.devBuy.amount, command.devBuy.unit, 250, registry,
             );
             executionCommand = { ...command, devBuy: { amount: funded.amount, unit: "pair" } };
-            pairFundingCompleted = true;
+            const pair = registry.pairs.find((item) => item.address.toLowerCase() === pairToken.toLowerCase());
+            pairFunding = { transactionHash: funded.transactionHash, asset: pair?.symbol || "paired asset" };
             await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
           }
         }
@@ -960,8 +964,8 @@ export const executeCommand = internalAction({
         return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${warning}` };
       } catch (error) {
         const baseMessage = safeFailure(error);
-        const message = pairFundingCompleted
-          ? `The paired-asset swap completed, but the final ${command.kind === "launch" ? "launch" : "buy"} did not. The paired asset remains in your wallet. ${baseMessage}`
+        const message = pairFunding
+          ? `The ${pairFunding.asset} purchase completed, but the final ${command.kind === "launch" ? "launch" : "buy"} did not. The ${pairFunding.asset} remains in your wallet. Funding TXN: ${transactionUrl(pairFunding.transactionHash)} ${baseMessage}`
           : baseMessage;
         const userMessage = fundingMessage(message, wallet.address);
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "failed", safeError: message });

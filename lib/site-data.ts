@@ -131,28 +131,35 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },
   ], available: true };
   const base = "https://robinhoodchain-mainnet-explorer-api.rpc.caldera.xyz/api/v2";
+  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const walletRecord = convexUrl
+    ? await new ConvexHttpClient(convexUrl).query(api.site.getWallet, { address }).catch(() => null) as PublicWalletRecord | null
+    : null;
+  const [accountResult, tokensResult, rpcEthResult, rpcTokensResult] = await Promise.allSettled([
+    fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
+    fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
+    rpcEthBalance(address),
+    indexedTokenHoldings(address as Address, walletRecord?.tokens),
+  ]);
+  const holdings: PublicHolding[] = [];
+  let ethBalance = rpcEthResult.status === "fulfilled" ? rpcEthResult.value : undefined;
+  if (accountResult.status === "fulfilled" && accountResult.value.ok) {
+    try {
+      const account = await accountResult.value.json() as { coin_balance?: string };
+      if (account.coin_balance && /^\d+$/.test(account.coin_balance)) ethBalance = BigInt(account.coin_balance);
+    } catch { /* The RPC result remains authoritative when explorer JSON is malformed. */ }
+  }
+  if (ethBalance !== undefined && ethBalance > 0n) {
+    holdings.push({ name: "Ethereum", symbol: "ETH", balance: formatDisplay(formatEther(ethBalance)), iconUrl: ETH_ICON_URL });
+  }
+  let tokens: ExplorerTokenBalance[] = [];
+  if (tokensResult.status === "fulfilled" && tokensResult.value.ok) {
+    try {
+      const tokenPayload = await tokensResult.value.json();
+      if (Array.isArray(tokenPayload)) tokens = tokenPayload as ExplorerTokenBalance[];
+    } catch { /* Indexed RPC balances are still usable without explorer JSON. */ }
+  }
   try {
-    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
-    const walletRecord = convexUrl
-      ? await new ConvexHttpClient(convexUrl).query(api.site.getWallet, { address }) as PublicWalletRecord | null
-      : null;
-    const [accountResponse, tokensResponse, rpcTokens] = await Promise.all([
-      fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
-      fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
-      indexedTokenHoldings(address as Address, walletRecord?.tokens),
-    ]);
-    const accountMissing = accountResponse.status === 404;
-    const tokensMissing = tokensResponse.status === 404;
-    if ((!accountResponse.ok && !accountMissing) || (!tokensResponse.ok && !tokensMissing)) throw new Error("explorer unavailable");
-    const account = accountResponse.ok
-      ? await accountResponse.json() as { coin_balance?: string }
-      : { coin_balance: (await rpcEthBalance(address)).toString() };
-    const tokenPayload = tokensResponse.ok ? await tokensResponse.json() : [];
-    const tokens = Array.isArray(tokenPayload) ? tokenPayload as ExplorerTokenBalance[] : [];
-    const holdings: PublicHolding[] = [];
-    if (account.coin_balance && BigInt(account.coin_balance) > 0n) {
-      holdings.push({ name: "Ethereum", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))), iconUrl: ETH_ICON_URL });
-    }
     for (const item of tokens) {
       const decimals = Number(item.token.decimals || 18);
       if (BigInt(item.value) === 0n) continue;
@@ -164,6 +171,8 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
         iconUrl: item.token.icon_url || undefined,
       });
     }
+  } catch { /* Ignore malformed explorer token entries and retain valid holdings. */ }
+  const rpcTokens = rpcTokensResult.status === "fulfilled" ? rpcTokensResult.value : [];
     const knownByAddress = new Map(holdings.flatMap((holding, index) => holding.address ? [[holding.address.toLowerCase(), index] as const] : []));
     for (const holding of rpcTokens) {
       if (!holding.address) continue;
@@ -176,10 +185,11 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
       holdings.push(holding);
       knownByAddress.set(normalized, holdings.length - 1);
     }
-    return { holdings, available: true };
-  } catch {
-    return { holdings: [], available: false };
-  }
+  const available = rpcEthResult.status === "fulfilled"
+    || rpcTokensResult.status === "fulfilled"
+    || (accountResult.status === "fulfilled" && (accountResult.value.ok || accountResult.value.status === 404))
+    || (tokensResult.status === "fulfilled" && (tokensResult.value.ok || tokensResult.value.status === 404));
+  return { holdings, available };
 }
 
 function formatDisplay(value: string) {
