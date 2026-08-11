@@ -91,9 +91,12 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
       fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
       fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
     ]);
-    if (!accountResponse.ok || !tokensResponse.ok) throw new Error("explorer unavailable");
-    const account = await accountResponse.json() as { coin_balance?: string };
-    const tokens = await tokensResponse.json() as ExplorerTokenBalance[];
+    const accountMissing = accountResponse.status === 404;
+    const tokensMissing = tokensResponse.status === 404;
+    if ((!accountResponse.ok && !accountMissing) || (!tokensResponse.ok && !tokensMissing)) throw new Error("explorer unavailable");
+    const account = accountResponse.ok ? await accountResponse.json() as { coin_balance?: string } : {};
+    const tokenPayload = tokensResponse.ok ? await tokensResponse.json() : [];
+    const tokens = Array.isArray(tokenPayload) ? tokenPayload as ExplorerTokenBalance[] : [];
     const holdings: PublicHolding[] = [];
     if (account.coin_balance && BigInt(account.coin_balance) > 0n) {
       holdings.push({ name: "Ether", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))) });
