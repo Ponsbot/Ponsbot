@@ -14,7 +14,7 @@ export default async function Home() {
       <div className="hero-copy">
         <h1>Pons V2 launches direct on X</h1>
         <p className="hero-lede">Claim your wallet, buy and sell, and launch tokens with a single X post.</p>
-        <div className="hero-actions"><a className="button button-primary" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer">@ponsbotfamily</a><Link className="button button-quiet" href="/how-it-works">HOW IT WORKS →</Link></div>
+        <div className="hero-actions"><a className="button button-primary" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer">@Ponsbotfamily</a><Link className="button button-quiet" href="/how-it-works">HOW IT WORKS →</Link></div>
       </div>
       <div className="hero-visual">
         <div className="hero-blob" />

@@ -73,7 +73,7 @@ export default async function WalletPage({ params }: Props) {
             View on explorer ↗
           </a>
         </div>
-      <CopyWalletAddress address={address} />
+        <CopyWalletAddress address={address} />
         <div className="holdings">
           {holdings.map((holding) => (
             <a
@@ -87,7 +87,7 @@ export default async function WalletPage({ params }: Props) {
               target="_blank"
               rel="noreferrer"
             >
-              <span className="holding-icon">
+              <span className={`holding-icon${holding.symbol === "ETH" ? " holding-icon-eth" : ""}`}>
                 {holding.iconUrl ? (
                   <ExternalTokenImage
                     src={holding.iconUrl}

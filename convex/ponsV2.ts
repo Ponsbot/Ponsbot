@@ -38,7 +38,7 @@ export async function discoverPonsV2PairAssets(options: {
   const client = createPublicClient({ transport: http(rpcUrl) });
   const verifiedAt = Date.now();
   const results: PonsPairAsset[] = [{
-    address: zeroAddress, symbol: "ETH", name: "Ether", decimals: 18, native: true, verifiedAt,
+    address: zeroAddress, symbol: "ETH", name: "Ethereum", decimals: 18, native: true, verifiedAt,
   }];
 
   for (const address of [...new Set(configured.map((value) => value.toLowerCase()))] as Address[]) {

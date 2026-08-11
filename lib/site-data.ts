@@ -126,7 +126,7 @@ export async function isPonsbotWallet(address: string) {
 export async function getWalletHoldings(address: string): Promise<{ holdings: PublicHolding[]; available: boolean }> {
   if (!isAddress(address)) return { holdings: [], available: false };
   if (address.toLowerCase() === PREVIEW_WALLET) return { holdings: [
-    { name: "Ether", symbol: "ETH", balance: "1.284", iconUrl: ETH_ICON_URL },
+    { name: "Ethereum", symbol: "ETH", balance: "1.284", iconUrl: ETH_ICON_URL },
     { address: "0x0000000000000000000000000000000000000A11", name: "Ponsbot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png" },
     { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },
   ], available: true };
@@ -151,7 +151,7 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     const tokens = Array.isArray(tokenPayload) ? tokenPayload as ExplorerTokenBalance[] : [];
     const holdings: PublicHolding[] = [];
     if (account.coin_balance && BigInt(account.coin_balance) > 0n) {
-      holdings.push({ name: "Ether", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))), iconUrl: ETH_ICON_URL });
+      holdings.push({ name: "Ethereum", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))), iconUrl: ETH_ICON_URL });
     }
     for (const item of tokens) {
       const decimals = Number(item.token.decimals || 18);
