@@ -65,7 +65,8 @@ type ExplorerTokenBalance = {
 };
 
 export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string };
-type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string }> };
+type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string; iconUrl?: string }> };
+const ETH_ICON_URL = "https://cryptologos.cc/logos/ethereum-eth-logo.png";
 
 const publicTokenAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
@@ -88,7 +89,7 @@ async function indexedTokenHoldings(wallet: Address, tokens: PublicWalletRecord[
         client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "name" }).catch(() => token.symbol),
       ]);
       if (balance <= 0n) return undefined;
-      return { address: token.address, name: name || symbol, symbol, balance: formatDisplay(formatUnits(balance, decimals)) };
+      return { address: token.address, name: name || symbol, symbol, balance: formatDisplay(formatUnits(balance, decimals)), iconUrl: token.iconUrl };
     } catch {
       return undefined;
     }
@@ -125,7 +126,7 @@ export async function isPonsbotWallet(address: string) {
 export async function getWalletHoldings(address: string): Promise<{ holdings: PublicHolding[]; available: boolean }> {
   if (!isAddress(address)) return { holdings: [], available: false };
   if (address.toLowerCase() === PREVIEW_WALLET) return { holdings: [
-    { name: "Ether", symbol: "ETH", balance: "1.284" },
+    { name: "Ether", symbol: "ETH", balance: "1.284", iconUrl: ETH_ICON_URL },
     { address: "0x0000000000000000000000000000000000000A11", name: "Ponsbot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png" },
     { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },
   ], available: true };
@@ -150,7 +151,7 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     const tokens = Array.isArray(tokenPayload) ? tokenPayload as ExplorerTokenBalance[] : [];
     const holdings: PublicHolding[] = [];
     if (account.coin_balance && BigInt(account.coin_balance) > 0n) {
-      holdings.push({ name: "Ether", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))) });
+      holdings.push({ name: "Ether", symbol: "ETH", balance: formatDisplay(formatEther(BigInt(account.coin_balance))), iconUrl: ETH_ICON_URL });
     }
     for (const item of tokens) {
       const decimals = Number(item.token.decimals || 18);
@@ -163,11 +164,17 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
         iconUrl: item.token.icon_url || undefined,
       });
     }
-    const knownAddresses = new Set(holdings.flatMap((holding) => holding.address ? [holding.address.toLowerCase()] : []));
+    const knownByAddress = new Map(holdings.flatMap((holding, index) => holding.address ? [[holding.address.toLowerCase(), index] as const] : []));
     for (const holding of rpcTokens) {
-      if (!holding.address || knownAddresses.has(holding.address.toLowerCase())) continue;
+      if (!holding.address) continue;
+      const normalized = holding.address.toLowerCase();
+      const existingIndex = knownByAddress.get(normalized);
+      if (existingIndex !== undefined) {
+        if (!holdings[existingIndex].iconUrl && holding.iconUrl) holdings[existingIndex].iconUrl = holding.iconUrl;
+        continue;
+      }
       holdings.push(holding);
-      knownAddresses.add(holding.address.toLowerCase());
+      knownByAddress.set(normalized, holdings.length - 1);
     }
     return { holdings, available: true };
   } catch {
