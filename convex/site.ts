@@ -61,7 +61,13 @@ export const getWallet = query({
     const normalized = address.toLowerCase();
     const wallet = await ctx.db.query("cryptoWallets").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", normalized)).unique()
       || (await ctx.db.query("cryptoWallets").collect()).find((item) => item.address.toLowerCase() === normalized);
-    return wallet ? { address: wallet.address, createdAt: wallet.createdAt } : null;
+    if (!wallet) return null;
+    const tokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", wallet._id)).take(100);
+    return {
+      address: wallet.address,
+      createdAt: wallet.createdAt,
+      tokens: tokens.map((token) => ({ address: token.tokenAddress, symbol: token.symbol })),
+    };
   },
 });
 

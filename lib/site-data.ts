@@ -1,5 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
-import { formatEther, formatUnits, isAddress } from "viem";
+import { createPublicClient, formatEther, formatUnits, http, isAddress, parseAbi, type Address } from "viem";
 import { api } from "@/convex/_generated/api";
 import { addMarketCaps } from "@/lib/token-market-cap";
 
@@ -65,6 +65,50 @@ type ExplorerTokenBalance = {
 };
 
 export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string };
+type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string }> };
+
+const publicTokenAbi = parseAbi([
+  "function balanceOf(address owner) view returns (uint256)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+  "function name() view returns (string)",
+]);
+
+async function indexedTokenHoldings(wallet: Address, tokens: PublicWalletRecord["tokens"] = []) {
+  const rpcUrl = process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
+  const client = createPublicClient({ transport: http(rpcUrl, { batch: true }) });
+  const unique = [...new Map(tokens.filter((token) => isAddress(token.address)).map((token) => [token.address.toLowerCase(), token])).values()];
+  const results = await Promise.all(unique.map(async (token): Promise<PublicHolding | undefined> => {
+    try {
+      const tokenAddress = token.address as Address;
+      const [balance, decimals, symbol, name] = await Promise.all([
+        client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "balanceOf", args: [wallet] }),
+        client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "decimals" }),
+        client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "symbol" }),
+        client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "name" }).catch(() => token.symbol),
+      ]);
+      if (balance <= 0n) return undefined;
+      return { address: token.address, name: name || symbol, symbol, balance: formatDisplay(formatUnits(balance, decimals)) };
+    } catch {
+      return undefined;
+    }
+  }));
+  return results.filter((holding): holding is PublicHolding => Boolean(holding));
+}
+
+async function rpcEthBalance(address: string) {
+  const response = await fetch(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [address, "latest"] }),
+    cache: "no-store",
+    signal: AbortSignal.timeout(8_000),
+  });
+  if (!response.ok) throw new Error("Robinhood RPC unavailable");
+  const payload = await response.json() as { result?: string; error?: unknown };
+  if (!/^0x[0-9a-f]+$/i.test(payload.result || "")) throw new Error("Robinhood RPC returned an invalid balance");
+  return BigInt(payload.result!);
+}
 
 export async function isPonsbotWallet(address: string) {
   if (!isAddress(address)) return false;
@@ -87,14 +131,21 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
   ], available: true };
   const base = "https://robinhoodchain-mainnet-explorer-api.rpc.caldera.xyz/api/v2";
   try {
-    const [accountResponse, tokensResponse] = await Promise.all([
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const walletRecord = convexUrl
+      ? await new ConvexHttpClient(convexUrl).query(api.site.getWallet, { address }) as PublicWalletRecord | null
+      : null;
+    const [accountResponse, tokensResponse, rpcTokens] = await Promise.all([
       fetch(`${base}/addresses/${address}`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
       fetch(`${base}/addresses/${address}/token-balances`, { next: { revalidate: 20 }, signal: AbortSignal.timeout(8_000) }),
+      indexedTokenHoldings(address as Address, walletRecord?.tokens),
     ]);
     const accountMissing = accountResponse.status === 404;
     const tokensMissing = tokensResponse.status === 404;
     if ((!accountResponse.ok && !accountMissing) || (!tokensResponse.ok && !tokensMissing)) throw new Error("explorer unavailable");
-    const account = accountResponse.ok ? await accountResponse.json() as { coin_balance?: string } : {};
+    const account = accountResponse.ok
+      ? await accountResponse.json() as { coin_balance?: string }
+      : { coin_balance: (await rpcEthBalance(address)).toString() };
     const tokenPayload = tokensResponse.ok ? await tokensResponse.json() : [];
     const tokens = Array.isArray(tokenPayload) ? tokenPayload as ExplorerTokenBalance[] : [];
     const holdings: PublicHolding[] = [];
@@ -111,6 +162,12 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
         balance: formatDisplay(formatUnits(BigInt(item.value), decimals)),
         iconUrl: item.token.icon_url || undefined,
       });
+    }
+    const knownAddresses = new Set(holdings.flatMap((holding) => holding.address ? [holding.address.toLowerCase()] : []));
+    for (const holding of rpcTokens) {
+      if (!holding.address || knownAddresses.has(holding.address.toLowerCase())) continue;
+      holdings.push(holding);
+      knownAddresses.add(holding.address.toLowerCase());
     }
     return { holdings, available: true };
   } catch {
