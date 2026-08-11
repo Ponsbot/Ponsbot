@@ -64,8 +64,8 @@ type ExplorerTokenBalance = {
   token: { address_hash: string; decimals: string | null; icon_url: string | null; name: string; symbol: string };
 };
 
-export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string };
-type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string; iconUrl?: string }> };
+export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string; isPonsbotLaunch?: boolean };
+type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string; iconUrl?: string; isPonsbotLaunch?: boolean }> };
 const ETH_ICON_URL = "https://cryptologos.cc/logos/ethereum-eth-logo.png";
 
 const publicTokenAbi = parseAbi([
@@ -89,7 +89,7 @@ async function indexedTokenHoldings(wallet: Address, tokens: PublicWalletRecord[
         client.readContract({ address: tokenAddress, abi: publicTokenAbi, functionName: "name" }).catch(() => token.symbol),
       ]);
       if (balance <= 0n) return undefined;
-      return { address: token.address, name: name || symbol, symbol, balance: formatDisplay(formatUnits(balance, decimals)), iconUrl: token.iconUrl };
+      return { address: token.address, name: name || symbol, symbol, balance: formatDisplay(formatUnits(balance, decimals)), iconUrl: token.iconUrl, isPonsbotLaunch: token.isPonsbotLaunch };
     } catch {
       return undefined;
     }
@@ -180,6 +180,7 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
       const existingIndex = knownByAddress.get(normalized);
       if (existingIndex !== undefined) {
         if (!holdings[existingIndex].iconUrl && holding.iconUrl) holdings[existingIndex].iconUrl = holding.iconUrl;
+        if (holding.isPonsbotLaunch) holdings[existingIndex].isPonsbotLaunch = true;
         continue;
       }
       holdings.push(holding);

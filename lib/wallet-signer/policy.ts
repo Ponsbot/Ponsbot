@@ -46,6 +46,9 @@ const sellOperation = z.object({
 const claimFeesOperation = z.object({
   type: z.literal("pons_v2_claim_fees"), token: token.optional(), factoryAddress: address,
 }).strict();
+const sweepFeesOperation = z.object({
+  type: z.literal("pons_v2_sweep_fees"), token, factoryAddress: address, minBuybackTokensOut: z.literal("0"),
+}).strict();
 const launchOperation = z.object({
   type: z.enum(["pons_v2_launch", "pons_v2_launch_and_buy"]), launchMode: z.literal("pons"),
   factoryAddress: address, launchAndBuyRouter: address, name: z.string().min(1).max(48),
@@ -58,7 +61,7 @@ const launchOperation = z.object({
 }).strict();
 
 export const signerOperationSchema = z.union([
-  transferOperation, erc20TransferOperation, burnOperation, buyOperation, sellOperation, claimFeesOperation, launchOperation,
+  transferOperation, erc20TransferOperation, burnOperation, buyOperation, sellOperation, claimFeesOperation, sweepFeesOperation, launchOperation,
 ]);
 
 export const walletRequestSchema = z.object({

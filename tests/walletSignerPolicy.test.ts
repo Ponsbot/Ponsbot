@@ -27,6 +27,16 @@ describe("wallet signer operation policy", () => {
     } })).toThrow();
   });
 
+  it("allows only a zero-minimum verified Pons fee sweep shape", () => {
+    const operation = {
+      type: "pons_v2_sweep_fees", token: "0x7777777777777777777777777777777777777777",
+      factoryAddress: "0x6666666666666666666666666666666666666666", minBuybackTokensOut: "0",
+    };
+    expect(executionRequestSchema.parse({ ...base, operation }).operation.type).toBe("pons_v2_sweep_fees");
+    expect(() => executionRequestSchema.parse({ ...base, operation: { ...operation, minBuybackTokensOut: "1" } })).toThrow();
+    expect(() => executionRequestSchema.parse({ ...base, operation: { ...operation, curveAddress: base.walletRef } })).toThrow();
+  });
+
   it("rejects zero and negative-equivalent amounts", () => {
     expect(() => executionRequestSchema.parse({ ...base, operation: {
       type: "eth_transfer", recipient: "0x2222222222222222222222222222222222222222",

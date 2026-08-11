@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import { isAddress } from "viem";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { ExternalTokenImage } from "@/components/ExternalTokenImage";
+import { CopyAddress } from "@/components/CopyAddress";
 import { CopyWalletAddress } from "@/components/CopyWalletAddress";
 import {
   explorerAddress,
@@ -75,18 +77,11 @@ export default async function WalletPage({ params }: Props) {
         </div>
         <CopyWalletAddress address={address} />
         <div className="holdings">
-          {holdings.map((holding) => (
-            <a
-              className="holding"
-              key={`${holding.address || "eth"}-${holding.symbol}`}
-              href={
-                holding.address
-                  ? explorerToken(holding.address)
-                  : explorerAddress(address)
-              }
-              target="_blank"
-              rel="noreferrer"
-            >
+          {holdings.map((holding) => {
+            const href = holding.address && holding.isPonsbotLaunch ? `/launch/${holding.address}` : holding.address ? explorerToken(holding.address) : explorerAddress(address);
+            const external = !holding.isPonsbotLaunch;
+            return <article className="holding" key={`${holding.address || "eth"}-${holding.symbol}`}>
+              <Link className="holding-main" href={href} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>
               <span className={`holding-icon${holding.symbol === "ETH" ? " holding-icon-eth" : ""}`}>
                 {holding.iconUrl ? (
                   <ExternalTokenImage
@@ -99,16 +94,15 @@ export default async function WalletPage({ params }: Props) {
               </span>
               <span>
                 <h3>{holding.name}</h3>
-                <p>
-                  {holding.symbol}
-                  {holding.address ? ` · ${shortAddress(holding.address)}` : ""}
-                </p>
+                <p>{holding.symbol}</p>
               </span>
+              </Link>
+              {holding.address ? <CopyAddress address={holding.address} displayAddress={shortAddress(holding.address)} compact /> : null}
               <strong className="holding-balance">
                 {holding.balance} {holding.symbol}
               </strong>
-            </a>
-          ))}
+            </article>;
+          })}
         </div>
         {!holdings.length ? (
           <div className="subtle-panel">

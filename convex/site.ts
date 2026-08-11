@@ -65,7 +65,7 @@ export const getWallet = query({
     const tokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", wallet._id)).take(100);
     const publicTokens = await Promise.all(tokens.map(async (token) => {
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", token.normalizedTokenAddress)).unique();
-      return { address: token.tokenAddress, symbol: token.symbol, ...(launch?.imageUri ? { iconUrl: launch.imageUri } : {}) };
+      return { address: token.tokenAddress, symbol: token.symbol, isPonsbotLaunch: Boolean(launch), ...(launch?.imageUri ? { iconUrl: launch.imageUri } : {}) };
     }));
     return {
       address: wallet.address,

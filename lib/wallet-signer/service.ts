@@ -45,6 +45,7 @@ const feeEscrowAbi = parseAbi([
 const ponsCurveAbi = parseAbi([
   "function buy(uint256 quoteIn,uint256 minTokensOut,address recipient) payable returns (uint256 tokensOut)",
   "function sell(uint256 tokensIn,uint256 minQuoteOut,address recipient) returns (uint256 quoteOut)",
+  "function sweepFees(uint256 minBuybackTokensOut)",
 ]);
 const v4QuoterAbi = parseAbi([
   "function quoteExactInputSingle(((address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) poolKey,bool zeroForOne,uint128 exactAmount,bytes hookData) params) returns (uint256 amountOut,uint256 gasEstimate)",
@@ -627,6 +628,15 @@ export async function executeTransaction(request: ExecutionRequest) {
     if (balance === 0n) throw new Error("no claimable creator fees are available in the paired asset");
     const data = encodeFunctionData({ abi: feeEscrowAbi, functionName: "claimToken", args: [pairToken] });
     return prepareSigned(request, escrow, data, 0n);
+  }
+  if (operation.type === "pons_v2_sweep_fees") {
+    const resolved = await resolveToken(operation.token);
+    const factory = operation.factoryAddress as Address;
+    const launched = await resolveActivePonsCurve(resolved.address, factory);
+    if (!launched) throw new Error("no completed Pons launch was found for that token");
+    if (launched.creatorFeeRecipient.toLowerCase() !== owner.toLowerCase()) throw new Error("wallet is not the launch creator fee beneficiary");
+    const data = encodeFunctionData({ abi: ponsCurveAbi, functionName: "sweepFees", args: [0n] });
+    return prepareSigned(request, launched.curve, data, 0n);
   }
   throw new Error("unsupported signer operation");
 }
