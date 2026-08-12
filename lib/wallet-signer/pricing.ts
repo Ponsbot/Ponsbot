@@ -1,4 +1,5 @@
 import { parseUnits } from "viem";
+import { rememberSharedPrice, sharedPrice } from "../shared-price-cache";
 
 const CACHE_MS = 30_000;
 const MAX_DEVIATION_BPS = 300;
@@ -40,6 +41,8 @@ function validPrice(value: number) {
 
 export async function ethUsdPrice() {
   if (cached && cached.expiresAt > Date.now()) return cached.price;
+  const shared = await sharedPrice("eth-usd");
+  if (shared && validPrice(shared)) { cached = { price: shared, expiresAt: Date.now() + CACHE_MS }; return shared; }
   const [coinbase, coinGecko] = await Promise.all([coinbaseEthUsd(), coinGeckoEthUsd()]);
   if (!validPrice(coinbase) || !validPrice(coinGecko)) throw new Error("ETH/USD price source returned an invalid value");
   const midpoint = (coinbase + coinGecko) / 2;
@@ -49,6 +52,7 @@ export async function ethUsdPrice() {
   // the wallet never spends more ETH merely because the feeds differ.
   const price = conservativeEthUsdPrice(coinbase, coinGecko);
   cached = { price, expiresAt: Date.now() + CACHE_MS };
+  await rememberSharedPrice("eth-usd", price, Date.now(), CACHE_MS);
   return price;
 }
 

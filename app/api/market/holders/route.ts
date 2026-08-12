@@ -6,6 +6,17 @@ import { api } from "@/convex/_generated/api";
 export const dynamic = "force-dynamic";
 
 type HolderItem = { address: { hash: string; name?: string | null; is_contract?: boolean }; value: string };
+type HolderTag = "Creator" | "Liquidity" | "Uniswap V3 Liquidity" | "Uniswap V4 Liquidity";
+
+function liquidityTag(name: string, isKnownLiquidityAddress: boolean): HolderTag | undefined {
+  // Blockscout supplies verified contract names where available. V4 liquidity
+  // is held by the singleton PoolManager rather than a token-specific pool
+  // address, while V3 positions use individual pool contracts.
+  if (/uniswap\s*v?4|v4\s*(?:pool|liquidity)|poolmanager/i.test(name)) return "Uniswap V4 Liquidity";
+  if (/uniswap\s*v?3|v3\s*(?:pool|liquidity)/i.test(name)) return "Uniswap V3 Liquidity";
+  if (isKnownLiquidityAddress || /pool|liquidity|locker|hook|curve/i.test(name)) return "Liquidity";
+  return undefined;
+}
 
 export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get("token") || "";
@@ -29,9 +40,9 @@ export async function GET(request: NextRequest) {
     const address = item.address.hash;
     const normalized = address.toLowerCase();
     const name = item.address.name || "";
-    const tag = normalized === creator ? "Creator" : normalized === liquidity || /pool|liquidity|locker|hook|curve/i.test(name) ? "Liquidity" : undefined;
+    const tag: HolderTag | undefined = normalized === creator ? "Creator" : liquidityTag(name, normalized === liquidity);
     const raw = BigInt(item.value);
     return { address, amount: formatUnits(raw, decimals), percentage: supply > 0n ? Number(raw * 1_000_000n / supply) / 10_000 : 0, tag };
   });
-  return NextResponse.json({ holders }, { headers: { "cache-control": "public, max-age=20, stale-while-revalidate=40" } });
+  return NextResponse.json({ holders }, { headers: { "cache-control": "public, max-age=60, stale-while-revalidate=120" } });
 }

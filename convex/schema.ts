@@ -74,12 +74,17 @@ export default defineSchema({
   tokenMarketState: defineTable({
     tokenAddress: v.string(), normalizedTokenAddress: v.string(), lastBuyAt: v.optional(v.number()),
     marketCapUsd: v.optional(v.number()), volume24hUsd: v.optional(v.number()), graduated: v.optional(v.boolean()),
+    poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()), graduationCheckedAt: v.optional(v.number()), activityBackfilledAt: v.optional(v.number()),
     indexedThroughBlock: v.optional(v.string()), updatedAt: v.number(),
   }).index("by_normalized_token", ["normalizedTokenAddress"])
     .index("by_last_buy", ["lastBuyAt"]),
 
   marketIndexState: defineTable({
     key: v.string(), indexedThroughBlock: v.optional(v.string()), leaseUntil: v.number(), lastViewerAt: v.number(), updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  marketPriceCache: defineTable({
+    key: v.string(), value: v.number(), sourceTimestamp: v.number(), expiresAt: v.number(), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   walletRateLimits: defineTable({ ownerXUserId: v.string(), day: v.string(), count: v.number(), updatedAt: v.number() })

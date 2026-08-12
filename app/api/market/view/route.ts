@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   const viewed = new Set((requested.tokenAddresses || []).filter((address) => /^0x[a-fA-F0-9]{40}$/.test(address)).map((address) => address.toLowerCase()));
   const now = Date.now();
   const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret });
-  if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false });
+  if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
   try {
     const rpc = createPublicClient({ transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000 }) });
     const [targets, latest] = await Promise.all([convex.query(api.site.marketIndexTargets, {}), rpc.getBlockNumber()]);
@@ -52,9 +52,8 @@ export async function POST(request: Request) {
     }
     const from = lease.indexedThroughBlock ? BigInt(lease.indexedThroughBlock) + 1n : latest;
     const cappedFrom = latest > from && latest - from > 5_000n ? latest - 5_000n : from;
-    const needsDayBackfill = targets.some((target) => viewed.has(target.tokenAddress.toLowerCase()) && !target.indexedThroughBlock);
-    const dayBlock = needsDayBackfill ? await blockAtOrAfter(rpc, latest, BigInt(Math.floor((now - 24 * 60 * 60_000) / 1_000))) : undefined;
-    const scanFrom = dayBlock !== undefined && dayBlock < cappedFrom ? dayBlock : cappedFrom;
+    const scanFrom = cappedFrom;
+    const prioritized = targets.filter((target) => viewed.has(target.tokenAddress.toLowerCase()));
     const addressMap = new Map<string, { tokenAddress: string; curveAddress: string }>();
     for (const target of targets) {
       addressMap.set(target.curveAddress.toLowerCase(), target);
@@ -66,20 +65,45 @@ export async function POST(request: Request) {
     ]);
     const graduated = new Map<string, { tokenAddress: string; tokenIsCurrency0: boolean }>();
     const graduationStatus = new Map<string, boolean>();
-    await Promise.all(targets.map(async (target) => {
-      const launch = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [target.tokenAddress as Address] }).catch(() => undefined);
-      graduationStatus.set(target.tokenAddress.toLowerCase(), launch?.phase === 2);
-      if (!launch || launch.phase !== 2) return;
+    const graduationMetadata = new Map<string, { poolFee: number; tickSpacing: number; checkedAt: number }>();
+    const addGraduatedPool = (target: typeof targets[number], poolFee: number, tickSpacing: number) => {
       const token = target.tokenAddress.toLowerCase() as Address; const pair = target.pairToken.toLowerCase() as Address;
       const [currency0, currency1] = pair < token ? [pair, token] : [token, pair];
-      const poolId = keccak256(encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }], [currency0, currency1, launch.poolFee, launch.tickSpacing, hook]));
+      const poolId = keccak256(encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }], [currency0, currency1, poolFee, tickSpacing, hook]));
       graduated.set(poolId, { tokenAddress: target.tokenAddress, tokenIsCurrency0: token === currency0 });
-    }));
-    const [directLogs, swapLogs] = scanFrom <= latest ? await Promise.all([
+    };
+    for (const target of targets) {
+      graduationStatus.set(target.tokenAddress.toLowerCase(), Boolean(target.graduated));
+      if (target.graduated && target.poolFee !== undefined && target.tickSpacing !== undefined) addGraduatedPool(target, target.poolFee, target.tickSpacing);
+    }
+    const phaseTargets = prioritized.filter((target) => !target.graduated);
+    const phaseResults = phaseTargets.length ? await rpc.multicall({ contracts: phaseTargets.map((target) => ({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken" as const, args: [target.tokenAddress as Address] as const })), allowFailure: true }) : [];
+    phaseResults.forEach((result, index) => {
+      const target = phaseTargets[index]; const launch = result.status === "success" ? result.result : undefined;
+      const isGraduated = launch?.phase === 2;
+      graduationStatus.set(target.tokenAddress.toLowerCase(), isGraduated);
+      if (launch) graduationMetadata.set(target.tokenAddress.toLowerCase(), { poolFee: launch.poolFee, tickSpacing: launch.tickSpacing, checkedAt: now });
+      if (isGraduated && launch) addGraduatedPool(target, launch.poolFee, launch.tickSpacing);
+    });
+    const [incrementalDirectLogs, incrementalSwapLogs] = scanFrom <= latest ? await Promise.all([
       rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: [...addressMap.keys()] as Address[] }] }) as Promise<RawLog[]>,
       graduated.size ? rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)")), [...graduated.keys()] as Hex[]] }] }) as Promise<RawLog[]> : Promise.resolve([]),
     ]) : [[], []];
-    const logs = directLogs;
+    // Backfill at most one actively viewed token per run. This never expands
+    // the global incremental range and keeps an expensive first view bounded.
+    const backfillTarget = prioritized.find((target) => !target.activityBackfilledAt);
+    let backfilledToken: string | undefined;
+    let backfillDirectLogs: RawLog[] = []; let backfillSwapLogs: RawLog[] = [];
+    if (backfillTarget) {
+      const dayBlock = await blockAtOrAfter(rpc, latest, BigInt(Math.floor((now - 24 * 60 * 60_000) / 1_000)));
+      backfillDirectLogs = await rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${dayBlock.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: [backfillTarget.curveAddress, backfillTarget.tokenAddress] as Address[] }] }) as RawLog[];
+      const poolEntry = [...graduated].find(([, item]) => item.tokenAddress.toLowerCase() === backfillTarget.tokenAddress.toLowerCase());
+      if (poolEntry) backfillSwapLogs = await rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${dayBlock.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)")), [poolEntry[0]] as Hex[]] }] }) as RawLog[];
+      backfilledToken = backfillTarget.tokenAddress;
+    }
+    const uniqueLogs = (items: RawLog[]) => [...new Map(items.map((log) => [`${log.transactionHash}:${log.logIndex}`, log])).values()];
+    const logs = uniqueLogs([...incrementalDirectLogs, ...backfillDirectLogs]);
+    const swapLogs = uniqueLogs([...incrementalSwapLogs, ...backfillSwapLogs]);
     const blockTimes = new Map<string, number>();
     const marketCaps = new Map<string, number | undefined>();
     const events: Array<{ tokenAddress: string; transactionHash: string; logIndex: number; kind: "buy" | "sell" | "burn"; walletAddress: string; tokenAmount: string; marketCapUsd?: number; usdAmount?: number; blockNumber: string; timestamp: number }> = [];
@@ -106,7 +130,6 @@ export async function POST(request: Request) {
       }
       const decimals = await rpc.readContract({ address: target.tokenAddress as Address, abi: parseAbi(["function decimals() view returns(uint8)"]), functionName: "decimals", blockNumber }).catch(() => 18);
       const marketCapUsd = kind === "burn" ? undefined : await tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined);
-      marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined));
       const tokenAmount = formatUnits(amount, decimals);
       const usdAmount = kind !== "burn" && marketCapUsd !== undefined ? Number(tokenAmount) * marketCapUsd / 1_000_000_000 : undefined;
       events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
@@ -125,22 +148,23 @@ export async function POST(request: Request) {
           rpc.readContract({ address: target.tokenAddress as Address, abi: parseAbi(["function decimals() view returns(uint8)"]), functionName: "decimals", blockNumber }).catch(() => 18),
           tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined),
         ]);
-        marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined));
         const tokenAmount = formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, decimals);
         const usdAmount = marketCapUsd === undefined ? undefined : Number(tokenAmount) * marketCapUsd / 1_000_000_000;
         events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress: transaction.from, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
       } catch { /* Ignore unrelated or malformed PoolManager logs. */ }
     }
-    // Actively viewed pages receive a current market-cap refresh even when no trade occurred.
-    const prioritized = targets.filter((target) => viewed.has(target.tokenAddress.toLowerCase()));
+    // Only actively viewed tokens receive current market-cap refreshes.
     await Promise.all(prioritized.map(async (target) => marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined))));
     await convex.mutation(api.site.recordMarketIndex, {
       secret,
       indexedThroughBlock: latest.toString(),
-      marketCaps: [...marketCaps].map(([tokenAddress, marketCapUsd]) => ({ tokenAddress, ...(marketCapUsd === undefined ? {} : { marketCapUsd }), graduated: graduationStatus.get(tokenAddress.toLowerCase()) || false })),
+      marketCaps: prioritized.map((target) => {
+        const normalized = target.tokenAddress.toLowerCase(); const metadata = graduationMetadata.get(normalized);
+        return { tokenAddress: target.tokenAddress, ...(marketCaps.get(target.tokenAddress) === undefined ? {} : { marketCapUsd: marketCaps.get(target.tokenAddress) }), graduated: graduationStatus.get(normalized) || false, ...(metadata ? { poolFee: metadata.poolFee, tickSpacing: metadata.tickSpacing, graduationCheckedAt: metadata.checkedAt } : {}), ...(backfilledToken?.toLowerCase() === normalized ? { activityBackfilledAt: now } : {}) };
+      }),
       events,
     });
-    return NextResponse.json({ ok: true, indexed: true, events: events.length });
+    return NextResponse.json({ ok: true, indexed: true, events: events.length, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
   } catch (error) {
     console.error("market_view_index_failed", error instanceof Error ? error.message : "unknown");
     return NextResponse.json({ ok: false }, { status: 502 });

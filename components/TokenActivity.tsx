@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { shortAddress } from "@/lib/site-data";
 
 type Activity = { transactionHash: string; logIndex: number; kind: "buy" | "sell" | "burn"; walletAddress: string; tokenAmount: string; marketCapUsd?: number; timestamp: number };
-type Holder = { address: string; amount: string; percentage: number; tag?: "Creator" | "Liquidity" };
+type HolderTag = "Creator" | "Liquidity" | "Uniswap V3 Liquidity" | "Uniswap V4 Liquidity";
+type Holder = { address: string; amount: string; percentage: number; tag?: HolderTag };
 type Range = "1H" | "6H" | "1D";
 
-export function TokenActivity({ tokenAddress, symbol }: { tokenAddress: string; symbol: string }) {
+export function TokenActivity({ tokenAddress, symbol, summary }: { tokenAddress: string; symbol: string; summary: ReactNode }) {
   const [activity, setActivity] = useState<Activity[]>([]); const [holders, setHolders] = useState<Holder[]>([]);
   const [tab, setTab] = useState<"trades" | "holders">("trades"); const [range, setRange] = useState<Range>("1D");
+  const holdersFetchedAt = useRef(0);
   useEffect(() => {
     let stopped = false;
     const refresh = async () => {
@@ -17,9 +19,9 @@ export function TokenActivity({ tokenAddress, symbol }: { tokenAddress: string; 
       await fetch("/api/market/view", { method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: [tokenAddress] }) }).catch(() => undefined);
       const payload = await fetch(`/api/market/activity?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : { activity: [] }).catch(() => ({ activity: [] }));
       if (!stopped) setActivity(payload.activity || []);
-      if (tab === "holders") {
+      if (tab === "holders" && Date.now() - holdersFetchedAt.current >= 60_000) {
         const holderPayload = await fetch(`/api/market/holders?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : { holders: [] }).catch(() => ({ holders: [] }));
-        if (!stopped) setHolders(holderPayload.holders || []);
+        if (!stopped) { setHolders(holderPayload.holders || []); holdersFetchedAt.current = Date.now(); }
       }
     };
     void refresh(); const timer = window.setInterval(refresh, 10_000);
@@ -29,9 +31,9 @@ export function TokenActivity({ tokenAddress, symbol }: { tokenAddress: string; 
     const cutoff = Date.now() - (range === "1H" ? 3_600_000 : range === "6H" ? 21_600_000 : 86_400_000);
     return activity.filter((item) => item.marketCapUsd !== undefined && item.timestamp >= cutoff).sort((a, b) => a.timestamp - b.timestamp) as Array<Activity & { marketCapUsd: number }>;
   }, [activity, range]);
-  return <section className="token-market-panel"><div className="market-chart-head"><div><small>Market cap</small><strong>{points.length ? formatMoney(points[points.length - 1].marketCapUsd) : "—"}</strong></div><div className="chart-ranges">{(["1H", "6H", "1D"] as const).map((value) => <button type="button" className={range === value ? "active" : ""} onClick={() => setRange(value)} key={value}>{value}</button>)}</div></div><MarketChart points={points} />
+  return <section className="token-market-panel"><div className="token-market-top"><div className="token-market-summary">{summary}</div><div className="token-chart-column"><div className="market-chart-head"><div><small>Market cap</small><strong>{points.length ? formatMoney(points[points.length - 1].marketCapUsd) : "—"}</strong></div><div className="chart-ranges">{(["1H", "6H", "1D"] as const).map((value) => <button type="button" className={range === value ? "active" : ""} onClick={() => setRange(value)} key={value}>{value}</button>)}</div></div><MarketChart points={points} /></div></div><div className="token-activity-column">
     <div className="activity-tabs" role="tablist"><button type="button" className={tab === "trades" ? "active" : ""} onClick={() => setTab("trades")}>Recent Trades</button><button type="button" className={tab === "holders" ? "active" : ""} onClick={() => setTab("holders")}>Holders</button></div>
-    <div className="activity-table-wrap"><table className="activity-table">{tab === "trades" ? <><thead><tr><th>Account</th><th>Type</th><th>Amount</th><th>MCap</th><th>Time</th><th>Txn</th></tr></thead><tbody>{activity.map((item) => <tr key={`${item.transactionHash}-${item.logIndex}`}><td><a href={`https://robinhoodchain.blockscout.com/address/${item.walletAddress}`} target="_blank" rel="noreferrer">{shortAddress(item.walletAddress)}</a></td><td><span className={`activity-kind ${item.kind}`}>{capitalize(item.kind)}</span></td><td>{formatAmount(item.tokenAmount)} ${symbol}</td><td>{item.marketCapUsd === undefined ? "—" : formatMoney(item.marketCapUsd)}</td><td>{relativeTime(item.timestamp)}</td><td><a href={`https://robinhoodchain.blockscout.com/tx/${item.transactionHash}`} target="_blank" rel="noreferrer">{shortHash(item.transactionHash)}</a></td></tr>)}</tbody></> : <><thead><tr><th>Rank</th><th>Account</th><th>Holding</th><th>Share</th></tr></thead><tbody>{holders.map((holder, index) => <tr key={holder.address}><td>{index + 1}</td><td><a href={`https://robinhoodchain.blockscout.com/address/${holder.address}`} target="_blank" rel="noreferrer">{shortAddress(holder.address)}</a>{holder.tag ? <span className={`holder-tag ${holder.tag.toLowerCase()}`}>{holder.tag}</span> : null}</td><td>{formatAmount(holder.amount)} ${symbol}</td><td>{holder.percentage.toFixed(2)}%</td></tr>)}</tbody></>}</table></div></section>;
+    <div className="activity-table-wrap"><table className="activity-table">{tab === "trades" ? <><thead><tr><th>Account</th><th>Type</th><th>Amount</th><th>MCap</th><th>Time</th><th>Txn</th></tr></thead><tbody>{activity.map((item) => <tr key={`${item.transactionHash}-${item.logIndex}`}><td><a href={`https://robinhoodchain.blockscout.com/address/${item.walletAddress}`} target="_blank" rel="noreferrer">{shortAddress(item.walletAddress)}</a></td><td><span className={`activity-kind ${item.kind}`}>{capitalize(item.kind)}</span></td><td>{formatAmount(item.tokenAmount)} ${symbol}</td><td>{item.marketCapUsd === undefined ? "—" : formatMoney(item.marketCapUsd)}</td><td>{relativeTime(item.timestamp)}</td><td><a href={`https://robinhoodchain.blockscout.com/tx/${item.transactionHash}`} target="_blank" rel="noreferrer">{shortHash(item.transactionHash)}</a></td></tr>)}</tbody></> : <><thead><tr><th>Rank</th><th>Account</th><th>Holding</th><th>Share</th></tr></thead><tbody>{holders.map((holder, index) => <tr key={holder.address}><td>{index + 1}</td><td><a href={`https://robinhoodchain.blockscout.com/address/${holder.address}`} target="_blank" rel="noreferrer">{shortAddress(holder.address)}</a>{holder.tag ? <span className={`holder-tag ${holderTagClass(holder.tag)}`}>{holder.tag}</span> : null}</td><td>{formatAmount(holder.amount)} ${symbol}</td><td>{holder.percentage.toFixed(2)}%</td></tr>)}</tbody></>}</table></div></div></section>;
 }
 
 function MarketChart({ points }: { points: Array<Activity & { marketCapUsd: number }> }) {
@@ -46,3 +48,4 @@ function formatMoney(value: number) { return new Intl.NumberFormat("en-US", { st
 function relativeTime(value: number) { const seconds = Math.max(0, Math.floor((Date.now() - value) / 1000)); return seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86400)}d ago`; }
 function capitalize(value: string) { return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`; }
 function shortHash(value: string) { return `${value.slice(0, 6)}…${value.slice(-4)}`; }
+function holderTagClass(tag: HolderTag) { return tag === "Creator" ? "creator" : "liquidity"; }

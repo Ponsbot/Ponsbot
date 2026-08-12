@@ -1,5 +1,6 @@
 import { createPublicClient, encodeAbiParameters, formatUnits, http, keccak256, parseAbi, zeroAddress, type Address } from "viem";
 import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
+import { rememberSharedPrice, sharedPrice } from "./shared-price-cache";
 import type { PublicLaunch } from "@/lib/site-data";
 
 const FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
@@ -23,6 +24,7 @@ export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Prom
   return await Promise.all(launches.map(async (launch) => {
     if (!launch.tokenAddress || !/^0x[a-fA-F0-9]{40}$/.test(launch.tokenAddress)) return launch;
     if (launch.tokenAddress.toLowerCase() === PREVIEW_TOKEN) return { ...launch, marketCapUsd: 125_000, marketCapUpdatedAt: Date.now() };
+    if (launch.marketCapUsd !== undefined && launch.marketCapUpdatedAt !== undefined && Date.now() - launch.marketCapUpdatedAt < CACHE_MS) return launch;
     try {
       const marketCapUsd = await tokenMarketCapUsd(launch.tokenAddress as Address);
       return marketCapUsd === undefined ? launch : { ...launch, marketCapUsd, marketCapUpdatedAt: Date.now() };
@@ -91,6 +93,8 @@ async function quoteDetails(rpc: ReturnType<typeof rpcClient>, pairToken: Addres
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "decimals" }),
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "symbol" }),
   ]);
+  const cachedUsd = await sharedPrice(`pair-usd:${symbol.toUpperCase()}`);
+  if (cachedUsd && Number.isFinite(cachedUsd) && cachedUsd > 0) return { decimals, usd: cachedUsd };
   const [assetResponse, priceResponse] = await Promise.all([
     fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.timeout(5_000) }),
     fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(symbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.timeout(5_000) }),
@@ -103,5 +107,6 @@ async function quoteDetails(rpc: ReturnType<typeof rpcClient>, pairToken: Addres
   if (!asset || !quote || Date.now() - Date.parse(quote.generatedAt) > 5 * 60_000) throw new Error("paired asset price is stale or unverified");
   const usd = ((Number(quote.bid) + Number(quote.ask)) / 2) * Number(asset.currentMultiplier);
   if (!Number.isFinite(usd) || usd <= 0) throw new Error("paired asset price is invalid");
+  await rememberSharedPrice(`pair-usd:${symbol.toUpperCase()}`, usd, Date.parse(quote.generatedAt), 15_000);
   return { decimals, usd };
 }

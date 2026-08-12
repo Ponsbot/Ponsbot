@@ -72,6 +72,9 @@
 .facts .fact-launcher{border-right:0;border-bottom:1px solid var(--line)}
 .facts .fact-market{border-right:1px solid var(--line);border-bottom:0}
 .facts .fact-pair{border-right:0;border-bottom:0}
+.detail-left{min-width:0}.detail-left .facts{margin-bottom:0}.detail-grid>.token-market-panel{min-width:0;margin-top:0}.token-market-top{display:grid;grid-template-columns:minmax(220px,.72fr) minmax(380px,1.28fr);gap:clamp(22px,3vw,46px);align-items:start}.token-market-summary,.token-chart-column{min-width:0}.token-activity-column{width:64%;margin-left:auto}.token-market-summary .detail-copy h1{font-size:clamp(42px,4.2vw,72px)}.token-market-summary .description{font-size:16px}.token-market-summary .detail-actions .button{padding:10px 13px;font-size:12px}
+@media(max-width:1200px){.token-market-top{grid-template-columns:1fr}.token-activity-column{width:100%}}
+@media(max-width:900px){.detail-grid>.token-market-panel{margin-top:8px}.token-market-top{grid-template-columns:1fr}.token-activity-column{width:100%}}
 @media(max-width:600px){.facts .fact-contract,.facts .fact-launched,.facts .fact-launcher,.facts .fact-market{grid-column:auto;border-right:0;border-bottom:1px solid var(--line)}.facts .fact-pair{border-bottom:0}}
 .header-ca-mobile{display:none}
 @media(max-width:900px){.header-ca{display:block;left:50%;font-size:9px}.header-ca-desktop{display:none}.header-ca-mobile{display:inline}}
