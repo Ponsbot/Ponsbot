@@ -27,8 +27,8 @@ export type WalletCommand =
 const ADDRESS = /0x[a-fA-F0-9]{40}/;
 // Accept human-formatted quantities such as 1,000 or 1,234.56. Commas are
 // removed before a command crosses the parser boundary.
-const NUMBER = "([0-9][0-9,]*(?:\\.[0-9]+)?)";
-const NUMBER_NC = "[0-9][0-9,]*(?:\\.[0-9]+)?";
+const NUMBER = "((?:[0-9][0-9,]*(?:\\.[0-9]+)?|\\.[0-9]+))";
+const NUMBER_NC = "(?:[0-9][0-9,]*(?:\\.[0-9]+)?|\\.[0-9]+)";
 export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 
 function slippageBps(text: string) {
@@ -66,7 +66,8 @@ function cleanToken(value: string) {
 }
 
 function cleanAmount(value: string) {
-  return value.replaceAll(",", "");
+  const cleaned = value.replaceAll(",", "");
+  return cleaned.startsWith(".") ? `0${cleaned}` : cleaned;
 }
 
 function labeledUrl(text: string, labels: string) {
@@ -102,7 +103,12 @@ function parseLaunch(text: string): WalletCommand | null {
   const website = labeledUrl(text, "website|site");
   const twitter = labeledUrl(text, "x|twitter");
   const telegram = labeledUrl(text, "telegram|tg");
-  const pairToken = text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
+  const pairToken = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\b(?:paired?\s+with|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
+    || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
   const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));

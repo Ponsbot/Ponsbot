@@ -28,6 +28,8 @@ describe("deterministic X wallet replies", () => {
     expect(parameterExtractorPrompt("buy_and_send", false)).toContain("purchased tokens");
     expect(parameterExtractorPrompt("send", false)).toContain('"recipient"');
     expect(parameterExtractorPrompt("launch", true)).toContain('"symbol"');
+    expect(parameterExtractorPrompt("launch", true)).toContain("quotation marks delimit a literal field value");
+    expect(parameterExtractorPrompt("launch", true)).toContain("Connector words");
     expect(parameterExtractorPrompt("launch", true)).toContain("Attached image present: yes");
     expect(parameterExtractorPrompt("claim_fees", false)).toContain("native-pair fees");
   });
@@ -80,5 +82,20 @@ Website: ponsbot.family X: @Ponsbotfamily Dev buy $100`;
     });
     expect(groundedCanonicalCommand("launch Secret Name ticker")).toBeNull();
     expect(groundedCanonicalCommand("@Ponsbotfamily buy $25 of $SNDK CA 0xA11CE000000000000000000000000000000000499")).toBeNull();
+  });
+
+  it("normalizes varied launch pair labels and leading decimals", () => {
+    expect(groundedCanonicalCommand("launch Infinite Shrimp ticker SHRMP pairing asset: GME dev buy $35")).toMatchObject({
+      kind: "launch", pairToken: "GME",
+    });
+    expect(groundedCanonicalCommand("launch Deep Fried Data ticker DFD with NVDA pairing and a 0.02 ETH developer buy")).toMatchObject({
+      kind: "launch", pairToken: "NVDA",
+    });
+    expect(groundedCanonicalCommand("create Definitely Alpha ticker ALPHA pair ETH dev buy .05 ETH")).toMatchObject({
+      kind: "launch", pairToken: "ETH", devBuy: { amount: "0.05", unit: "eth" },
+    });
+    expect(groundedCanonicalCommand('launch Dog With Laptop ticker DWL description "he is working" pair ETH')).toMatchObject({
+      kind: "launch", name: "Dog With Laptop", symbol: "DWL", description: "he is working", pairToken: "ETH",
+    });
   });
 });

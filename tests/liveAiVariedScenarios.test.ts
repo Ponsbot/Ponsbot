@@ -50,10 +50,11 @@ const scenarios: Scenario[] = [
 describe.runIf(process.env.LIVE_AI_TESTS === "true")("additional varied live AI scenarios", () => {
   it("classifies and extracts without invoking X or wallet actions", async () => {
     expect(process.env.OPENROUTER_API_KEY).toBeTruthy();
+    const selected = process.env.VARIED_AI_FILTER ? scenarios.filter((scenario) => scenario.post.includes(process.env.VARIED_AI_FILTER!)) : scenarios;
     const failures: unknown[] = [];
     const results: unknown[] = [];
-    for (let offset = 0; offset < scenarios.length; offset += 4) {
-      const batch = scenarios.slice(offset, offset + 4);
+    for (let offset = 0; offset < selected.length; offset += 4) {
+      const batch = selected.slice(offset, offset + 4);
       const intents = await Promise.all(batch.map((scenario) => parseXWalletIntent(scenario.post, scenario.post.includes("attached"))));
       intents.forEach((intent, index) => {
         const scenario = batch[index];

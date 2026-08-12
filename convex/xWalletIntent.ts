@@ -117,7 +117,7 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
       && (!command.twitter || normalizedUrlIsGrounded(text, command.twitter, "twitter"))
       && (!command.telegram || normalizedUrlIsGrounded(text, command.telegram, "telegram"))
       && (!command.pairToken || identifierIsGrounded(text, command.pairToken))
-      && (!command.devBuy || includesLoose(text, command.devBuy.amount));
+      && (!command.devBuy || amountIsGrounded(text, command.devBuy.amount));
   }
   return true;
 }
@@ -218,7 +218,7 @@ const extractionInstructions: Record<WalletOperation, string> = {
   buy_and_send: `Return {"kind":"buy_and_send","amount":"decimal","unit":"eth|usd","token":"ticker or address","recipient":"@handle or 0x address","slippageBps":250}. Use this only for an explicit request to buy one token and immediately send the purchased tokens to one recipient. The amount is the buy spend, not a token quantity. Preserve the recipient exactly. Never infer a missing amount, token, or recipient. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   sell: `Return {"kind":"sell","amount":"decimal","unit":"token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. Convert all, everything, every last token, the entire position, bag, or balance to 100 percent; half and 1/2 to 50 percent; a quarter to 25 percent; and three quarters to 75 percent. Convert number words to decimals and explicit slippage percent to basis points.`,
   claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names a specific Pons launch ticker or contract. Direct requests to claim, collect, or withdraw creator fees qualify. "Claim my fees" claims native-pair fees and has no token. "Claim the PONSBOT launch fees" and "withdraw creator rewards for PONSBOT" both use token PONSBOT. Never treat words such as fees, creator, launch, ETH, revenue, or rewards as a token.`,
-  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd|pair"}. Extract an X URL or @handle into twitter and normalize a handle to https://x.com/handle. Extract a Telegram t.me URL or explicitly labeled Telegram handle into telegram and normalize a handle to https://t.me/handle. Prefix https:// to an explicitly labeled bare website domain. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", "pair against MSFT", or "against MSFT" into pairToken. For a linked-asset pair, "dev buy $100 of MSFT" uses unit usd, while both "dev buy 2 MSFT" and "with a 4 MSFT developer buy" use unit pair. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase tickers. An attachment is optional and is handled separately; never invent an image URL.`,
+  launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd|pair"}. Extract an X URL or @handle into twitter and normalize a handle to https://x.com/handle. Extract a Telegram t.me URL or explicitly labeled Telegram handle into telegram and normalize a handle to https://t.me/handle. Prefix https:// to an explicitly labeled bare website domain. Matching straight or curly quotation marks delimit a literal field value: in “Launch ‘Rain Check’ as $RAIN”, the exact name is Rain Check; neither the quotation marks nor the connector "as" belongs to the name. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", "pair against MSFT", or "against MSFT" into pairToken. Connector words such as with, against, as, ticker, and symbol are never field values. For a linked-asset pair, "dev buy $100 of MSFT" uses unit usd, while both "dev buy 2 MSFT" and "with a 4 MSFT developer buy" use unit pair. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. Remove a leading $ and uppercase tickers. An attachment is optional and is handled separately; never invent an image URL.`,
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
@@ -241,6 +241,24 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     if (website && !/^https?:\/\//i.test(website)) item.website = `https://${website}`;
     if (twitter?.startsWith("@")) item.twitter = `https://x.com/${twitter.slice(1)}`;
     if (labeledTelegramHandle && item.telegram === undefined) item.telegram = `https://t.me/${labeledTelegramHandle}`;
+    const labeledQuotedName = text.match(/\b(?:name|full\s+name|token\s+name)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
+    const launchQuotedName = text.match(/\b(?:launch|deploy|create|make)(?:\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin))?(?:\s+(?:called|named))?\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
+    const nameBeforeTicker = text.match(/\b(?:launch|deploy|create|make)\s+(?:(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin)\s+)?(?:(?:called|named)\s+)?(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[A-Za-z0-9]{1,12}\b/i)?.[1];
+    const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || nameBeforeTicker;
+    if (exactName) item.name = exactName.trim();
+    const quotedDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
+    const plainDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*([^\n,;|]+?)(?=\s+(?:pair(?:ing)?(?:\s+asset)?|website|site|x|twitter|telegram|tg|dev(?:eloper)?\s*buy|initial\s+buy)\s*(?:is|=|:)?\b|$)/i);
+    const exactDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2] || plainDescriptionMatch?.[1];
+    if (exactDescription) item.description = exactDescription.trim().replace(/[.;,]+$/, "");
+    const explicitPair = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pairing\b/i)?.[1]
+      || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pair\b/i)?.[1];
+    if (explicitPair) item.pairToken = explicitPair.toUpperCase().startsWith("0X") ? explicitPair : explicitPair.toUpperCase();
+    const leadingDecimalBuy = text.match(/(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)[^0-9.]{0,20}(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})\b/i)
+      || text.match(/(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})[^,.;\n]{0,20}(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)/i);
+    if (leadingDecimalBuy) item.devBuy = { amount: `0${leadingDecimalBuy[1]}`, unit: leadingDecimalBuy[2].toUpperCase() === "ETH" ? "eth" : "pair" };
     normalizedValue = item;
   }
   let command = validateStructuredWalletCommand(normalizedValue);
@@ -252,8 +270,18 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
   }
   if (command?.kind === "launch") {
     const twitter = command.twitter || text.match(/\b(?:x(?:\s+link)?|twitter)\s*(?:is|=|:)?\s*(https:\/\/x\.com\/[a-zA-Z0-9_]{1,15})/i)?.[1];
-    const pairRaw = command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
-    command = { ...command, ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: pairRaw.replace(/^\$/, "").toUpperCase().startsWith("0X") ? pairRaw : pairRaw.replace(/^\$/, "").toUpperCase() } : {}) };
+    const quotedNameMatch = text.match(/\b(?:launch|deploy|create)\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])\s+(?:as|ticker|symbol)\b/i);
+    const quotedName = quotedNameMatch?.[1] || quotedNameMatch?.[2];
+    const quotedDescriptionMatch = text.match(/\bdescription\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
+    const quotedDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2];
+    const explicitPair = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\b(?:pair\s+it\s+with|pair(?:ed|ing)?\s+(?:asset\s+)?(?:with|against)|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+      || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
+      || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
+    const pairRaw = explicitPair || command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
+    command = { ...command, ...(quotedName ? { name: quotedName.trim() } : {}), ...(quotedDescription ? { description: quotedDescription.trim() } : {}), ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: pairRaw.replace(/^\$/, "").toUpperCase().startsWith("0X") ? pairRaw : pairRaw.replace(/^\$/, "").toUpperCase() } : {}) };
   }
   if (!command || command.kind === "unknown" || command.kind !== operation || !explicitAuthority(text, command) || !fieldsAreGrounded(text, command)) {
     return null;
