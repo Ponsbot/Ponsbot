@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
@@ -1095,6 +1095,35 @@ export const executeCommand = internalAction({
       }
     }
     return { ok: false, message: "✨ I can create your wallet, show balances, buy, sell, send, burn, launch on Pons V2, and claim fees after launch. Tell me what you'd like to do!" };
+  },
+});
+
+export const provisionWebWallet = action({
+  args: {
+    secret: v.string(),
+    xUserId: v.string(),
+    username: v.string(),
+    verified: v.boolean(),
+    verifiedType: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ address: string }> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) {
+      throw new Error("web wallet authorization failed");
+    }
+    if (!/^\d{1,30}$/.test(args.xUserId) || !/^[A-Za-z0-9_]{1,15}$/.test(args.username)) {
+      throw new Error("invalid authenticated X identity");
+    }
+    await ctx.runMutation(internal.wallets.upsertXUser, {
+      xUserId: args.xUserId,
+      username: args.username,
+      verified: args.verified,
+      ...(args.verifiedType ? { verifiedType: args.verifiedType } : {}),
+    });
+    const wallet = await ctx.runAction(internal.wallets.ensureWallet, { xUserId: args.xUserId });
+    if (!wallet || !safeAddress(wallet.address) || wallet.ownerXUserId !== args.xUserId) {
+      throw new Error("authenticated X wallet provisioning failed");
+    }
+    return { address: wallet.address };
   },
 });
 

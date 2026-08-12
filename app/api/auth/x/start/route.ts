@@ -1,0 +1,37 @@
+import { createHash, randomBytes } from "node:crypto";
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+function base64url(value: Buffer) {
+  return value.toString("base64url");
+}
+
+export async function GET() {
+  const clientId = process.env.X_OAUTH_CLIENT_ID;
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
+  if (!clientId || !siteUrl) return NextResponse.json({ error: "X wallet sign-in is not configured" }, { status: 503 });
+
+  const state = base64url(randomBytes(32));
+  const verifier = base64url(randomBytes(48));
+  const challenge = base64url(createHash("sha256").update(verifier).digest());
+  const callback = `${siteUrl.replace(/\/$/, "")}/api/auth/x/callback`;
+  const authorize = new URL("https://x.com/i/oauth2/authorize");
+  authorize.search = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: callback,
+    scope: "users.read tweet.read",
+    state,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  }).toString();
+
+  const response = NextResponse.redirect(authorize);
+  const secure = callback.startsWith("https://");
+  const cookie = { httpOnly: true, secure, sameSite: "lax" as const, path: "/api/auth/x", maxAge: 10 * 60 };
+  response.cookies.set("pons_x_oauth_state", state, cookie);
+  response.cookies.set("pons_x_oauth_verifier", verifier, cookie);
+  return response;
+}
