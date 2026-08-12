@@ -33,31 +33,31 @@ export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Prom
   }));
 }
 
-async function tokenMarketCapUsd(token: Address) {
+export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint) {
   const key = token.toLowerCase();
   const existing = marketCapCache.get(key);
-  if (existing && existing.expiresAt > Date.now()) return existing.value;
+  if (blockNumber === undefined && existing && existing.expiresAt > Date.now()) return existing.value;
   const rpc = rpcClient();
-  const launched = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [token] });
+  const launched = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [token], blockNumber });
   if (!launched.exists || launched.phase === 1 || launched.phase === 3) return remember(key, undefined);
   const [supplyRaw, tokenDecimals, quote] = await Promise.all([
-    rpc.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
-    rpc.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
+    rpc.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply", blockNumber }),
+    rpc.readContract({ address: token, abi: erc20Abi, functionName: "decimals", blockNumber }),
     quoteDetails(rpc, launched.pairToken),
   ]);
   const supply = Number(formatUnits(supplyRaw, tokenDecimals));
   let tokenPriceInQuote: number;
   if (launched.phase === 0) {
-    const [quoteReserve, tokenReserve] = await rpc.readContract({ address: launched.curve, abi: curveAbi, functionName: "getReserves" });
+    const [quoteReserve, tokenReserve] = await rpc.readContract({ address: launched.curve, abi: curveAbi, functionName: "getReserves", blockNumber });
     tokenPriceInQuote = Number(formatUnits(quoteReserve, quote.decimals)) / Number(formatUnits(tokenReserve, tokenDecimals));
   } else {
-    const hook = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "memeHook" });
+    const hook = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "memeHook", blockNumber });
     const [currency0, currency1] = launched.pairToken.toLowerCase() < token.toLowerCase() ? [launched.pairToken, token] : [token, launched.pairToken];
     const poolId = keccak256(encodeAbiParameters(
       [{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }],
       [currency0, currency1, launched.poolFee, launched.tickSpacing, hook],
     ));
-    const [sqrtPriceX96] = await rpc.readContract({ address: STATE_VIEW, abi: stateViewAbi, functionName: "getSlot0", args: [poolId] });
+    const [sqrtPriceX96] = await rpc.readContract({ address: STATE_VIEW, abi: stateViewAbi, functionName: "getSlot0", args: [poolId], blockNumber });
     const rawCurrency1Per0 = (Number(sqrtPriceX96) / 2 ** 96) ** 2;
     const tokenIsCurrency0 = token.toLowerCase() === currency0.toLowerCase();
     tokenPriceInQuote = tokenIsCurrency0
@@ -65,7 +65,8 @@ async function tokenMarketCapUsd(token: Address) {
       : (1 / rawCurrency1Per0) * 10 ** (tokenDecimals - quote.decimals);
   }
   const value = supply * tokenPriceInQuote * quote.usd;
-  return remember(key, Number.isFinite(value) && value >= 0 ? value : undefined);
+  const valid = Number.isFinite(value) && value >= 0 ? value : undefined;
+  return blockNumber === undefined ? remember(key, valid) : valid;
 }
 
 export async function tokenUnitPriceUsd(token: Address) {

@@ -82,7 +82,7 @@ export default async function WalletPage({ params }: Props) {
             const external = !holding.isPonsbotLaunch;
             return <article className="holding" key={`${holding.address || "eth"}-${holding.symbol}`}>
               <Link className="holding-main" href={href} {...(external ? { target: "_blank", rel: "noreferrer" } : {})}>
-              <span className={`holding-icon${holding.symbol === "ETH" ? " holding-icon-eth" : ""}`}>
+              <span className={`holding-icon${holding.symbol === "ETH" ? " holding-icon-eth" : ""}${holding.isPairAsset ? " holding-icon-pair" : ""}`}>
                 {holding.iconUrl ? (
                   <ExternalTokenImage
                     src={holding.iconUrl}

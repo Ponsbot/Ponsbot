@@ -63,6 +63,23 @@ export default defineSchema({
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
     .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"]),
 
+  tokenActivity: defineTable({
+    tokenAddress: v.string(), normalizedTokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(),
+    kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(),
+    tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number(), createdAt: v.number(),
+  }).index("by_token_time", ["normalizedTokenAddress", "timestamp"])
+    .index("by_transaction_log", ["transactionHash", "logIndex"]),
+
+  tokenMarketState: defineTable({
+    tokenAddress: v.string(), normalizedTokenAddress: v.string(), lastBuyAt: v.optional(v.number()),
+    marketCapUsd: v.optional(v.number()), indexedThroughBlock: v.optional(v.string()), updatedAt: v.number(),
+  }).index("by_normalized_token", ["normalizedTokenAddress"])
+    .index("by_last_buy", ["lastBuyAt"]),
+
+  marketIndexState: defineTable({
+    key: v.string(), indexedThroughBlock: v.optional(v.string()), leaseUntil: v.number(), lastViewerAt: v.number(), updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   walletRateLimits: defineTable({ ownerXUserId: v.string(), day: v.string(), count: v.number(), updatedAt: v.number() })
     .index("by_owner_x_user_id", ["ownerXUserId"]),
 

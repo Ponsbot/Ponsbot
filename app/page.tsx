@@ -4,7 +4,7 @@ import { LaunchGrid } from "@/components/LaunchGrid";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { listLaunches } from "@/lib/site-data";
 
-export const revalidate = 30;
+export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const launches = await listLaunches(60);

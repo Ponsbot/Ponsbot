@@ -29,6 +29,10 @@ const quoterAbi = parseAbi([
 const ponsFactoryAbi = parseAbi([
   "function previewLaunchEconomics(uint256 launchConfigId,address pairToken) view returns (bytes32)",
   "function launchFee() view returns (uint256)",
+  "function getLaunchConfig(uint256 id) view returns ((uint256 supply,uint256 curveFeeBps,uint256 phantomQuote,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,bool enabled))",
+  "function pairTokenEconomics(address token) view returns ((uint256 phantomQuote,uint256 graduationThreshold,uint8 decimals))",
+  "function launchDeployer() view returns (address)",
+  "function buybackVault() view returns (address)",
   "function launchToken((string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials,address creatorFeeRecipient,uint16 creatorTaxBps,bool buybackEnabled,bytes32 expectedEconomics,bytes32 salt) params,uint256 launchConfigId,address pairToken,address[] snipeTaxExemptions) payable returns (address token,address curve)",
   "event TokenLaunched(address indexed token,address indexed curve,address indexed deployer,address pairToken,uint256 launchConfigId,uint256 graduationThreshold)",
   "function getLaunchedToken(address token) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists) launched)",
@@ -57,6 +61,10 @@ const ponsRouterAbi = parseAbi([
   "function launchAndBuy((string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials,address creatorFeeRecipient,uint16 creatorTaxBps,bool buybackEnabled,bytes32 expectedEconomics,bytes32 salt) params,uint256 launchConfigId,address pairToken,uint256 quoteIn,uint256 minTokensOut,address recipient,address[] snipeTaxExemptions) payable returns (address token,address curve,uint256 tokensOut)",
   "event Launched(address indexed token,address indexed curve,address indexed recipient,address launcher,uint256 quoteSpent,uint256 tokensReceived)",
 ]);
+const ponsLaunchDeployerAbi = parseAbi([
+  "function predictLaunchAddresses((address pairToken,address creatorFeeRecipient,address originalDeployer,address feePolicy,(address protocolFeeRecipient,uint16 protocolFeeShareBps,uint16 buybackBurnBps,uint16 hookFeeBps,uint16 maxInternalPriceImpactBps) policy,address feeEscrow,address buybackVault,uint256 phantomQuote,uint256 curveFeeBps,uint256 creatorTaxBps,bool buybackEnabled,uint256 graduationThreshold,uint256 supply,bytes32 salt,string name,string symbol,string logo,string description,(string twitter,string telegram,string discord,string website,string farcaster) socials)) view returns (address token,address curve)",
+]);
+const ponsMemeHookPolicyAbi = parseAbi(["function currentFeePolicy() view returns ((address protocolFeeRecipient,uint16 protocolFeeShareBps,uint16 buybackBurnBps,uint16 hookFeeBps,uint16 maxInternalPriceImpactBps))"]);
 const DEAD = "0x000000000000000000000000000000000000dEaD";
 const USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168";
 const V3_FEES = [100, 500, 3_000, 10_000] as const;
@@ -418,6 +426,50 @@ function launchSalt(request: ExecutionRequest) {
     .update(`pons-launch:${request.idempotencyKey}`).digest("hex")}` as Hex;
 }
 
+async function vanityLaunchSalt(
+  client: ReturnType<typeof rpcClient>, request: ExecutionRequest,
+  operation: Extract<ExecutionRequest["operation"], { type: "pons_v2_launch" | "pons_v2_launch_and_buy" }>,
+  factory: Address, owner: Address, pairToken: Address,
+) {
+  const configId = BigInt(operation.launchConfigId);
+  const [config, feeEscrow, buybackVault, deployer, memeHook] = await Promise.all([
+    client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "getLaunchConfig", args: [configId] }),
+    client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "feeEscrow" }),
+    client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "buybackVault" }),
+    client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "launchDeployer" }),
+    client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "memeHook" }),
+  ]);
+  const policy = await client.readContract({ address: memeHook, abi: ponsMemeHookPolicyAbi, functionName: "currentFeePolicy" });
+  const pairEconomics = pairToken === zeroAddress ? undefined : await client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "pairTokenEconomics", args: [pairToken] });
+  const baseSalt = launchSalt(request);
+  const base = {
+    pairToken, creatorFeeRecipient: owner, originalDeployer: owner, feePolicy: memeHook, policy,
+    feeEscrow, buybackVault,
+    phantomQuote: pairEconomics?.phantomQuote || config.phantomQuote,
+    curveFeeBps: config.curveFeeBps, creatorTaxBps: 0n, buybackEnabled: false,
+    graduationThreshold: pairEconomics?.graduationThreshold || config.graduationThreshold, supply: config.supply,
+    name: operation.name, symbol: operation.symbol, logo: operation.imageUri, description: operation.description,
+    socials: { twitter: operation.socials.twitter, telegram: operation.socials.telegram, discord: "", website: operation.socials.website, farcaster: "" },
+  } as const;
+  // Address prediction hashes two large creation-code payloads. Keep each on-chain
+  // multicall below ordinary RPC execution/gas limits while still amortizing requests.
+  const batchSize = 24;
+  for (let offset = 0; offset < 100_000; offset += batchSize) {
+    const candidates = Array.from({ length: Math.min(batchSize, 100_000 - offset) }, (_, index) => {
+      const salt = keccak256(encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }], [baseSalt, BigInt(offset + index)]));
+      return { salt, contract: { address: deployer, abi: ponsLaunchDeployerAbi, functionName: "predictLaunchAddresses" as const, args: [{ ...base, salt }] } };
+    });
+    const results = await client.multicall({ contracts: candidates.map((candidate) => candidate.contract), allowFailure: true, multicallAddress: "0xcA11bde05977b3631167028862bE2a173976CA11" });
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index];
+      if (result.status !== "success") continue;
+      const [tokenAddress, curveAddress] = result.result;
+      if (tokenAddress.toLowerCase().endsWith("b07")) return { salt: candidates[index].salt, tokenAddress, curveAddress };
+    }
+  }
+  throw new Error("could not find a Pons Bot b07 contract address");
+}
+
 async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<ExecutionRequest["operation"], {
   type: "pons_v2_launch" | "pons_v2_launch_and_buy";
 }>) {
@@ -431,11 +483,12 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "previewLaunchEconomics", args: [launchConfigId, pairToken] }),
     client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "launchFee" }),
   ]);
+  const vanity = await vanityLaunchSalt(client, request, operation, factory, owner, pairToken);
   const params = {
     name: operation.name, symbol: operation.symbol, logo: operation.imageUri, description: operation.description,
     socials: { twitter: operation.socials.twitter, telegram: operation.socials.telegram, discord: "", website: operation.socials.website, farcaster: "" },
     creatorFeeRecipient: owner, creatorTaxBps: 0, buybackEnabled: false,
-    expectedEconomics, salt: launchSalt(request),
+    expectedEconomics, salt: vanity.salt,
   } as const;
   if (operation.type === "pons_v2_launch") {
     const simulation = await client.simulateContract({
@@ -444,6 +497,7 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     });
     const data = encodeFunctionData({ abi: ponsFactoryAbi, functionName: "launchToken", args: [params, launchConfigId, pairToken, []] });
     const prepared = await prepareSigned(request, factory, data, launchFee);
+    if (simulation.result[0].toLowerCase() !== vanity.tokenAddress.toLowerCase() || simulation.result[1].toLowerCase() !== vanity.curveAddress.toLowerCase()) throw new Error("Pons expected launch address did not match the b07 prediction");
     return { ...prepared, tokenAddress: simulation.result[0], poolAddress: simulation.result[1], devBuySucceeded: false };
   }
   if (!operation.devBuy) throw new Error("initial launch buy amount is missing");
@@ -471,6 +525,7 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
     account: owner, address: router, abi: ponsRouterAbi, functionName: "launchAndBuy",
     args: [params, launchConfigId, pairToken, quoteIn, 0n, owner, []], value,
   });
+  if (first.result[0].toLowerCase() !== vanity.tokenAddress.toLowerCase() || first.result[1].toLowerCase() !== vanity.curveAddress.toLowerCase()) throw new Error("Pons expected launch address did not match the b07 prediction");
   const minimum = first.result[2] * 9_750n / 10_000n;
   const data = encodeFunctionData({
     abi: ponsRouterAbi, functionName: "launchAndBuy",
