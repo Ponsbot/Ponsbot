@@ -16,7 +16,7 @@ export function MobileNav() {
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
   return <div className="mobile-nav" ref={menuRef}>
-    <a className="mobile-x-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x.webp" alt="" width={17} height={17} /></a>
+    <a className="mobile-x-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x-logo.png" alt="" width={17} height={17} /></a>
     <button className="mobile-menu-toggle" type="button" aria-label="Open navigation menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span /><span /><span /></button>
     {open ? <div className="mobile-menu">
       <Link href="/" onClick={() => setOpen(false)}>HOME</Link>
