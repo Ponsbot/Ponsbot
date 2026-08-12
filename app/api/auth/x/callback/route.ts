@@ -72,7 +72,7 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(new URL(`/wallet/${wallet.address}`, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
-    response.cookies.set(WEB_WALLET_SESSION_COOKIE, createWebWalletSession(wallet.address, identity.id, webSecret), {
+    response.cookies.set(WEB_WALLET_SESSION_COOKIE, createWebWalletSession(wallet.address, identity.id, identity.username, webSecret), {
       httpOnly: true,
       secure: siteUrl.startsWith("https://"),
       sameSite: "lax",

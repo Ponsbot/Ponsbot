@@ -1,12 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { MobileNav } from "@/components/MobileNav";
+import { WalletAccountMenu } from "@/components/WalletAccountMenu";
 
 export function SiteHeader() {
   return <header className="site-header">
     <div className="header-brand"><MobileNav /><Link href="/" className="wordmark"><Image className="brand-logo" src="/ponsbot.png" alt="" width={42} height={42} priority /><span>Pons Bot</span></Link></div>
     <div className="header-ca" aria-label="Pons Bot ticker and contract address placeholder"><span className="header-ca-desktop">$PONSBOT: XXXXXXXXXXXXXXXXXXXXXXX</span><span className="header-ca-mobile">$PONSBOT</span></div>
-    <nav><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x.webp" alt="" width={20} height={20} /></a><a className="header-wallet-button" href="/api/auth/x/start">My Wallet</a></nav>
+    <nav><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x.webp" alt="" width={20} height={20} /></a><WalletAccountMenu /></nav>
   </header>;
 }
 
