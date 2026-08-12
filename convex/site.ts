@@ -10,7 +10,7 @@ function publicLaunch(launch: {
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; createdAt: number;
   pairToken?: string; poolAddress?: string; launcherUsername?: string;
-}, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string, lastBuyAt?: number, storedMarketCapUsd?: number) {
+}, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string, lastBuyAt?: number, storedMarketCapUsd?: number, volume24hUsd?: number, graduated?: boolean) {
   return {
     name: launch.name,
     symbol: launch.symbol,
@@ -30,6 +30,8 @@ function publicLaunch(launch: {
     createdAt: launch.createdAt,
     lastBuyAt,
     storedMarketCapUsd,
+    volume24hUsd,
+    graduated,
   };
 }
 
@@ -42,7 +44,7 @@ export const listLaunches = query({
       const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
       const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
       const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", launch.tokenAddress!.toLowerCase())).unique();
-      return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd);
+      return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd, market?.volume24hUsd, market?.graduated);
     }));
   },
 });
@@ -58,7 +60,7 @@ export const getLaunch = query({
     const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
     const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
     const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", normalized)).unique();
-    return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd);
+    return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd, market?.volume24hUsd, market?.graduated);
   },
 });
 
@@ -100,8 +102,8 @@ export const acquireMarketIndexLease = mutation({
 export const recordMarketIndex = mutation({
   args: {
     secret: v.string(),
-    indexedThroughBlock: v.string(), marketCaps: v.array(v.object({ tokenAddress: v.string(), marketCapUsd: v.optional(v.number()) })),
-    events: v.array(v.object({ tokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(), kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(), tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number() })),
+    indexedThroughBlock: v.string(), marketCaps: v.array(v.object({ tokenAddress: v.string(), marketCapUsd: v.optional(v.number()), graduated: v.optional(v.boolean()) })),
+    events: v.array(v.object({ tokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(), kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(), tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), usdAmount: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number() })),
   },
   handler: async (ctx, { secret, indexedThroughBlock, marketCaps, events }) => {
     if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
@@ -114,7 +116,9 @@ export const recordMarketIndex = mutation({
       const normalizedTokenAddress = item.tokenAddress.toLowerCase();
       const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress)).unique();
       const lastBuyAt = events.filter((event) => event.kind === "buy" && event.tokenAddress.toLowerCase() === normalizedTokenAddress).reduce<number | undefined>((latest, event) => latest === undefined || event.timestamp > latest ? event.timestamp : latest, state?.lastBuyAt);
-      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, indexedThroughBlock, updatedAt: now };
+      const recent = await ctx.db.query("tokenActivity").withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("timestamp", now - 24 * 60 * 60_000)).take(1000);
+      const volume24hUsd = recent.reduce((sum, event) => event.kind === "burn" ? sum : sum + (event.usdAmount ?? (event.marketCapUsd === undefined ? 0 : Number(event.tokenAmount) * event.marketCapUsd / 1_000_000_000)), 0);
+      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, volume24hUsd, graduated: item.graduated, indexedThroughBlock, updatedAt: now };
       if (state) await ctx.db.patch(state._id, patch); else await ctx.db.insert("tokenMarketState", patch);
     }
     const cursor = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();

@@ -75,7 +75,26 @@ function destinationLabel(recipient: string) {
 }
 
 function assetLabel(token: string | undefined, fallback = "ETH") {
-  return token ? destinationLabel(token) : fallback;
+  if (!token) return fallback;
+  if (/^eth$/i.test(token)) return "ETH";
+  if (safeAddress(token)) return "token";
+  return `$${token.replace(/^\$/, "").toUpperCase()}`;
+}
+
+function replyCommand(command: WalletCommand, tokenSymbol: string | undefined, registry: RuntimeRegistry): WalletCommand {
+  const displayToken = (value: string | undefined) => {
+    if (!value || !safeAddress(value)) return value;
+    if (tokenSymbol) return tokenSymbol;
+    return registry.pairs.find((item) => item.address.toLowerCase() === value.toLowerCase())?.symbol || "token";
+  };
+  if (command.kind === "send" && command.token) return { ...command, token: displayToken(command.token) };
+  if (command.kind === "burn" || command.kind === "sell" || command.kind === "claim_fees" || command.kind === "buy_and_send") {
+    return { ...command, ...(command.token ? { token: displayToken(command.token) } : {}) } as WalletCommand;
+  }
+  if (command.kind === "buy") return { ...command, token: displayToken(command.token)!, pairAsset: displayToken(command.pairAsset) };
+  if (command.kind === "show_balance" && command.token) return { ...command, token: displayToken(command.token) };
+  if (command.kind === "launch" && command.pairToken) return { ...command, pairToken: displayToken(command.pairToken) };
+  return command;
 }
 
 function commandSummary(command: WalletCommand) {
@@ -823,13 +842,14 @@ export const executeCommand = internalAction({
         const resolvedToken = command.token && !/^eth$/i.test(command.token)
           ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
           : command.token;
-        const balance = await signerRequest<{ display: string }>("/v1/wallets/balance", {
+        const balance = await signerRequest<{ display: string; symbol?: string }>("/v1/wallets/balance", {
           chainId: ROBINHOOD_CHAIN_ID, walletRef: wallet.signerWalletRef,
           expectedAddress: wallet.address, ownerReference: `x:${args.xUserId}`,
           ...(resolvedToken ? { token: resolvedToken } : {}),
           ...(knownTokens ? { knownTokens } : {}),
         });
-        return { ok: true, message: command.token ? `📊 ${command.token} balance: ${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` : `📊 Here's your wallet balance:\n${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` };
+        const ticker = balance.symbol && /^[A-Za-z0-9]{1,32}$/.test(balance.symbol) ? assetLabel(balance.symbol) : undefined;
+        return { ok: true, message: command.token ? `📊 ${ticker ? `${ticker} balance` : "Token balance"}: ${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` : `📊 Here's your wallet balance:\n${balance.display}\nYour wallet: ${walletPageUrl(wallet.address)}` };
       } catch (error) {
         return { ok: false, message: safeFailure(error) };
       }
@@ -886,6 +906,14 @@ export const executeCommand = internalAction({
         const commandToken = "token" in command && typeof command.token === "string"
           ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
           : undefined;
+        const tokenInfo = commandToken && safeAddress(commandToken)
+          ? await signerRequest<{ symbol?: string }>("/v1/wallets/balance", {
+            chainId: ROBINHOOD_CHAIN_ID, walletRef: wallet.signerWalletRef,
+            expectedAddress: wallet.address, ownerReference: `x:${args.xUserId}`, token: commandToken,
+          })
+          : undefined;
+        const tokenSymbol = tokenInfo?.symbol && /^[A-Za-z0-9]{1,32}$/.test(tokenInfo.symbol) ? tokenInfo.symbol : undefined;
+        const publicCommand = replyCommand(command, tokenSymbol, registry);
         if (command.kind === "claim_fees") {
           const factoryAddress = registry.contracts.pons_v2_factory;
           if (!safeAddress(factoryAddress)) throw new Error("Pons factory is not configured");
@@ -931,13 +959,13 @@ export const executeCommand = internalAction({
             const sendOperation = await operationFor(sendCommand, undefined, undefined, recipient, commandToken, registry);
             const sent = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:send`, sendCommand, sendOperation);
             await ctx.runMutation(internal.wallets.indexWalletToken, {
-              walletId: wallet._id, tokenAddress: commandToken, symbol: command.token.replace(/^\$/, ""),
+              walletId: wallet._id, tokenAddress: commandToken, symbol: tokenSymbol || "TOKEN",
               involvedByLaunch: false, involvedByTransaction: true,
             });
             await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "confirmed", transactionHash: sent.transactionHash });
             return {
               ok: true, transactionHash: sent.transactionHash,
-              message: `✅ Success! Bought ${formatUnits(purchased, after.decimals)} ${assetLabel(command.token)} and sent it to ${destinationLabel(command.recipient)}!\nBuy TXN: ${transactionUrl(buy.transactionHash)}\nSend TXN: ${transactionUrl(sent.transactionHash)}${warning}`,
+              message: `✅ Success! Bought ${formatUnits(purchased, after.decimals)} ${assetLabel(tokenSymbol)} and sent it to ${destinationLabel(command.recipient)}!\nBuy TXN: ${transactionUrl(buy.transactionHash)}\nSend TXN: ${transactionUrl(sent.transactionHash)}${warning}`,
             };
           } catch (error) {
             throw new Error(`The buy completed, but the send did not. The purchased tokens remain in your wallet. Buy TXN: ${transactionUrl(buy.transactionHash)} ${safeFailure(error)}`);
@@ -973,7 +1001,7 @@ export const executeCommand = internalAction({
         if (result.status === "reverted") throw new Error("transaction reverted");
         if (commandToken && safeAddress(commandToken) && "token" in command && typeof command.token === "string") {
           await ctx.runMutation(internal.wallets.indexWalletToken, {
-            walletId: wallet._id, tokenAddress: commandToken, symbol: command.token.replace(/^\$/, ""),
+            walletId: wallet._id, tokenAddress: commandToken, symbol: tokenSymbol || "TOKEN",
             involvedByLaunch: false, involvedByTransaction: true,
           });
         }
@@ -1016,7 +1044,7 @@ export const executeCommand = internalAction({
           });
           const reconciled = await waitForConfirmedRequest(ctx, requestId);
           await indexInvolvedPair(ctx, wallet._id, reconciled.involvedPairTokenAddress, registry.pairs);
-          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
+          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
         }
         if (result.status === "broadcast" || result.status === "pending") {
           await ctx.runMutation(internal.wallets.recordBroadcastExecution, {
@@ -1027,7 +1055,7 @@ export const executeCommand = internalAction({
           });
           const reconciled = await waitForConfirmedRequest(ctx, requestId);
           await indexInvolvedPair(ctx, wallet._id, reconciled.involvedPairTokenAddress, registry.pairs);
-          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
+          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
         }
         if (command.kind === "launch" && (!result.tokenAddress || !safeAddress(result.tokenAddress))) {
           throw new Error("launch receipt did not contain a token address");
@@ -1044,9 +1072,9 @@ export const executeCommand = internalAction({
         });
         await indexInvolvedPair(ctx, wallet._id, result.involvedPairTokenAddress, registry.pairs);
         if (command.kind === "launch") {
-          return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, result.tokenAddress)}${warning}` };
+          return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(publicCommand, result.transactionHash, result.tokenAddress)}${warning}` };
         }
-        return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${warning}` };
+        return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(publicCommand, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${warning}` };
       } catch (error) {
         const rawMessage = error instanceof Error ? error.message : "wallet request failed";
         const baseMessage = safeFailure(error);

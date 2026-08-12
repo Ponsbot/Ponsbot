@@ -65,8 +65,10 @@ export async function POST(request: Request) {
       rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "poolManager" }),
     ]);
     const graduated = new Map<string, { tokenAddress: string; tokenIsCurrency0: boolean }>();
+    const graduationStatus = new Map<string, boolean>();
     await Promise.all(targets.map(async (target) => {
       const launch = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [target.tokenAddress as Address] }).catch(() => undefined);
+      graduationStatus.set(target.tokenAddress.toLowerCase(), launch?.phase === 2);
       if (!launch || launch.phase !== 2) return;
       const token = target.tokenAddress.toLowerCase() as Address; const pair = target.pairToken.toLowerCase() as Address;
       const [currency0, currency1] = pair < token ? [pair, token] : [token, pair];
@@ -80,7 +82,7 @@ export async function POST(request: Request) {
     const logs = directLogs;
     const blockTimes = new Map<string, number>();
     const marketCaps = new Map<string, number | undefined>();
-    const events: Array<{ tokenAddress: string; transactionHash: string; logIndex: number; kind: "buy" | "sell" | "burn"; walletAddress: string; tokenAmount: string; marketCapUsd?: number; blockNumber: string; timestamp: number }> = [];
+    const events: Array<{ tokenAddress: string; transactionHash: string; logIndex: number; kind: "buy" | "sell" | "burn"; walletAddress: string; tokenAmount: string; marketCapUsd?: number; usdAmount?: number; blockNumber: string; timestamp: number }> = [];
     for (const log of logs) {
       const target = addressMap.get(log.address.toLowerCase());
       if (!target) continue;
@@ -105,7 +107,9 @@ export async function POST(request: Request) {
       const decimals = await rpc.readContract({ address: target.tokenAddress as Address, abi: parseAbi(["function decimals() view returns(uint8)"]), functionName: "decimals", blockNumber }).catch(() => 18);
       const marketCapUsd = kind === "burn" ? undefined : await tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined);
       marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined));
-      events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress, tokenAmount: formatUnits(amount, decimals), marketCapUsd, blockNumber: blockNumber.toString(), timestamp });
+      const tokenAmount = formatUnits(amount, decimals);
+      const usdAmount = kind !== "burn" && marketCapUsd !== undefined ? Number(tokenAmount) * marketCapUsd / 1_000_000_000 : undefined;
+      events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
     }
     for (const log of swapLogs) {
       try {
@@ -122,7 +126,9 @@ export async function POST(request: Request) {
           tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined),
         ]);
         marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined));
-        events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress: transaction.from, tokenAmount: formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, decimals), marketCapUsd, blockNumber: blockNumber.toString(), timestamp });
+        const tokenAmount = formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, decimals);
+        const usdAmount = marketCapUsd === undefined ? undefined : Number(tokenAmount) * marketCapUsd / 1_000_000_000;
+        events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress: transaction.from, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
       } catch { /* Ignore unrelated or malformed PoolManager logs. */ }
     }
     // Actively viewed pages receive a current market-cap refresh even when no trade occurred.
@@ -131,7 +137,7 @@ export async function POST(request: Request) {
     await convex.mutation(api.site.recordMarketIndex, {
       secret,
       indexedThroughBlock: latest.toString(),
-      marketCaps: [...marketCaps].map(([tokenAddress, marketCapUsd]) => ({ tokenAddress, ...(marketCapUsd === undefined ? {} : { marketCapUsd }) })),
+      marketCaps: [...marketCaps].map(([tokenAddress, marketCapUsd]) => ({ tokenAddress, ...(marketCapUsd === undefined ? {} : { marketCapUsd }), graduated: graduationStatus.get(tokenAddress.toLowerCase()) || false })),
       events,
     });
     return NextResponse.json({ ok: true, indexed: true, events: events.length });

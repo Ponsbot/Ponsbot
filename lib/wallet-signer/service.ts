@@ -117,11 +117,11 @@ export async function provisionWallet(ownerReference: string): Promise<{ walletR
   return { walletRef: account.address, address: account.address };
 }
 
-export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string; raw?: string; decimals?: number }> {
+export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string; raw?: string; decimals?: number; symbol?: string }> {
   const client = rpcClient();
   if (!token || /^eth$/i.test(token)) {
     const eth = formatEther(await client.getBalance({ address }));
-    if (token) return { display: `${trimDecimal(eth)} ETH` };
+    if (token) return { display: `${trimDecimal(eth)} ETH`, symbol: "ETH" };
     const holdings = [`${trimDecimal(eth)} ETH`];
     const tokenHoldings = await Promise.all([...new Set(knownTokens.map((value) => value.toLowerCase()))].map(async (tokenAddress) => {
       try {
@@ -143,7 +143,7 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
     client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "decimals" }),
     client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "symbol" }),
   ]);
-  return { display: `${trimDecimal(formatUnits(balance, decimals))} ${symbol}`, raw: balance.toString(), decimals };
+  return { display: `${trimDecimal(formatUnits(balance, decimals))} ${symbol}`, raw: balance.toString(), decimals, symbol };
 }
 
 function trimDecimal(value: string) {
