@@ -29,11 +29,11 @@ function replyLimits(premium = false) {
     userDaily: premium
       ? positiveInteger("X_REPLY_PREMIUM_DAILY_LIMIT", 1_500, 10_000)
       : positiveInteger("X_REPLY_USER_DAILY_LIMIT", 75, 1_000),
-    globalDaily: positiveInteger("X_REPLY_GLOBAL_DAILY_LIMIT", 10_000, 100_000),
-    userWindow: positiveInteger("X_REPLY_USER_WINDOW_LIMIT", 5, 100),
-    globalWindow: positiveInteger("X_REPLY_GLOBAL_WINDOW_LIMIT", 25, 10_000),
+    globalDaily: positiveInteger("X_REPLY_GLOBAL_DAILY_LIMIT", 100_000, 100_000),
+    userWindow: positiveInteger("X_REPLY_USER_WINDOW_LIMIT", 20, 100),
+    globalWindow: positiveInteger("X_REPLY_GLOBAL_WINDOW_LIMIT", 1_000, 10_000),
     windowMs: positiveInteger("X_REPLY_WINDOW_MINUTES", 10, 60) * 60_000,
-    cooldownMs: positiveInteger("X_REPLY_COOLDOWN_SECONDS", 30, 3_600) * 1_000,
+    cooldownMs: positiveInteger("X_REPLY_COOLDOWN_SECONDS", 20, 3_600) * 1_000,
   };
 }
 

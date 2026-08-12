@@ -13,13 +13,13 @@ const WALLET_WORDS = /\b(?:wallet|address|balance|holdings?|portfolio|fund|depos
 export function walletHelpMessage(topic: WalletHelpTopic) {
   const messages: Record<WalletHelpTopic, string> = {
     capabilities: "✨ I can create your Robinhood Chain wallet, check balances, buy, sell, send, and burn. Verified X accounts can launch on Pons V2, pair with supported assets, and claim fees after launch!",
-    wallet: "👛 Just ask for your wallet! I'll return its Robinhood Chain explorer link. It's connected to your X account and ready to receive ETH or supported tokens.",
+    wallet: "👛 Just ask for your wallet! I'll return your Pons Bot wallet page, where you can view the address and holdings. It's connected to your X account and ready to receive ETH or supported tokens.",
     fund: "💰 Ask for your wallet and send Robinhood Chain ETH or supported tokens to the provided address. Keep a little ETH available for gas!",
     balance: "📊 Ask “what's my balance?” to see your ETH and token balances. You can also name a ticker or contract to check a specific asset.",
     send: "📤 Tell me the amount, token, and destination wallet or X handle. Example: send 25 PONSBOT to @user. You can also buy and send in one post: buy $100 of PONSBOT and send it to @user.",
-    buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. For an asset-paired token, use USD, ETH, or the pair itself—like buy 5 MSFT of PONSBOT. If needed, I swap into the pair first and complete one request.",
+    buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. For an asset-paired token, use USD, ETH, or the pair itself, like buy 5 MSFT of PONSBOT. If needed, I swap into the pair first and complete one request.",
     burn: "🔥 Say burn, the amount, and the ticker or contract. Example: burn 25 PONSBOT, burn $10 of PONSBOT, or burn half my PONSBOT.",
-    launch: "🚀 Verified X accounts can launch on Pons V2! Add a name, ticker, and optional artwork, links, pair, or dev buy. For a linked-asset pair, a USD or ETH dev buy is swapped into that asset first—all from one post.",
+    launch: "🚀 Verified X accounts can launch on Pons V2! Add a name, ticker, and optional artwork, links, pair, or dev buy. For a linked-asset pair, a USD or ETH dev buy is swapped into that asset first, all from one post.",
     pairs: "🔗 You can pair your Pons V2 launch with: NVDA, SPCX, GOOGL, TSLA, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, USDG, ETH.",
     fees: "💸 Pons V2 creator fees are paid in the launch's paired asset. Say “claim my fees” for ETH-pair fees, or “claim my fees for PONSBOT” for that launch. Fees in different paired assets must be claimed individually.",
   };

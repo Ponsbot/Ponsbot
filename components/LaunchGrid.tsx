@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import type { PublicLaunch } from "@/lib/site-data";
 import { LaunchCard } from "@/components/LaunchCard";
 type Sort = "newest" | "oldest" | "mcap" | "lastBuy";
-const PAGE_SIZE = 12;
+// Five cards per desktop row, with four rows available before pagination.
+const PAGE_SIZE = 20;
 
 export function LaunchGrid({ launches }: { launches: PublicLaunch[] }) {
   const [sort, setSort] = useState<Sort>("newest"); const [page, setPage] = useState(1);

@@ -94,7 +94,12 @@ function commandSummary(command: WalletCommand) {
   if (command.kind === "buy_and_send") return `Bought ${command.unit === "usd" ? `$${command.amount}` : `${command.amount} ETH`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
   if (command.kind === "sell") return `Sold ${command.unit === "percent" ? `${command.amount}% of ` : `${command.amount} `}${assetLabel(command.token)}!`;
   if (command.kind === "claim_fees") return `Claimed creator fees${command.token ? ` for ${assetLabel(command.token)}` : ""}!`;
-  if (command.kind === "launch") return `Launched ${command.name} (${command.symbol}) on Pons! 🚀`;
+  if (command.kind === "launch") {
+    const pair = command.pairToken && !/^eth$/i.test(command.pairToken)
+      ? `, paired with ${safeAddress(command.pairToken) ? addressUrl(command.pairToken) : `$${command.pairToken.replace(/^\$/, "")}`}`
+      : "";
+    return `Launched ${command.name} (${command.symbol}) on Pons V2${pair}! 🚀`;
+  }
   return "Transaction submitted!";
 }
 
@@ -724,7 +729,7 @@ function safeFailure(error: unknown) {
   if (/insufficient ETH for gas/i.test(message)) return "⛽ This wallet needs a little more ETH for gas. Top it up and try again!";
   if (/insufficient paired asset balance|first you need to buy the paired asset/i.test(message)) return "❌ You don't have enough of this token's paired asset yet. First you need to buy the paired asset, then try the Pons Bot purchase again.";
   if (/insufficient/i.test(message)) return "❌ There aren't enough funds for that amount. Check the balance or try a smaller amount.";
-  if (/no claimable creator fees/i.test(message)) return "ℹ️ There aren't any swept creator fees available to claim in that asset right now.";
+  if (/no claimable creator fees/i.test(message)) return "ℹ️ There aren't any creator fees available to claim in that asset right now.";
   if (/named paired asset does not match/i.test(message)) return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Ask which asset it uses, then try again with that pair or a dollar amount.";
   if (/image/i.test(message)) return "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
   if (/ticker matches/i.test(message)) return "⚠️ More than one held token uses that ticker. Send me the contract address so I choose the right one!";
@@ -1011,8 +1016,7 @@ export const executeCommand = internalAction({
           });
           const reconciled = await waitForConfirmedRequest(ctx, requestId);
           await indexInvolvedPair(ctx, wallet._id, reconciled.involvedPairTokenAddress, registry.pairs);
-          const sweepLine = feeSweepHashes.length === 1 ? `\nSweep TXN: ${transactionUrl(feeSweepHashes[0])}` : feeSweepHashes.length > 1 ? `\nSwept fees from ${feeSweepHashes.length} launches.` : "";
-          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${sweepLine}${warning}` };
+          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
         }
         if (result.status === "broadcast" || result.status === "pending") {
           await ctx.runMutation(internal.wallets.recordBroadcastExecution, {
@@ -1023,8 +1027,7 @@ export const executeCommand = internalAction({
           });
           const reconciled = await waitForConfirmedRequest(ctx, requestId);
           await indexInvolvedPair(ctx, wallet._id, reconciled.involvedPairTokenAddress, registry.pairs);
-          const sweepLine = feeSweepHashes.length === 1 ? `\nSweep TXN: ${transactionUrl(feeSweepHashes[0])}` : feeSweepHashes.length > 1 ? `\nSwept fees from ${feeSweepHashes.length} launches.` : "";
-          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${sweepLine}${warning}` };
+          return { ok: true, transactionHash: reconciled.transactionHash, message: `${transactionMessage(command, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay)}${warning}` };
         }
         if (command.kind === "launch" && (!result.tokenAddress || !safeAddress(result.tokenAddress))) {
           throw new Error("launch receipt did not contain a token address");
@@ -1043,8 +1046,7 @@ export const executeCommand = internalAction({
         if (command.kind === "launch") {
           return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, result.tokenAddress)}${warning}` };
         }
-        const sweepLine = feeSweepHashes.length === 1 ? `\nSweep TXN: ${transactionUrl(feeSweepHashes[0])}` : feeSweepHashes.length > 1 ? `\nSwept fees from ${feeSweepHashes.length} launches.` : "";
-        return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${sweepLine}${warning}` };
+        return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${warning}` };
       } catch (error) {
         const rawMessage = error instanceof Error ? error.message : "wallet request failed";
         const baseMessage = safeFailure(error);
