@@ -322,7 +322,10 @@ async function prepareSigned(request: ExecutionRequest, to: Address, data: Hex, 
   const transaction = {
     chainId: ROBINHOOD_CHAIN_ID, type: "eip1559" as const, to, data, value, nonce,
     gas: estimatedGas * 120n / 100n,
-    maxFeePerGas: fees.maxFeePerGas,
+    // Base fees can rise between simulation, CDP signing, and serverless
+    // broadcast. Keep headroom so a valid prepared transaction is not rejected
+    // before it reaches the mempool during a short fee spike.
+    maxFeePerGas: fees.maxFeePerGas * 2n,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
   };
   const { signature } = await cdp().evm.signTransaction({

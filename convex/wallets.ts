@@ -685,6 +685,7 @@ function safeFailure(error: unknown) {
   if (/locker relationship|position assets/i.test(message)) return "⚠️ I couldn't verify that launch's Pons fee position. Nothing was claimed.";
   if (/invalid transfer destination/i.test(message)) return "📍 I couldn't identify that recipient. Please send an X handle or wallet address.";
   if (/pool|liquidity|quote returned no output/i.test(message)) return "💧 I couldn't find enough liquidity or a usable route for that trade. Try another amount or asset.";
+  if (/max fee per gas less than block base fee/i.test(message)) return "⛽ Network fees moved too quickly before broadcast. Nothing was submitted or spent; please try again shortly.";
   if (/slippage/i.test(message)) return "📉 The price moved beyond your slippage setting. Try again or choose a higher slippage.";
   if (/website must use https/i.test(message)) return "🔗 Please send a secure website link beginning with https://.";
   if (/twitter link uses an unsupported host/i.test(message)) return "🔗 Please use an x.com link for the X social field.";
