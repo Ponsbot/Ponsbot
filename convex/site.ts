@@ -65,15 +65,18 @@ export const getLaunch = query({
 export const tokenActivity = query({
   args: { tokenAddress: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { tokenAddress, limit }) => ctx.db.query("tokenActivity")
-    .withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", tokenAddress.toLowerCase()))
-    .order("desc").take(Math.min(Math.max(limit || 50, 1), 100)),
+    .withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", tokenAddress.toLowerCase()).gte("timestamp", Date.now() - 24 * 60 * 60_000))
+    .order("desc").take(Math.min(Math.max(limit || 100, 1), 100)),
 });
 
 export const marketIndexTargets = query({
   args: {},
-  handler: async (ctx) => (await ctx.db.query("tokenLaunches").order("desc").take(100))
+  handler: async (ctx) => Promise.all((await ctx.db.query("tokenLaunches").order("desc").take(100))
     .filter((launch) => launch.tokenAddress && launch.poolAddress)
-    .map((launch) => ({ tokenAddress: launch.tokenAddress!, curveAddress: launch.poolAddress!, pairToken: launch.pairToken || "0x0000000000000000000000000000000000000000" })),
+    .map(async (launch) => {
+      const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", launch.tokenAddress!.toLowerCase())).unique();
+      return { tokenAddress: launch.tokenAddress!, curveAddress: launch.poolAddress!, pairToken: launch.pairToken || "0x0000000000000000000000000000000000000000", indexedThroughBlock: market?.indexedThroughBlock };
+    })),
 });
 
 export const acquireMarketIndexLease = mutation({

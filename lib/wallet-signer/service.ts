@@ -451,6 +451,16 @@ async function vanityLaunchSalt(
     name: operation.name, symbol: operation.symbol, logo: operation.imageUri, description: operation.description,
     socials: { twitter: operation.socials.twitter, telegram: operation.socials.telegram, discord: "", website: operation.socials.website, farcaster: "" },
   } as const;
+  if (operation.preparedSalt && operation.predictedTokenAddress && operation.predictedCurveAddress) {
+    const [tokenAddress, curveAddress] = await client.readContract({
+      address: deployer, abi: ponsLaunchDeployerAbi, functionName: "predictLaunchAddresses",
+      args: [{ ...base, salt: operation.preparedSalt as Hex }],
+    });
+    if (tokenAddress.toLowerCase() !== operation.predictedTokenAddress.toLowerCase()
+      || curveAddress.toLowerCase() !== operation.predictedCurveAddress.toLowerCase()
+      || !tokenAddress.toLowerCase().endsWith("b07")) throw new Error("persisted Pons b07 prediction is invalid");
+    return { salt: operation.preparedSalt as Hex, tokenAddress, curveAddress };
+  }
   // Address prediction hashes two large creation-code payloads. Keep each on-chain
   // multicall below ordinary RPC execution/gas limits while still amortizing requests.
   const batchSize = 24;
@@ -468,6 +478,13 @@ async function vanityLaunchSalt(
     }
   }
   throw new Error("could not find a Pons Bot b07 contract address");
+}
+
+export async function prepareLaunchAddresses(request: ExecutionRequest) {
+  const operation = request.operation;
+  if (operation.type !== "pons_v2_launch" && operation.type !== "pons_v2_launch_and_buy") throw new Error("launch operation required");
+  const prediction = await vanityLaunchSalt(rpcClient(), request, operation, operation.factoryAddress as Address, request.expectedFrom as Address, operation.pairToken as Address);
+  return { preparedSalt: prediction.salt, predictedTokenAddress: prediction.tokenAddress, predictedCurveAddress: prediction.curveAddress };
 }
 
 async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<ExecutionRequest["operation"], {

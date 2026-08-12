@@ -58,6 +58,8 @@ const launchOperation = z.object({
   socials: z.object({ website: z.string().max(2_048), twitter: z.string().max(2_048), telegram: z.string().max(2_048) }).strict(),
   feeWalletSource: z.literal("reply_wallet"), launchConfigId: z.string().regex(/^\d+$/),
   pairToken: address, quoterAddress: address, wethAddress: address, method: z.enum(["launchAndBuy", "launchToken"]),
+  preparedSalt: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
+  predictedTokenAddress: address.optional(), predictedCurveAddress: address.optional(),
 }).strict();
 
 export const signerOperationSchema = z.union([
@@ -78,6 +80,12 @@ export const executionRequestSchema = z.object({
   walletRef: address, expectedFrom: address, requireSimulation: z.literal(true),
   operation: signerOperationSchema,
 }).strict();
+
+export const launchPreparationRequestSchema = executionRequestSchema.superRefine((request, ctx) => {
+  if (request.operation.type !== "pons_v2_launch" && request.operation.type !== "pons_v2_launch_and_buy") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "launch operation required", path: ["operation", "type"] });
+  }
+});
 
 export const ponsPairRequestSchema = z.object({
   token: address, factoryAddress: address,

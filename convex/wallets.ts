@@ -124,7 +124,7 @@ function signerConfiguration() {
   return { baseUrl, token };
 }
 
-async function signerRequest<T>(path: string, body: unknown): Promise<T> {
+async function signerRequest<T>(path: string, body: unknown, timeoutMs?: number): Promise<T> {
   const { baseUrl, token } = signerConfiguration();
 
   const response = await fetch(`${baseUrl}${path}`, {
@@ -134,7 +134,7 @@ async function signerRequest<T>(path: string, body: unknown): Promise<T> {
       "content-type": "application/json",
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(path.endsWith("/execute") ? 45_000 : 20_000),
+    signal: AbortSignal.timeout(timeoutMs || (path.endsWith("/execute") ? 45_000 : 20_000)),
   });
 
   const raw = await response.text();
@@ -313,6 +313,11 @@ export const updateWalletRequest = internalMutation({
       await ctx.db.patch(request._id, patch);
     }
   },
+});
+
+export const getWalletRequest = internalQuery({
+  args: { requestId: v.string() },
+  handler: async (ctx, { requestId }) => ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", requestId)).unique(),
 });
 
 const launchRecordValidator = v.object({
@@ -671,6 +676,42 @@ function isPremium(subscriptionType?: string) {
   return subscriptionType === "Premium" || subscriptionType === "PremiumPlus";
 }
 
+export const persistLaunchPrediction = internalMutation({
+  args: { requestId: v.string(), preparedLaunchSalt: v.string(), predictedTokenAddress: v.string(), predictedCurveAddress: v.string() },
+  handler: async (ctx, args) => {
+    const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
+    if (!request) throw new Error("wallet request not found");
+    if (request.preparedLaunchSalt) {
+      if (request.preparedLaunchSalt !== args.preparedLaunchSalt
+        || request.predictedTokenAddress?.toLowerCase() !== args.predictedTokenAddress.toLowerCase()
+        || request.predictedCurveAddress?.toLowerCase() !== args.predictedCurveAddress.toLowerCase()) throw new Error("launch prediction changed during retry");
+      return;
+    }
+    await ctx.db.patch(request._id, { preparedLaunchSalt: args.preparedLaunchSalt, predictedTokenAddress: args.predictedTokenAddress, predictedCurveAddress: args.predictedCurveAddress, updatedAt: Date.now() });
+  },
+});
+
+async function prepareAndPersistLaunch(
+  ctx: ActionCtx, wallet: Doc<"cryptoWallets">, xUserId: string, requestId: string, operation: Record<string, unknown>,
+) {
+  const saved = await ctx.runQuery(internal.wallets.getWalletRequest, { requestId });
+  if (saved?.preparedLaunchSalt && saved.predictedTokenAddress && saved.predictedCurveAddress) return {
+    ...operation, preparedSalt: saved.preparedLaunchSalt,
+    predictedTokenAddress: saved.predictedTokenAddress, predictedCurveAddress: saved.predictedCurveAddress,
+  };
+  const prediction = await signerRequest<{ preparedSalt: string; predictedTokenAddress: string; predictedCurveAddress: string }>("/v1/transactions/prepare-launch", {
+    idempotencyKey: requestId, ownerReference: `x:${xUserId}`, chainId: ROBINHOOD_CHAIN_ID,
+    walletRef: wallet.signerWalletRef, expectedFrom: wallet.address, requireSimulation: true, operation,
+  }, 240_000);
+  if (!/^0x[a-fA-F0-9]{64}$/.test(prediction.preparedSalt) || !safeAddress(prediction.predictedTokenAddress)
+    || !safeAddress(prediction.predictedCurveAddress) || !prediction.predictedTokenAddress.toLowerCase().endsWith("b07")) throw new Error("signer returned an invalid b07 launch prediction");
+  await ctx.runMutation(internal.wallets.persistLaunchPrediction, {
+    requestId, preparedLaunchSalt: prediction.preparedSalt,
+    predictedTokenAddress: prediction.predictedTokenAddress, predictedCurveAddress: prediction.predictedCurveAddress,
+  });
+  return { ...operation, ...prediction };
+}
+
 function walletPageUrl(address: string) {
   const site = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
   return site ? `${site}/wallet/${address}` : addressUrl(address);
@@ -708,6 +749,7 @@ function safeFailure(error: unknown) {
 
 async function submit(wallet: { signerWalletRef: string; address: string }, xUserId: string, requestId: string, operation: Record<string, unknown>) {
   if (!executionEnabled()) throw new Error("crypto execution is disabled");
+  const launch = operation.type === "pons_v2_launch" || operation.type === "pons_v2_launch_and_buy";
   return await signerRequest<SubmittedTransaction>("/v1/transactions/execute", {
     idempotencyKey: requestId,
     ownerReference: `x:${xUserId}`,
@@ -716,7 +758,7 @@ async function submit(wallet: { signerWalletRef: string; address: string }, xUse
     expectedFrom: wallet.address,
     requireSimulation: true,
     operation,
-  });
+  }, launch ? 240_000 : 45_000);
 }
 
 export const ensureWallet = internalAction({
@@ -919,7 +961,8 @@ export const executeCommand = internalAction({
             await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
           }
         }
-        const operation = await operationFor(executionCommand, args.mediaUrl, undefined, args.recipientAddress, commandToken, registry);
+        let operation = await operationFor(executionCommand, args.mediaUrl, undefined, args.recipientAddress, commandToken, registry);
+        if (command.kind === "launch") operation = await prepareAndPersistLaunch(ctx, wallet, args.xUserId, requestId, operation);
         const result = await submitWithApproval(ctx, wallet, args.xUserId, requestId, operation);
         if (!/^0x[a-fA-F0-9]{64}$/.test(result.transactionHash)) throw new Error("signer returned an invalid transaction hash");
         if (result.status === "reverted") throw new Error("transaction reverted");

@@ -6,6 +6,7 @@ import { tokenMarketCapUsd } from "@/lib/token-market-cap";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 const curveEvents = parseAbi([
   "event CurveBuy(address indexed buyer,address indexed recipient,uint256 quoteIn,uint256 tokensOut,uint256 fee,uint256 creatorTax)",
@@ -21,6 +22,16 @@ const FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
 const DEAD = "0x000000000000000000000000000000000000dead";
 
 type RawLog = { address: Address; blockNumber: Hex; transactionHash: Hex; logIndex: Hex; topics: [Hex, ...Hex[]]; data: Hex };
+
+async function blockAtOrAfter(rpc: ReturnType<typeof createPublicClient>, latest: bigint, unixSeconds: bigint) {
+  let low = 0n; let high = latest;
+  while (low < high) {
+    const middle = (low + high) / 2n;
+    const block = await rpc.getBlock({ blockNumber: middle });
+    if (block.timestamp < unixSeconds) low = middle + 1n; else high = middle;
+  }
+  return low;
+}
 
 export async function POST(request: Request) {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -39,10 +50,11 @@ export async function POST(request: Request) {
       await convex.mutation(api.site.recordMarketIndex, { secret, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
       return NextResponse.json({ ok: true, indexed: true });
     }
-    // The initial visit establishes a cursor. Historical backfill belongs in a bounded maintenance job,
-    // not a user request that could span the whole chain.
     const from = lease.indexedThroughBlock ? BigInt(lease.indexedThroughBlock) + 1n : latest;
     const cappedFrom = latest > from && latest - from > 5_000n ? latest - 5_000n : from;
+    const needsDayBackfill = targets.some((target) => viewed.has(target.tokenAddress.toLowerCase()) && !target.indexedThroughBlock);
+    const dayBlock = needsDayBackfill ? await blockAtOrAfter(rpc, latest, BigInt(Math.floor((now - 24 * 60 * 60_000) / 1_000))) : undefined;
+    const scanFrom = dayBlock !== undefined && dayBlock < cappedFrom ? dayBlock : cappedFrom;
     const addressMap = new Map<string, { tokenAddress: string; curveAddress: string }>();
     for (const target of targets) {
       addressMap.set(target.curveAddress.toLowerCase(), target);
@@ -61,9 +73,9 @@ export async function POST(request: Request) {
       const poolId = keccak256(encodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }], [currency0, currency1, launch.poolFee, launch.tickSpacing, hook]));
       graduated.set(poolId, { tokenAddress: target.tokenAddress, tokenIsCurrency0: token === currency0 });
     }));
-    const [directLogs, swapLogs] = cappedFrom <= latest ? await Promise.all([
-      rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${cappedFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: [...addressMap.keys()] as Address[] }] }) as Promise<RawLog[]>,
-      graduated.size ? rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${cappedFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)"))] }] }) as Promise<RawLog[]> : Promise.resolve([]),
+    const [directLogs, swapLogs] = scanFrom <= latest ? await Promise.all([
+      rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: [...addressMap.keys()] as Address[] }] }) as Promise<RawLog[]>,
+      graduated.size ? rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)")), [...graduated.keys()] as Hex[]] }] }) as Promise<RawLog[]> : Promise.resolve([]),
     ]) : [[], []];
     const logs = directLogs;
     const blockTimes = new Map<string, number>();

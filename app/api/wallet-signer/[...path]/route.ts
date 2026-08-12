@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
-import { authorizeSigner, broadcastTransaction, executeTransaction, ponsPairInfo, provisionWallet, transactionStatus, walletBalance } from "@/lib/wallet-signer/service";
+import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, launchPreparationRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
+import { authorizeSigner, broadcastTransaction, executeTransaction, ponsPairInfo, prepareLaunchAddresses, provisionWallet, transactionStatus, walletBalance } from "@/lib/wallet-signer/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -63,6 +63,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       const input = executionRequestSchema.parse(body);
       await assertWalletOwner(input.ownerReference, input.walletRef, input.expectedFrom);
       return NextResponse.json(await executeTransaction(input));
+    }
+    if (path === "v1/transactions/prepare-launch") {
+      const input = launchPreparationRequestSchema.parse(body);
+      await assertWalletOwner(input.ownerReference, input.walletRef, input.expectedFrom);
+      return NextResponse.json(await prepareLaunchAddresses(input));
     }
     if (path === "v1/transactions/broadcast") {
       const input = broadcastRequestSchema.parse(body);

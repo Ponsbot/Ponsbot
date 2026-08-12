@@ -42,6 +42,7 @@ export default defineSchema({
     requestId: v.string(), sourcePostId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), kind: v.string(),
     status: v.union(v.literal("accepted"), v.literal("simulating"), v.literal("prepared"), v.literal("broadcast"), v.literal("confirmed"), v.literal("rejected"), v.literal("failed")),
     normalizedJson: v.string(), safeError: v.optional(v.string()), transactionHash: v.optional(v.string()),
+    preparedLaunchSalt: v.optional(v.string()), predictedTokenAddress: v.optional(v.string()), predictedCurveAddress: v.optional(v.string()),
     reconciliationAttempts: v.optional(v.number()), nextReconcileAt: v.optional(v.number()), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_source_post_id", ["sourcePostId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"]),
 
