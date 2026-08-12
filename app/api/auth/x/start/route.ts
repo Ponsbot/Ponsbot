@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
+import { readWebWalletSession, WEB_WALLET_SESSION_COOKIE } from "@/lib/web-wallet-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,10 +9,14 @@ function base64url(value: Buffer) {
   return value.toString("base64url");
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const clientId = process.env.X_OAUTH_CLIENT_ID;
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  if (!clientId || !siteUrl) return NextResponse.json({ error: "X wallet sign-in is not configured" }, { status: 503 });
+  const webSecret = process.env.WEB_AUTH_SECRET;
+  if (!clientId || !siteUrl || !webSecret) return NextResponse.json({ error: "X wallet sign-in is not configured" }, { status: 503 });
+
+  const session = readWebWalletSession(request.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, webSecret);
+  if (session) return NextResponse.redirect(new URL(`/wallet/${session.walletAddress}`, siteUrl));
 
   const state = base64url(randomBytes(32));
   const verifier = base64url(randomBytes(48));

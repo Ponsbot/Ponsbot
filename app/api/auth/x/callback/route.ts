@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 import { api } from "@/convex/_generated/api";
+import { createWebWalletSession, WEB_WALLET_SESSION_COOKIE, WEB_WALLET_SESSION_SECONDS } from "@/lib/web-wallet-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -71,6 +72,13 @@ export async function GET(request: NextRequest) {
     const response = NextResponse.redirect(new URL(`/wallet/${wallet.address}`, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
+    response.cookies.set(WEB_WALLET_SESSION_COOKIE, createWebWalletSession(wallet.address, identity.id, webSecret), {
+      httpOnly: true,
+      secure: siteUrl.startsWith("https://"),
+      sameSite: "lax",
+      path: "/",
+      maxAge: WEB_WALLET_SESSION_SECONDS,
+    });
     return response;
   } catch (error) {
     console.error("x_wallet_sign_in_failed", error instanceof Error ? error.message : "unknown");
