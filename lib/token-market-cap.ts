@@ -68,6 +68,17 @@ async function tokenMarketCapUsd(token: Address) {
   return remember(key, Number.isFinite(value) && value >= 0 ? value : undefined);
 }
 
+export async function tokenUnitPriceUsd(token: Address) {
+  const [marketCap, supplyRaw, decimals] = await Promise.all([
+    tokenMarketCapUsd(token),
+    rpcClient().readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
+    rpcClient().readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
+  ]);
+  const supply = Number(formatUnits(supplyRaw, decimals));
+  if (marketCap === undefined || !Number.isFinite(supply) || supply <= 0) return undefined;
+  return marketCap / supply;
+}
+
 function remember(key: string, value?: number) {
   marketCapCache.set(key, { value, expiresAt: Date.now() + CACHE_MS });
   return value;

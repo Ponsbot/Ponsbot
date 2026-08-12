@@ -10,7 +10,7 @@ function publicLaunch(launch: {
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; createdAt: number;
   pairToken?: string; poolAddress?: string; launcherUsername?: string;
-}, creatorAddress?: string, launcherUsername?: string) {
+}, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string) {
   return {
     name: launch.name,
     symbol: launch.symbol,
@@ -23,6 +23,7 @@ function publicLaunch(launch: {
     transactionHash: launch.transactionHash,
     devBuySucceeded: launch.devBuySucceeded,
     pairToken: launch.pairToken,
+    pairSymbol,
     poolAddress: launch.poolAddress,
     creatorAddress,
     launcherUsername: launch.launcherUsername || launcherUsername,
@@ -37,7 +38,8 @@ export const listLaunches = query({
     return await Promise.all(launches.filter((launch) => launch.tokenAddress).map(async (launch) => {
       const wallet = await ctx.db.get(launch.walletId);
       const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
-      return publicLaunch(launch, wallet?.address, user?.username);
+      const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
+      return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol);
     }));
   },
 });
@@ -51,7 +53,8 @@ export const getLaunch = query({
     if (!launch) return null;
     const wallet = await ctx.db.get(launch.walletId);
     const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
-    return publicLaunch(launch, wallet?.address, user?.username);
+    const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
+    return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol);
   },
 });
 
@@ -63,6 +66,7 @@ export const getWallet = query({
       || (await ctx.db.query("cryptoWallets").collect()).find((item) => item.address.toLowerCase() === normalized);
     if (!wallet) return null;
     const tokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", wallet._id)).take(100);
+    const user = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", wallet.ownerXUserId)).unique();
     const publicTokens = await Promise.all(tokens.map(async (token) => {
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", token.normalizedTokenAddress)).unique();
       return { address: token.tokenAddress, symbol: token.symbol, isPonsbotLaunch: Boolean(launch), ...(launch?.imageUri ? { iconUrl: launch.imageUri } : {}) };
@@ -70,6 +74,7 @@ export const getWallet = query({
     return {
       address: wallet.address,
       createdAt: wallet.createdAt,
+      username: user?.username,
       tokens: publicTokens,
     };
   },
@@ -92,15 +97,15 @@ export const seedPreview = internalMutation({
     const existingLaunch = await ctx.db.query("tokenLaunches").withIndex("by_token_address", (q) => q.eq("tokenAddress", PREVIEW_TOKEN)).unique();
     if (!existingLaunch) await ctx.db.insert("tokenLaunches", {
       requestId: "preview-launch", ownerXUserId: "ponsbot-preview", launcherUsername: "PonsbotPreview", walletId: wallet!._id, launchMode: "pons",
-      name: "Ponsbot Preview", symbol: "PONSBOT", imageUri: "/ponsbot.png",
-      description: "A preview launch showing how every token launched through Ponsbot gets its own page.",
+      name: "Pons Bot Preview", symbol: "PONSBOT", imageUri: "/ponsbot.png",
+      description: "A preview launch showing how every token launched through Pons Bot gets its own page.",
       website: "https://ponsfamily.com", twitter: "https://x.com/Ponsbotfamily", devBuyWei: "20000000000000000",
       transactionHash: `0x${"1".repeat(64)}`, tokenAddress: PREVIEW_TOKEN, normalizedTokenAddress: PREVIEW_TOKEN.toLowerCase(), devBuySucceeded: true, createdAt: now, updatedAt: now,
     }); else if (existingLaunch.twitter !== "https://x.com/Ponsbotfamily") await ctx.db.patch(existingLaunch._id, { twitter: "https://x.com/Ponsbotfamily", updatedAt: now });
     const existingHoldings = await ctx.db.query("walletHoldingSnapshots").withIndex("by_wallet_address", (q) => q.eq("walletAddress", PREVIEW_WALLET)).collect();
     if (!existingHoldings.length) {
       await ctx.db.insert("walletHoldingSnapshots", { walletAddress: PREVIEW_WALLET, name: "Ethereum", symbol: "ETH", displayBalance: "1.284", updatedAt: now });
-      await ctx.db.insert("walletHoldingSnapshots", { walletAddress: PREVIEW_WALLET, tokenAddress: PREVIEW_TOKEN, name: "Ponsbot Preview", symbol: "PONSBOT", displayBalance: "12,500,000", iconUrl: "/ponsbot.png", updatedAt: now });
+      await ctx.db.insert("walletHoldingSnapshots", { walletAddress: PREVIEW_WALLET, tokenAddress: PREVIEW_TOKEN, name: "Pons Bot Preview", symbol: "PONSBOT", displayBalance: "12,500,000", iconUrl: "/ponsbot.png", updatedAt: now });
       await ctx.db.insert("walletHoldingSnapshots", { walletAddress: PREVIEW_WALLET, tokenAddress: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", displayBalance: "842.75", updatedAt: now });
     }
     return { walletAddress: PREVIEW_WALLET, tokenAddress: PREVIEW_TOKEN };

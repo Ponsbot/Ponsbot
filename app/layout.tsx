@@ -3,18 +3,18 @@ import "./globals.css";
 
 const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://ponsbot-one.vercel.app";
 const siteUrl = configuredSiteUrl.startsWith("http") ? configuredSiteUrl : `https://${configuredSiteUrl}`;
-const description = "Claim a Robinhood Chain wallet, check holdings, buy, sell, send assets, and launch tokens on Pons V2 directly from X with Ponsbot.";
+const description = "Claim a Robinhood Chain wallet, check holdings, buy, sell, send assets, and launch tokens on Pons V2 directly from X with Pons Bot.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
-  title: { default: "Ponsbot - Pons V2 launches direct on X", template: "%s - Ponsbot" },
+  title: { default: "Pons Bot - Pons V2 launches direct on X", template: "%s - Pons Bot" },
   description,
-  applicationName: "Ponsbot",
-  authors: [{ name: "Ponsbot", url: "https://x.com/Ponsbotfamily" }],
-  creator: "Ponsbot",
-  publisher: "Ponsbot",
+  applicationName: "Pons Bot",
+  authors: [{ name: "Pons Bot", url: "https://x.com/Ponsbotfamily" }],
+  creator: "Pons Bot",
+  publisher: "Pons Bot",
   category: "finance",
-  keywords: ["Ponsbot", "Pons V2", "Robinhood Chain", "token launch", "crypto wallet", "X bot"],
+  keywords: ["Pons Bot", "Pons V2", "Robinhood Chain", "token launch", "crypto wallet", "X bot"],
   alternates: { canonical: "/" },
   icons: {
     icon: [{ url: "/favicon.png", type: "image/png" }, { url: "/faviconlarge.png", type: "image/png" }],
@@ -24,18 +24,18 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     url: "/",
-    siteName: "Ponsbot",
-    title: "Ponsbot - Pons V2 launches direct on X",
+    siteName: "Pons Bot",
+    title: "Pons Bot - Pons V2 launches direct on X",
     description,
-    images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Ponsbot - wallet, trading, and Pons V2 launches on X" }],
+    images: [{ url: "/ponsbot-banner.png", width: 2172, height: 724, alt: "Pons Bot - wallet, trading, and Pons V2 launches on X" }],
   },
   twitter: {
     card: "summary_large_image",
-    site: "@Ponsbotfamily",
-    creator: "@Ponsbotfamily",
-    title: "Ponsbot - Pons V2 launches direct on X",
+    site: "@ponsbotfamily",
+    creator: "@ponsbotfamily",
+    title: "Pons Bot - Pons V2 launches direct on X",
     description,
-    images: [{ url: "/ponsbot-banner.png", alt: "Ponsbot - wallet, trading, and Pons V2 launches on X" }],
+    images: [{ url: "/ponsbot-banner.png", alt: "Pons Bot - wallet, trading, and Pons V2 launches on X" }],
   },
   robots: { index: true, follow: true },
 };

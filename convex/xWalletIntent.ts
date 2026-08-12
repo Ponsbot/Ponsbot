@@ -27,7 +27,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
 }
 
 export function unknownWalletMessage() {
-  return "🤔 I couldn't quite make that out. Try “show my wallet,” “buy $20 of PONSBOT,” or “launch Ponsbot, ticker PONSBOT.”";
+  return "🤔 I couldn't quite make that out. Try “show my wallet,” “buy $20 of PONSBOT,” or “launch Pons Bot, ticker PONSBOT.”";
 }
 
 function explicitAuthority(text: string, command: WalletCommand) {

@@ -2,12 +2,14 @@ import { ConvexHttpClient } from "convex/browser";
 import { createPublicClient, formatEther, formatUnits, http, isAddress, parseAbi, type Address } from "viem";
 import { api } from "@/convex/_generated/api";
 import { addMarketCaps } from "@/lib/token-market-cap";
+import { tokenUnitPriceUsd } from "@/lib/token-market-cap";
+import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
 
 export type PublicLaunch = {
   name: string; symbol: string; imageUri: string; description?: string;
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; creatorAddress?: string; createdAt: number;
-  pairToken?: string; poolAddress?: string; launcherUsername?: string; marketCapUsd?: number; marketCapUpdatedAt?: number;
+  pairToken?: string; pairSymbol?: string; poolAddress?: string; launcherUsername?: string; marketCapUsd?: number; marketCapUpdatedAt?: number;
 };
 
 const PREVIEW_WALLET = "0x0000000000000000000000000000000000000b07";
@@ -15,10 +17,10 @@ const PREVIEW_TOKEN = "0x0000000000000000000000000000000000000a11";
 
 function previewLaunch(tokenAddress: string): PublicLaunch {
   return {
-    name: "Ponsbot Preview",
+    name: "Pons Bot Preview",
     symbol: "PONSBOT",
     imageUri: "/ponsbot.png",
-    description: "A preview of a token launched through Ponsbot on Pons V2.",
+    description: "A preview of a token launched through Pons Bot on Pons V2.",
     website: "https://ponsfamily.com",
     twitter: "https://x.com/Ponsbotfamily",
     tokenAddress,
@@ -26,6 +28,7 @@ function previewLaunch(tokenAddress: string): PublicLaunch {
     devBuySucceeded: true,
     creatorAddress: "0x0000000000000000000000000000000000000B07",
     launcherUsername: "PonsbotPreview",
+    pairSymbol: "MSFT",
     marketCapUsd: 125_000,
     marketCapUpdatedAt: Date.now(),
     createdAt: 1_755_000_000_000,
@@ -64,8 +67,9 @@ type ExplorerTokenBalance = {
   token: { address_hash: string; decimals: string | null; icon_url: string | null; name: string; symbol: string };
 };
 
-export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string; isPonsbotLaunch?: boolean };
-type PublicWalletRecord = { address: string; createdAt: number; tokens?: Array<{ address: string; symbol: string; iconUrl?: string; isPonsbotLaunch?: boolean }> };
+export type PublicHolding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string; isPonsbotLaunch?: boolean; usdValue?: number };
+type PublicWalletRecord = { address: string; createdAt: number; username?: string; tokens?: Array<{ address: string; symbol: string; iconUrl?: string; isPonsbotLaunch?: boolean }> };
+type StockAsset = { tokenSymbol: string; tokenName: string; currentMultiplier: string; logoUrl?: string; deployments?: Array<{ contractAddress: string; chainId: number }> };
 const ETH_ICON_URL = "https://cryptologos.cc/logos/ethereum-eth-logo.png";
 
 const publicTokenAbi = parseAbi([
@@ -123,13 +127,13 @@ export async function isPonsbotWallet(address: string) {
   }
 }
 
-export async function getWalletHoldings(address: string): Promise<{ holdings: PublicHolding[]; available: boolean }> {
+export async function getWalletHoldings(address: string): Promise<{ holdings: PublicHolding[]; available: boolean; username?: string }> {
   if (!isAddress(address)) return { holdings: [], available: false };
   if (address.toLowerCase() === PREVIEW_WALLET) return { holdings: [
-    { name: "Ethereum", symbol: "ETH", balance: "1.284", iconUrl: ETH_ICON_URL },
-    { address: "0x0000000000000000000000000000000000000A11", name: "Ponsbot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png" },
-    { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75" },
-  ], available: true };
+    { name: "Ethereum", symbol: "ETH", balance: "1.284", iconUrl: ETH_ICON_URL, usdValue: 5_120.58 },
+    { address: "0x0000000000000000000000000000000000000A11", name: "Pons Bot Preview", symbol: "PONSBOT", balance: "12,500,000", iconUrl: "/ponsbot.png", isPonsbotLaunch: true, usdValue: 1_562.5 },
+    { address: "0x0000000000000000000000000000000000005Ad0", name: "Sandisk", symbol: "SNDK", balance: "842.75", usdValue: 42_137.5 },
+  ], available: true, username: "PonsbotPreview" };
   const base = "https://robinhoodchain-mainnet-explorer-api.rpc.caldera.xyz/api/v2";
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const walletRecord = convexUrl
@@ -190,7 +194,44 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     || rpcTokensResult.status === "fulfilled"
     || (accountResult.status === "fulfilled" && (accountResult.value.ok || accountResult.value.status === 404))
     || (tokensResult.status === "fulfilled" && (tokensResult.value.ok || tokensResult.value.status === 404));
-  return { holdings, available };
+  await enrichHoldingDisplay(holdings);
+  return { holdings, available, username: walletRecord?.username };
+}
+
+async function enrichHoldingDisplay(holdings: PublicHolding[]) {
+  const stockAssets = await fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.timeout(5_000) })
+    .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
+    .catch(() => [] as StockAsset[]);
+  const byAddress = new Map<string, StockAsset>();
+  for (const asset of stockAssets) {
+    const deployment = asset.deployments?.find((item) => item.chainId === 4663);
+    if (deployment) byAddress.set(deployment.contractAddress.toLowerCase(), asset);
+  }
+  const ethPrice = holdings.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice().catch(() => undefined) : undefined;
+  await Promise.all(holdings.map(async (holding) => {
+    const balance = Number(holding.balance.replace(/,/g, ""));
+    if (!Number.isFinite(balance)) return;
+    if (holding.symbol === "ETH") {
+      if (ethPrice !== undefined) holding.usdValue = balance * ethPrice;
+      return;
+    }
+    const stock = holding.address ? byAddress.get(holding.address.toLowerCase()) : undefined;
+    if (stock) {
+      if (stock.logoUrl) holding.iconUrl = stock.logoUrl;
+      const quote = await fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(stock.tokenSymbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.timeout(5_000) })
+        .then(async (response) => response.ok ? (await response.json() as { quotes?: Array<{ bid: string; ask: string; generatedAt: string }> }).quotes?.[0] : undefined)
+        .catch(() => undefined);
+      if (quote && Date.now() - Date.parse(quote.generatedAt) <= 5 * 60_000) {
+        const price = ((Number(quote.bid) + Number(quote.ask)) / 2) * Number(stock.currentMultiplier);
+        if (Number.isFinite(price) && price >= 0) holding.usdValue = balance * price;
+      }
+      return;
+    }
+    if (holding.isPonsbotLaunch && holding.address) {
+      const price = await tokenUnitPriceUsd(holding.address as Address).catch(() => undefined);
+      if (price !== undefined) holding.usdValue = balance * price;
+    }
+  }));
 }
 
 function formatDisplay(value: string) {

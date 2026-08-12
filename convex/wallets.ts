@@ -7,8 +7,8 @@ import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletComma
 import { formatUnits } from "viem";
 
 const ROBINHOOD_CHAIN_ID = 4663;
-const NON_PREMIUM_DAILY_LIMIT = 25;
-const PREMIUM_DAILY_LIMIT = 100;
+const NON_PREMIUM_DAILY_LIMIT = 50;
+const PREMIUM_DAILY_LIMIT = 1_000;
 const PROVISIONING_LEASE_MS = 2 * 60_000;
 const MAX_RECONCILIATION_ATTEMPTS = 20;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
@@ -303,7 +303,15 @@ export const updateWalletRequest = internalMutation({
   },
   handler: async (ctx, args) => {
     const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
-    if (request) await ctx.db.patch(request._id, { status: args.status, safeError: args.safeError, transactionHash: args.transactionHash, updatedAt: Date.now() });
+    if (request) {
+      const patch: { status: typeof args.status; updatedAt: number; safeError?: string; transactionHash?: string } = {
+        status: args.status,
+        updatedAt: Date.now(),
+      };
+      if (args.safeError !== undefined) patch.safeError = args.safeError;
+      if (args.transactionHash !== undefined) patch.transactionHash = args.transactionHash;
+      await ctx.db.patch(request._id, patch);
+    }
   },
 });
 
@@ -673,7 +681,7 @@ function safeFailure(error: unknown) {
   if (/^The buy completed, but the send did not\./i.test(message)) return `⚠️ ${message}`;
   if (/ETH transfer amount plus gas exceeds/i.test(message)) return "❌ There isn't enough ETH for the transfer plus gas. Add a little ETH and try again!";
   if (/insufficient ETH for gas/i.test(message)) return "⛽ This wallet needs a little more ETH for gas. Top it up and try again!";
-  if (/insufficient paired asset balance|first you need to buy the paired asset/i.test(message)) return "❌ You don't have enough of this token's paired asset yet. First you need to buy the paired asset, then try the Ponsbot purchase again.";
+  if (/insufficient paired asset balance|first you need to buy the paired asset/i.test(message)) return "❌ You don't have enough of this token's paired asset yet. First you need to buy the paired asset, then try the Pons Bot purchase again.";
   if (/insufficient/i.test(message)) return "❌ There aren't enough funds for that amount. Check the balance or try a smaller amount.";
   if (/no claimable creator fees/i.test(message)) return "ℹ️ There aren't any swept creator fees available to claim in that asset right now.";
   if (/named paired asset does not match/i.test(message)) return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Ask which asset it uses, then try again with that pair or a dollar amount.";

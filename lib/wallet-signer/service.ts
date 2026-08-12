@@ -3,6 +3,7 @@ import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, http, keccak256, parseAbi, parseAbiParameters, parseEther, parseSignature, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
 import { checkedUsdToEthWei, ethUsdPrice } from "./pricing";
+import { sendAllGasReserve, transactionGasEnvelope } from "./gas";
 
 const tokenAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
@@ -299,7 +300,9 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   if (unit !== "percent") await enforceEthLimit(requested);
   const [balance, fees] = await Promise.all([client.getBalance({ address: owner }), client.estimateFeesPerGas()]);
   const gas = await client.estimateGas({ account: owner, to: recipient, value: requested > 0n ? requested : 1n }).catch(() => 21_000n);
-  const gasReserve = gas * fees.maxFeePerGas * 125n / 100n;
+  // Match the signed transaction's buffered gas liability and leave a small
+  // additional cushion for a send-all transfer.
+  const gasReserve = sendAllGasReserve(gas, fees.maxFeePerGas);
   if (balance <= gasReserve) throw new Error("insufficient ETH for gas");
   const maximumTransfer = balance - gasReserve;
   if (unit !== "percent" && requested > maximumTransfer) throw new Error("ETH transfer amount plus gas exceeds wallet balance");
@@ -319,13 +322,14 @@ async function prepareSigned(request: ExecutionRequest, to: Address, data: Hex, 
     client.estimateFeesPerGas(),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
   ]);
+  const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
   const transaction = {
     chainId: ROBINHOOD_CHAIN_ID, type: "eip1559" as const, to, data, value, nonce,
-    gas: estimatedGas * 120n / 100n,
+    gas: gasEnvelope.gas,
     // Base fees can rise between simulation, CDP signing, and serverless
     // broadcast. Keep headroom so a valid prepared transaction is not rejected
     // before it reaches the mempool during a short fee spike.
-    maxFeePerGas: fees.maxFeePerGas * 2n,
+    maxFeePerGas: gasEnvelope.maxFeePerGas,
     maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
   };
   const { signature } = await cdp().evm.signTransaction({

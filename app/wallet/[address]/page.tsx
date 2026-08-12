@@ -20,8 +20,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const valid = isAddress(address);
   const title = valid ? `${shortAddress(address)} wallet` : "Wallet";
   const description = valid
-    ? `View the public Robinhood Chain holdings for the Ponsbot wallet ${shortAddress(address)}.`
-    : "This is not a valid Ponsbot wallet.";
+    ? `View the public Robinhood Chain holdings for the Pons Bot wallet ${shortAddress(address)}.`
+    : "This is not a valid Pons Bot wallet.";
   return {
     title,
     description,
@@ -38,7 +38,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
                 url: "/ponsbot-banner.png",
                 width: 2172,
                 height: 724,
-                alt: "Ponsbot - wallet, trading, and Pons V2 launches on X",
+                alt: "Pons Bot - wallet, trading, and Pons V2 launches on X",
               },
             ],
           },
@@ -56,15 +56,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function WalletPage({ params }: Props) {
   const address = (await params).address;
   if (!isAddress(address) || !(await isPonsbotWallet(address))) notFound();
-  const { holdings, available } = await getWalletHoldings(address);
+  const { holdings, available, username } = await getWalletHoldings(address);
   return (
     <main>
       <SiteHeader />
       <section className="detail-shell">
         <div className="wallet-heading">
           <div>
-            <p className="eyebrow">Robinhood Chain wallet</p>
-            <h1>Your holdings</h1>
+            <h1>Wallet Holdings</h1>
+            {username ? <a className="wallet-x-link" href={`https://x.com/${username.replace(/^@/, "")}`} target="_blank" rel="noreferrer">@{username.replace(/^@/, "")}</a> : null}
           </div>
           <a
             className="button button-quiet"
@@ -99,7 +99,7 @@ export default async function WalletPage({ params }: Props) {
               </Link>
               {holding.address ? <CopyAddress address={holding.address} displayAddress={shortAddress(holding.address)} compact /> : null}
               <strong className="holding-balance">
-                {holding.balance} {holding.symbol}
+                {holding.balance} {holding.symbol}{holding.usdValue !== undefined ? <small> ({formatUsd(holding.usdValue)})</small> : null}
               </strong>
             </article>;
           })}
@@ -122,4 +122,9 @@ export default async function WalletPage({ params }: Props) {
       <SiteFooter />
     </main>
   );
+}
+
+function formatUsd(value: number) {
+  if (value > 0 && value < 0.01) return "<$0.01";
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value);
 }

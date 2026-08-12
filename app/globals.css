@@ -53,3 +53,18 @@
 .holding{grid-template-columns:48px minmax(0,1fr) auto auto}
 @media(max-width:600px){.holding{grid-template-columns:42px minmax(0,1fr)}}
 .holding-icon-eth img{width:72%;height:72%;object-fit:contain}
+.token-art img,.detail-art img{object-position:center}
+.holding-icon img{width:78%;height:78%;object-fit:contain;object-position:center}
+.holding-icon-eth img{width:66%;height:66%}
+.launch-card-socials .social-x-logo{width:12px;height:12px;object-fit:contain}
+.launch-card-pair{margin:0;padding:2px 3px 7px;color:var(--green);font-size:10px;font-weight:750}
+.social-x-button{width:36px;padding-inline:0!important}
+.social-x-button img{width:13px;height:13px;object-fit:contain}
+.wallet-x-link{display:inline-block;margin-top:9px;color:var(--green);font-size:14px;font-weight:750}
+.holding-balance small{color:var(--muted);font-size:13px;font-weight:600}
+.facts .fact-contract{border-right:0;border-bottom:1px solid var(--line)}
+.facts .fact-launched{border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.facts .fact-launcher{border-right:0;border-bottom:1px solid var(--line)}
+.facts .fact-market{border-right:1px solid var(--line);border-bottom:0}
+.facts .fact-pair{border-right:0;border-bottom:0}
+@media(max-width:600px){.facts .fact-contract,.facts .fact-launched,.facts .fact-launcher,.facts .fact-market{grid-column:auto;border-right:0;border-bottom:1px solid var(--line)}.facts .fact-pair{border-bottom:0}}
