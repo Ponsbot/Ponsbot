@@ -17,11 +17,12 @@ export function LaunchGrid({ launches }: { launches: PublicLaunch[] }) {
 
 function MarketViewer({ tokenAddresses }: { tokenAddresses: string[] }) {
   const router = useRouter();
+  const tokenKey = tokenAddresses.join(",");
   useEffect(() => {
     let stopped = false;
-    const ping = async () => { if (!stopped && document.visibilityState === "visible") { await fetch("/api/market/view", { method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses }) }).catch(() => undefined); router.refresh(); } };
+    const ping = async () => { if (!stopped && document.visibilityState === "visible") { await fetch("/api/market/view", { method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: tokenKey ? tokenKey.split(",") : [] }) }).catch(() => undefined); router.refresh(); } };
     ping(); const timer = window.setInterval(ping, 10_000);
     return () => { stopped = true; window.clearInterval(timer); };
-  }, [router, tokenAddresses.join(",")]);
+  }, [router, tokenKey]);
   return null;
 }
