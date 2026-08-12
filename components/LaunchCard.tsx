@@ -8,10 +8,10 @@ export function LaunchCard({ launch }: { launch: PublicLaunch }) {
   if (!launch.tokenAddress) return null;
   const username = launch.launcherUsername?.replace(/^@/, "");
   return <article className="launch-card">
-    <Link className="token-art" href={`/launch/${launch.tokenAddress}`}>{launch.imageUri ? <Image src={launch.imageUri} alt={`${launch.name} token`} width={700} height={700} sizes="(max-width: 600px) 100vw, (max-width: 900px) 50vw, 25vw" /> : <span>{launch.symbol.slice(0, 1)}</span>}</Link>
-    <div className="launch-card-copy"><Link href={`/launch/${launch.tokenAddress}`}><h3>{launch.name}</h3><p>${launch.symbol}</p></Link>{launch.marketCapUsd !== undefined ? <strong className="launch-card-mcap">MCap {formatMarketCap(launch.marketCapUsd)}</strong> : null}</div>
+    <Link className="token-art" href={`/launch/${launch.tokenAddress}`}>{launch.imageUri ? <Image src={launch.imageUri} alt={`${launch.name} token`} width={700} height={700} sizes="(max-width: 600px) 100vw, (max-width: 900px) 50vw, 25vw" /> : <Image className="token-art-placeholder" src="/ponsbot.png" alt="Pons Bot placeholder" width={700} height={700} sizes="(max-width: 600px) 100vw, (max-width: 900px) 50vw, 25vw" />}{launch.marketCapUsd !== undefined ? <strong className="launch-card-mcap">MCap {formatMarketCap(launch.marketCapUsd)}</strong> : null}</Link>
+    <div className="launch-card-copy"><Link href={`/launch/${launch.tokenAddress}`}><h3>{launch.name}</h3><p>${launch.symbol}</p></Link></div>
     <div className="launch-card-socials">{launch.website ? <Social href={launch.website} label="Website" icon="web" /> : null}{launch.twitter ? <Social href={launch.twitter} label="X" icon="x" /> : null}{launch.telegram ? <Social href={launch.telegram} label="Telegram" icon="telegram" /> : null}</div>
-    {launch.pairSymbol ? <p className="launch-card-pair">Paired with ${launch.pairSymbol}</p> : null}
+    {launch.pairSymbol ? <p className="launch-card-pair">{launch.pairSymbol !== "ETH" ? `Paired with $${launch.pairSymbol}` : "\u00a0"}</p> : null}
     <CopyAddress address={launch.tokenAddress} compact />
     <div className="launch-card-meta"><span>{username ? <>Deployed by <a href={`https://x.com/${username}`} target="_blank" rel="noreferrer">@{username}</a></> : "Deployed with Pons Bot"}</span><LaunchTime createdAt={launch.createdAt} relative /></div>
   </article>;

@@ -71,6 +71,18 @@ export type PublicHolding = { address?: string; name: string; symbol: string; ba
 type PublicWalletRecord = { address: string; createdAt: number; username?: string; tokens?: Array<{ address: string; symbol: string; iconUrl?: string; isPonsbotLaunch?: boolean }> };
 type StockAsset = { tokenSymbol: string; tokenName: string; currentMultiplier: string; logoUrl?: string; deployments?: Array<{ contractAddress: string; chainId: number }> };
 const ETH_ICON_URL = "https://cryptologos.cc/logos/ethereum-eth-logo.png";
+const STOCK_ICON_DOMAINS: Record<string, string> = {
+  NVDA: "nvidia.com", SPCX: "spacex.com", GOOGL: "google.com", TSLA: "tesla.com",
+  GME: "gamestop.com", AAPL: "apple.com", SPY: "ssga.com", SNDK: "sandisk.com",
+  AMD: "amd.com", AMZN: "amazon.com", MSFT: "microsoft.com", META: "meta.com",
+  CRCL: "circle.com", COIN: "coinbase.com", MU: "micron.com", PLTR: "palantir.com",
+  USDG: "globaldollar.com",
+};
+
+function stockIconUrl(symbol: string) {
+  const domain = STOCK_ICON_DOMAINS[symbol.toUpperCase()];
+  return domain ? `https://www.google.com/s2/favicons?domain=${domain}&sz=128` : undefined;
+}
 
 const publicTokenAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
@@ -194,11 +206,18 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
     || rpcTokensResult.status === "fulfilled"
     || (accountResult.status === "fulfilled" && (accountResult.value.ok || accountResult.value.status === 404))
     || (tokensResult.status === "fulfilled" && (tokensResult.value.ok || tokensResult.value.status === 404));
-  await enrichHoldingDisplay(holdings);
-  return { holdings, available, username: walletRecord?.username };
+  // Balances are the primary wallet-page data. Give pricing a short window,
+  // then render balances without USD estimates rather than making a slow
+  // third-party price service hold up the whole page.
+  const displayedHoldings = await Promise.race([
+    enrichHoldingDisplay(holdings),
+    new Promise<PublicHolding[]>((resolve) => setTimeout(() => resolve(holdings), 750)),
+  ]);
+  return { holdings: displayedHoldings, available, username: walletRecord?.username };
 }
 
 async function enrichHoldingDisplay(holdings: PublicHolding[]) {
+  const enriched = holdings.map((holding) => ({ ...holding }));
   const stockAssets = await fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.timeout(5_000) })
     .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
     .catch(() => [] as StockAsset[]);
@@ -207,8 +226,8 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
     const deployment = asset.deployments?.find((item) => item.chainId === 4663);
     if (deployment) byAddress.set(deployment.contractAddress.toLowerCase(), asset);
   }
-  const ethPrice = holdings.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice().catch(() => undefined) : undefined;
-  await Promise.all(holdings.map(async (holding) => {
+  const ethPrice = enriched.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice().catch(() => undefined) : undefined;
+  await Promise.all(enriched.map(async (holding) => {
     const balance = Number(holding.balance.replace(/,/g, ""));
     if (!Number.isFinite(balance)) return;
     if (holding.symbol === "ETH") {
@@ -217,7 +236,9 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
     }
     const stock = holding.address ? byAddress.get(holding.address.toLowerCase()) : undefined;
     if (stock) {
-      if (stock.logoUrl) holding.iconUrl = stock.logoUrl;
+      // Robinhood's stock-token artwork can be a generic Robinhood badge.
+      // Prefer the recognizable underlying company/asset icon in the wallet.
+      holding.iconUrl = stockIconUrl(stock.tokenSymbol) || stock.logoUrl || holding.iconUrl;
       const quote = await fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(stock.tokenSymbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.timeout(5_000) })
         .then(async (response) => response.ok ? (await response.json() as { quotes?: Array<{ bid: string; ask: string; generatedAt: string }> }).quotes?.[0] : undefined)
         .catch(() => undefined);
@@ -232,6 +253,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
       if (price !== undefined) holding.usdValue = balance * price;
     }
   }));
+  return enriched;
 }
 
 function formatDisplay(value: string) {

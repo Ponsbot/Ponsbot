@@ -2,7 +2,6 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
-import { parseWalletCommand } from "./walletCommands";
 import { shouldSuppressXResponse } from "./xReplyPolicy";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { fitXReply, xWeightedLength } from "./xText";
@@ -21,10 +20,16 @@ function positiveInteger(name: string, fallback: number, maximum: number) {
   return Number.isInteger(value) && value > 0 ? Math.min(value, maximum) : fallback;
 }
 
-function replyLimits() {
+function premiumSubscription(subscriptionType?: string) {
+  return subscriptionType === "Premium" || subscriptionType === "PremiumPlus";
+}
+
+function replyLimits(premium = false) {
   return {
-    userDaily: positiveInteger("X_REPLY_USER_DAILY_LIMIT", 30, 1_000),
-    globalDaily: positiveInteger("X_REPLY_GLOBAL_DAILY_LIMIT", 250, 100_000),
+    userDaily: premium
+      ? positiveInteger("X_REPLY_PREMIUM_DAILY_LIMIT", 1_500, 10_000)
+      : positiveInteger("X_REPLY_USER_DAILY_LIMIT", 75, 1_000),
+    globalDaily: positiveInteger("X_REPLY_GLOBAL_DAILY_LIMIT", 10_000, 100_000),
     userWindow: positiveInteger("X_REPLY_USER_WINDOW_LIMIT", 5, 100),
     globalWindow: positiveInteger("X_REPLY_GLOBAL_WINDOW_LIMIT", 25, 10_000),
     windowMs: positiveInteger("X_REPLY_WINDOW_MINUTES", 10, 60) * 60_000,
@@ -126,11 +131,11 @@ export const getPollState = internalQuery({
 });
 
 export const consumeReplyLimit = internalMutation({
-  args: { xUserId: v.string() },
-  handler: async (ctx, { xUserId }) => {
+  args: { xUserId: v.string(), premium: v.boolean() },
+  handler: async (ctx, { xUserId, premium }) => {
     const now = Date.now();
     const day = new Date(now).toISOString().slice(0, 10);
-    const limits = replyLimits();
+    const limits = replyLimits(premium);
     const keys = [`user:${xUserId}`, "global"];
     const records = await Promise.all(keys.map((key) => ctx.db.query("xReplyRateLimits").withIndex("by_key", (q) => q.eq("key", key)).unique()));
     const states = records.map((record) => {
@@ -428,7 +433,10 @@ export const pollMentions = internalAction({
         if (!reserved) continue;
         // Charge the cheap, deterministic limiter before either AI stage or
         // wallet provisioning so irrelevant/ambiguous spam cannot create AI cost.
-        const rate = await ctx.runMutation(internal.xReplies.consumeReplyLimit, { xUserId: user.id });
+        const rate = await ctx.runMutation(internal.xReplies.consumeReplyLimit, {
+          xUserId: user.id,
+          premium: premiumSubscription(user.subscription_type),
+        });
         if (!rate.allowed) {
           const reply = rateLimitMessage(rate.reason);
           const responsePostId = await publishReplyOnce(ctx, reply, mention.id);

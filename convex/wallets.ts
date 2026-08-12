@@ -834,7 +834,7 @@ export const executeCommand = internalAction({
         if (!executionLockHeld) throw new Error("another wallet transaction is still being prepared; please try again shortly");
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "simulating" });
         await ctx.runMutation(internal.registry.ensureInitialized, {});
-        if (command.kind === "launch") await ctx.runAction(internal.ponsV2.refreshRegistry, {});
+        if (command.kind === "launch") await ctx.runAction(internal.ponsV2.refreshRegistry, { identifier: command.pairToken });
         const registry = await ctx.runQuery(internal.registry.runtimeConfig, {});
         const commandToken = "token" in command && typeof command.token === "string"
           ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
@@ -1003,12 +1003,19 @@ export const executeCommand = internalAction({
         const sweepLine = feeSweepHashes.length === 1 ? `\nSweep TXN: ${transactionUrl(feeSweepHashes[0])}` : feeSweepHashes.length > 1 ? `\nSwept fees from ${feeSweepHashes.length} launches.` : "";
         return { ok: true, transactionHash: result.transactionHash, message: `${transactionMessage(command, result.transactionHash, undefined, result.claimedDisplay, result.tradeOutputDisplay)}${sweepLine}${warning}` };
       } catch (error) {
+        const rawMessage = error instanceof Error ? error.message : "wallet request failed";
         const baseMessage = safeFailure(error);
         const message = pairFunding
           ? `The ${pairFunding.asset} purchase completed, but the final ${command.kind === "launch" ? "launch" : "buy"} did not. The ${pairFunding.asset} remains in your wallet. Funding TXN: ${transactionUrl(pairFunding.transactionHash)} ${baseMessage}`
           : baseMessage;
         const userMessage = fundingMessage(message, wallet.address);
         await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "failed", safeError: message });
+        // Multi-step stages use deterministic child request IDs. If a child is
+        // merely taking longer to confirm, let the X interaction retry instead
+        // of publishing a terminal failure. The retry reuses the confirmed or
+        // still-broadcast child record and resumes at the next persisted stage.
+        const parent = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId });
+        if (/confirmation timed out/i.test(rawMessage) && !parent?.request.transactionHash) throw error;
         return { ok: false, message: `${userMessage}${warning}` };
       } finally {
         if (executionLockHeld) await ctx.runMutation(internal.wallets.releaseWalletExecutionLock, { walletId: wallet._id, requestId });

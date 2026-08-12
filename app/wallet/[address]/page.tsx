@@ -72,7 +72,7 @@ export default async function WalletPage({ params }: Props) {
             target="_blank"
             rel="noreferrer"
           >
-            View on explorer ↗
+            View on Blockscout ↗
           </a>
         </div>
         <CopyWalletAddress address={address} />

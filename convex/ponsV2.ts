@@ -1,6 +1,7 @@
 import { createPublicClient, http, parseAbi, zeroAddress, type Address } from "viem";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
+import { v } from "convex/values";
 
 const factoryAbi = parseAbi([
   "function approvedPairTokens(address asset) view returns (bool)",
@@ -71,28 +72,33 @@ export function formatPonsPairReply(assets: PonsPairAsset[]) {
 }
 
 export const refreshRegistry = internalAction({
-  args: {},
-  handler: async (ctx): Promise<PonsPairAsset[]> => {
+  args: { identifier: v.optional(v.string()) },
+  handler: async (ctx, { identifier }): Promise<PonsPairAsset[]> => {
     await ctx.runMutation(internal.registry.ensureInitialized, {});
     const config = await ctx.runQuery(internal.registry.runtimeConfig, {});
     const factory = config.contracts.pons_v2_factory as Address | undefined;
     if (!factory) throw new Error("Pons V2 factory is missing from the contract registry");
+    if (!identifier || /^\$?eth$/i.test(identifier)) {
+      return [{ address: zeroAddress, symbol: "ETH", name: "Ethereum", decimals: 18, native: true, verifiedAt: Date.now() }];
+    }
+    const normalized = identifier.replace(/^\$/, "").toLowerCase();
+    const candidate = config.pairs.find((item) => item.active
+      && (item.symbol.toLowerCase() === normalized || item.address.toLowerCase() === normalized));
+    if (!candidate) throw new Error("requested Pons V2 pair was not found in the registry");
     const assets = await discoverPonsV2PairAssets({
       factory,
-      candidates: config.pairs.map((item) => item.address as Address),
+      candidates: [candidate.address as Address],
     });
     const verified = new Map(assets.filter((item) => !item.native).map((item) => [item.address.toLowerCase(), item]));
     const verifiedAt = Date.now();
-    for (const candidate of config.pairs) {
-      const asset = verified.get(candidate.normalizedAddress);
-      await ctx.runMutation(internal.registry.updatePairVerification, {
-        address: candidate.address,
-        symbol: asset?.symbol || candidate.symbol,
-        name: asset?.name || candidate.name,
-        decimals: asset?.decimals ?? candidate.decimals,
-        approved: Boolean(asset), verifiedAt,
-      });
-    }
+    const asset = verified.get(candidate.normalizedAddress);
+    await ctx.runMutation(internal.registry.updatePairVerification, {
+      address: candidate.address,
+      symbol: asset?.symbol || candidate.symbol,
+      name: asset?.name || candidate.name,
+      decimals: asset?.decimals ?? candidate.decimals,
+      approved: Boolean(asset), verifiedAt,
+    });
     return assets;
   },
 });
