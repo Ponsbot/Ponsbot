@@ -69,9 +69,11 @@ export async function GET(request: NextRequest) {
       verified: Boolean(identity.verified),
       ...(identity.verified_type ? { verifiedType: identity.verified_type } : {}),
     });
-    const response = NextResponse.redirect(new URL(`/wallet/${wallet.address}`, siteUrl));
+    const returnTo = request.cookies.get("pons_x_oauth_return")?.value === "/terminal" ? "/terminal" : `/wallet/${wallet.address}`;
+    const response = NextResponse.redirect(new URL(returnTo, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
+    response.cookies.delete("pons_x_oauth_return");
     response.cookies.set(WEB_WALLET_SESSION_COOKIE, createWebWalletSession(wallet.address, identity.id, identity.username, webSecret), {
       httpOnly: true,
       secure: siteUrl.startsWith("https://"),

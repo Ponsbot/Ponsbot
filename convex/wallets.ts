@@ -3,7 +3,8 @@ import { internal } from "./_generated/api";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
-import { isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { isTerminalCommand, isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { formatUnits } from "viem";
 
 const ROBINHOOD_CHAIN_ID = 4663;
@@ -303,7 +304,7 @@ export const consumeWalletLimit = internalMutation({
 });
 
 export const reserveWalletRequest = internalMutation({
-  args: { requestId: v.string(), sourcePostId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), kind: v.string(), normalizedJson: v.string() },
+  args: { requestId: v.string(), sourcePostId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), kind: v.string(), normalizedJson: v.string(), source: v.optional(v.union(v.literal("x"), v.literal("terminal"))), channel: v.optional(v.union(v.literal("x_reply"), v.literal("terminal_chat"), v.literal("terminal_form"))) },
   handler: async (ctx, args) => {
     const duplicate = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (duplicate) {
@@ -816,6 +817,9 @@ export const executeCommand = internalAction({
   args: {
     sourcePostId: v.string(), xUserId: v.string(), text: v.string(),
     mediaUrl: v.optional(v.string()), recipientAddress: v.optional(v.string()), parsedCommandJson: v.optional(v.string()),
+    source: v.optional(v.union(v.literal("x"), v.literal("terminal"))),
+    channel: v.optional(v.union(v.literal("x_reply"), v.literal("terminal_chat"), v.literal("terminal_form"))),
+    requestId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<CommandResult> => {
     const structured = args.parsedCommandJson
@@ -854,10 +858,15 @@ export const executeCommand = internalAction({
         return { ok: false, message: safeFailure(error) };
       }
     }
-    const requestId = `x:${args.sourcePostId}:${command.kind}`;
+    const source = args.source || "x";
+    if (source === "terminal" && !isTerminalCommand(command)) {
+      return { ok: false, message: command.kind === "launch" ? "🚀 Launches are available through X posts only." : "❌ That action is not available in the terminal." };
+    }
+    const requestId = args.requestId || `x:${args.sourcePostId}:${command.kind}`;
     const reserved = await ctx.runMutation(internal.wallets.reserveWalletRequest, {
       requestId, sourcePostId: args.sourcePostId, ownerXUserId: args.xUserId,
       walletId: wallet._id, kind: command.kind, normalizedJson: JSON.stringify(command),
+      source, channel: args.channel || "x_reply",
     });
     if (!reserved.inserted) {
       const prior = reserved.request;
@@ -920,7 +929,7 @@ export const executeCommand = internalAction({
           const sweepTokens = commandToken && safeAddress(commandToken)
             ? [commandToken]
             : await ctx.runQuery(internal.wallets.listOwnedLaunchTokens, { xUserId: args.xUserId });
-          for (const token of [...new Set(sweepTokens.map((value) => value.toLowerCase()))]) {
+          for (const token of [...new Set((sweepTokens as string[]).map((value: string) => value.toLowerCase()))]) {
             const sweepRequestId = `${requestId}:sweep:${token}`;
             try {
               const swept = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, sweepRequestId, command, {
@@ -976,7 +985,7 @@ export const executeCommand = internalAction({
           const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, requestId, command, commandToken, registry);
           executionCommand = funded.command;
           if (funded.fundingTransactionHash) {
-            const pair = registry.pairs.find((item) => item.address.toLowerCase() === String(funded.command.pairAsset).toLowerCase());
+            const pair = registry.pairs.find((item: RuntimeRegistry["pairs"][number]) => item.address.toLowerCase() === String(funded.command.pairAsset).toLowerCase());
             pairFunding = { transactionHash: funded.fundingTransactionHash, asset: pair?.symbol || "paired asset" };
             await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
           }
@@ -989,7 +998,7 @@ export const executeCommand = internalAction({
               command.devBuy.amount, command.devBuy.unit, 250, registry,
             );
             executionCommand = { ...command, devBuy: { amount: funded.amount, unit: "pair" } };
-            const pair = registry.pairs.find((item) => item.address.toLowerCase() === pairToken.toLowerCase());
+            const pair = registry.pairs.find((item: RuntimeRegistry["pairs"][number]) => item.address.toLowerCase() === pairToken.toLowerCase());
             pairFunding = { transactionHash: funded.transactionHash, asset: pair?.symbol || "paired asset" };
             await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
           }
@@ -1013,7 +1022,7 @@ export const executeCommand = internalAction({
         }
         if (command.kind === "launch" && command.devBuy && typeof operation.pairToken === "string"
           && safeAddress(operation.pairToken) && !/^0x0{40}$/i.test(operation.pairToken)) {
-          const pair = registry.pairs.find((item) => item.address.toLowerCase() === String(operation.pairToken).toLowerCase());
+          const pair = registry.pairs.find((item: RuntimeRegistry["pairs"][number]) => item.address.toLowerCase() === String(operation.pairToken).toLowerCase());
           await ctx.runMutation(internal.wallets.indexWalletToken, {
             walletId: wallet._id, tokenAddress: operation.pairToken, symbol: pair?.symbol || operation.pairToken,
             involvedByLaunch: true, involvedByTransaction: true,
@@ -1095,6 +1104,94 @@ export const executeCommand = internalAction({
       }
     }
     return { ok: false, message: "✨ I can create your wallet, show balances, buy, sell, send, burn, launch on Pons V2, and claim fees after launch. Tell me what you'd like to do!" };
+  },
+});
+
+export const recordTerminalMessage = internalMutation({
+  args: {
+    sessionId: v.string(), ownerXUserId: v.string(), role: v.union(v.literal("user"), v.literal("assistant")),
+    messageType: v.union(v.literal("chat"), v.literal("action"), v.literal("result")), text: v.string(), requestId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => ctx.db.insert("terminalMessages", { ...args, text: args.text.slice(0, 1_000), createdAt: Date.now() }),
+});
+
+export const listTerminalHistory = internalQuery({
+  args: { ownerXUserId: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const [messages, requests] = await Promise.all([
+      ctx.db.query("terminalMessages").withIndex("by_session_created_at", (q) => q.eq("sessionId", args.sessionId)).order("desc").take(40),
+      ctx.db.query("walletRequests").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(40),
+    ]);
+    return {
+      messages: messages.reverse().map((item) => ({ role: item.role, messageType: item.messageType, text: item.text, requestId: item.requestId, createdAt: item.createdAt })),
+      actions: requests.map((item) => ({ requestId: item.requestId, kind: item.kind, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    };
+  },
+});
+
+type TerminalHistoryResult = {
+  messages: Array<{ role: "user" | "assistant"; messageType: "chat" | "action" | "result"; text: string; requestId?: string; createdAt: number }>;
+  actions: Array<{ requestId: string; kind: string; status: string; source: "x" | "terminal"; transactionHash?: string; safeError?: string; createdAt: number; updatedAt: number }>;
+};
+
+export const terminalHistory = action({
+  args: { secret: v.string(), ownerXUserId: v.string(), sessionId: v.string() },
+  handler: async (ctx, args): Promise<TerminalHistoryResult> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("terminal authorization failed");
+    if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId)) throw new Error("invalid terminal session");
+    return ctx.runQuery(internal.wallets.listTerminalHistory, { ownerXUserId: args.ownerXUserId, sessionId: args.sessionId });
+  },
+});
+
+export const executeTerminalCommand = action({
+  args: {
+    secret: v.string(), ownerXUserId: v.string(), sessionId: v.string(), eventId: v.string(),
+    channel: v.union(v.literal("terminal_chat"), v.literal("terminal_form")), text: v.optional(v.string()), commandJson: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<CommandResult> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("terminal authorization failed");
+    if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId) || !/^[a-zA-Z0-9_-]{12,100}$/.test(args.eventId)) throw new Error("invalid terminal request identity");
+    const user = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.ownerXUserId });
+    if (!user) throw new Error("authenticated wallet was not found");
+    let command: WalletCommand | null = null;
+    let displayText = args.text?.trim() || "";
+    if (args.channel === "terminal_chat") {
+      if (!displayText || displayText.length > 500) return { ok: false, message: "Enter a terminal request of 500 characters or fewer." };
+      await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user", messageType: "chat", text: displayText });
+      const intent = await parseXWalletIntent(displayText, false);
+      if (intent.kind === "help") {
+        const message = walletHelpMessage(intent.topic);
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+        return { ok: true, message };
+      }
+      if (intent.kind !== "command") {
+        const message = intent.kind === "irrelevant" ? "Ask about your wallet or enter a Buy, Sell, Send, or Burn request." : unknownWalletMessage();
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+        return { ok: false, message };
+      }
+      command = intent.command;
+    } else {
+      try { command = args.commandJson ? validateStructuredWalletCommand(JSON.parse(args.commandJson) as unknown) : null; } catch { command = null; }
+      displayText = displayText || (command && command.kind !== "unknown" ? `${command.kind} request` : "Direct request");
+      await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user", messageType: "action", text: displayText });
+    }
+    if (!command || command.kind === "unknown") return { ok: false, message: "❌ That terminal request is invalid." };
+    if (!isTerminalCommand(command)) {
+      const message = command.kind === "launch" ? "🚀 Launches are available through X posts only." : "❌ That action is not available in the terminal.";
+      await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+      return { ok: false, message };
+    }
+    const recipientAddress = command.kind === "send"
+      ? await ctx.runAction(internal.xReplies.resolveTerminalRecipient, { recipient: command.recipient })
+      : undefined;
+    const requestId = `terminal:${args.sessionId}:${args.eventId}:${command.kind}`;
+    const result = await ctx.runAction(internal.wallets.executeCommand, {
+      sourcePostId: args.eventId, requestId, xUserId: args.ownerXUserId, text: displayText,
+      parsedCommandJson: JSON.stringify(command), source: "terminal", channel: args.channel,
+      ...(recipientAddress ? { recipientAddress } : {}),
+    });
+    await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: result.message, requestId });
+    return result;
   },
 });
 

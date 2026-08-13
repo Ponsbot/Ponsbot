@@ -40,11 +40,19 @@ export default defineSchema({
 
   walletRequests: defineTable({
     requestId: v.string(), sourcePostId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), kind: v.string(),
+    source: v.optional(v.union(v.literal("x"), v.literal("terminal"))),
+    channel: v.optional(v.union(v.literal("x_reply"), v.literal("terminal_chat"), v.literal("terminal_form"))),
     status: v.union(v.literal("accepted"), v.literal("simulating"), v.literal("prepared"), v.literal("broadcast"), v.literal("confirmed"), v.literal("rejected"), v.literal("failed")),
     normalizedJson: v.string(), safeError: v.optional(v.string()), transactionHash: v.optional(v.string()),
     preparedLaunchSalt: v.optional(v.string()), predictedTokenAddress: v.optional(v.string()), predictedCurveAddress: v.optional(v.string()),
     reconciliationAttempts: v.optional(v.number()), nextReconcileAt: v.optional(v.number()), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_source_post_id", ["sourcePostId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"]),
+
+  terminalMessages: defineTable({
+    sessionId: v.string(), ownerXUserId: v.string(), role: v.union(v.literal("user"), v.literal("assistant")),
+    messageType: v.union(v.literal("chat"), v.literal("action"), v.literal("result")), text: v.string(),
+    requestId: v.optional(v.string()), createdAt: v.number(),
+  }).index("by_owner_created_at", ["ownerXUserId", "createdAt"]).index("by_session_created_at", ["sessionId", "createdAt"]),
 
   walletTransactions: defineTable({
     requestId: v.string(), walletId: v.id("cryptoWallets"), chainId: v.number(), to: v.string(), valueWei: v.string(),

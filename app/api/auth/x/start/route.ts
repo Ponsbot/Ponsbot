@@ -16,7 +16,9 @@ export async function GET(request: NextRequest) {
   if (!clientId || !siteUrl || !webSecret) return NextResponse.json({ error: "X wallet sign-in is not configured" }, { status: 503 });
 
   const session = readWebWalletSession(request.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, webSecret);
-  if (session) return NextResponse.redirect(new URL(`/wallet/${session.walletAddress}`, siteUrl));
+  const requestedReturn = request.nextUrl.searchParams.get("returnTo");
+  const returnTo = requestedReturn === "/terminal" ? "/terminal" : `/wallet/${session?.walletAddress || ""}`;
+  if (session) return NextResponse.redirect(new URL(returnTo, siteUrl));
 
   const state = base64url(randomBytes(32));
   const verifier = base64url(randomBytes(48));
@@ -38,5 +40,6 @@ export async function GET(request: NextRequest) {
   const cookie = { httpOnly: true, secure, sameSite: "lax" as const, path: "/api/auth/x", maxAge: 10 * 60 };
   response.cookies.set("pons_x_oauth_state", state, cookie);
   response.cookies.set("pons_x_oauth_verifier", verifier, cookie);
+  response.cookies.set("pons_x_oauth_return", requestedReturn === "/terminal" ? "/terminal" : "/wallet", cookie);
   return response;
 }

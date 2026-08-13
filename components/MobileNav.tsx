@@ -20,6 +20,7 @@ export function MobileNav() {
     <button className="mobile-menu-toggle" type="button" aria-label="Open navigation menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}><span /><span /><span /></button>
     {open ? <div className="mobile-menu">
       <Link href="/" onClick={() => setOpen(false)}>HOME</Link>
+      <Link href="/terminal" onClick={() => setOpen(false)}>TERMINAL</Link>
       <Link href="/how-it-works" onClick={() => setOpen(false)}>HOW IT WORKS</Link>
       <Link href="/#launches" onClick={() => setOpen(false)}>LAUNCHES</Link>
       <a href="/api/auth/x/start">MY WALLET</a>

@@ -271,6 +271,26 @@ async function resolveXRecipient(ctx: ActionCtx, postId: string, recipient: stri
   return bound.recipientAddress;
 }
 
+export const resolveTerminalRecipient = internalAction({
+  args: { recipient: v.string() },
+  handler: async (ctx, { recipient }): Promise<string> => {
+    if (/^0x[a-fA-F0-9]{40}$/.test(recipient)) return recipient;
+    const username = recipient.replace(/^@/, "");
+    if (!/^[a-zA-Z0-9_]{1,15}$/.test(username)) throw new Error("invalid X recipient");
+    const response = await xGet<{ data?: XUser }>(`/users/by/username/${encodeURIComponent(username)}`, new URLSearchParams({ "user.fields": "id,username,verified,verified_type,subscription_type" }));
+    const user = response.data;
+    if (!user?.id) throw new Error("that X account could not be found");
+    await ctx.runMutation(internal.wallets.upsertXUser, {
+      xUserId: user.id, username: user.username, verified: Boolean(user.verified),
+      ...(user.verified_type ? { verifiedType: user.verified_type } : {}),
+      ...(user.subscription_type ? { subscriptionType: user.subscription_type } : {}),
+    });
+    const wallet = await ctx.runAction(internal.wallets.ensureWallet, { xUserId: user.id });
+    if (!wallet?.address) throw new Error("the recipient wallet could not be prepared");
+    return wallet.address;
+  },
+});
+
 export const getRetryContext = internalQuery({
   args: { postId: v.string() },
   handler: async (ctx, { postId }) => {

@@ -31,6 +31,10 @@ const NUMBER = "((?:[0-9][0-9,]*(?:\\.[0-9]+)?|\\.[0-9]+))";
 const NUMBER_NC = "(?:[0-9][0-9,]*(?:\\.[0-9]+)?|\\.[0-9]+)";
 export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 
+export function isTerminalCommand(command: WalletCommand) {
+  return ["show_wallet", "show_balance", "buy", "sell", "send", "burn"].includes(command.kind);
+}
+
 function slippageBps(text: string) {
   const match = text.match(/\bslippage\s*(?:is|=|:|of|at)?\s*([0-9]+(?:\.[0-9]+)?)\s*%/i)
     || text.match(/\b([0-9]+(?:\.[0-9]+)?)\s*%\s+slippage\b/i);

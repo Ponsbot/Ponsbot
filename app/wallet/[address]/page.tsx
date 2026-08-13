@@ -6,6 +6,7 @@ import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { ExternalTokenImage } from "@/components/ExternalTokenImage";
 import { CopyAddress } from "@/components/CopyAddress";
 import { CopyWalletAddress } from "@/components/CopyWalletAddress";
+import { WalletTerminalLink } from "@/components/WalletTerminalLink";
 import {
   explorerAddress,
   explorerToken,
@@ -66,14 +67,14 @@ export default async function WalletPage({ params }: Props) {
             <h1>Wallet Holdings</h1>
             {username ? <a className="wallet-x-link" href={`https://x.com/${username.replace(/^@/, "")}`} target="_blank" rel="noreferrer">@{username.replace(/^@/, "")}</a> : null}
           </div>
-          <a
+          <div className="wallet-heading-actions"><WalletTerminalLink address={address} /><a
             className="button button-quiet"
             href={explorerAddress(address)}
             target="_blank"
             rel="noreferrer"
           >
             View on Blockscout ↗
-          </a>
+          </a></div>
         </div>
         <CopyWalletAddress address={address} />
         <div className="holdings">
