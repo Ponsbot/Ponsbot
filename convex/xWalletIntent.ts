@@ -145,6 +145,7 @@ type ClassifiedIntent =
 
 const HELP_TOPICS: WalletHelpTopic[] = ["capabilities", "wallet", "fund", "balance", "send", "buy_sell", "burn", "launch", "pairs", "fees"];
 const OPERATIONS: WalletOperation[] = ["create_wallet", "show_wallet", "show_balance", "send", "burn", "buy", "buy_and_send", "sell", "claim_fees", "launch"];
+const AI_COMPLETION_TOKEN_BUDGET = 4_096;
 
 function validateClassification(value: unknown): ClassifiedIntent | null {
   if (!value || typeof value !== "object") return null;
@@ -486,7 +487,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean): Promi
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const raw = await openRouter([{ role: "system", content: intentClassifierPrompt() }, { role: "user", content: text }], 80, {
-        reasoningEffort: "medium", minimumCompletionTokens: 256, timeoutMs: 30_000, providerSort: "latency", temperature: 0,
+        reasoningEffort: "medium", minimumCompletionTokens: AI_COMPLETION_TOKEN_BUDGET, timeoutMs: 30_000, providerSort: "latency", temperature: 0,
       });
       const candidate = validateClassification(extractJson(raw));
       classification = candidate ? validateIntentDecision(text, candidate) : null;
@@ -504,8 +505,11 @@ export async function parseXWalletIntent(text: string, hasImage: boolean): Promi
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const raw = await openRouter([{ role: "system", content: parameterExtractorPrompt(classification.operation, hasImage) }, { role: "user", content: text }], 240, {
-        reasoningEffort: classification.operation === "launch" ? "high" : "medium",
-        minimumCompletionTokens: 512, timeoutMs: 40_000, providerSort: "latency", temperature: 0,
+        reasoningEffort: "medium",
+        // Reasoning tokens share the completion budget. Reserve enough for the
+        // reasoning pass and the final JSON for every specialized operation.
+        minimumCompletionTokens: AI_COMPLETION_TOKEN_BUDGET,
+        timeoutMs: 40_000, providerSort: "latency", temperature: 0,
       });
       const parsed = extractJson(raw);
       const command = parsed ? validateExtractedCommand(parsed, classification.operation, text) : null;
