@@ -145,6 +145,7 @@ describe("X wallet commands", () => {
   it("parses burns and creator fee claims", () => {
     expect(parseWalletCommand("burn 500 ROOT")).toEqual({ kind: "burn", amount: "500", unit: "token", token: "ROOT" });
     expect(parseWalletCommand("claim my fees for $ROOT")).toEqual({ kind: "claim_fees", token: "ROOT" });
+    expect(parseWalletCommand("claim all my fees")).toEqual({ kind: "claim_fees" });
   });
 
   it("validates AI-extracted paired-asset buys", () => {

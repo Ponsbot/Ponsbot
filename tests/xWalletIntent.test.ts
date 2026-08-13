@@ -3,6 +3,9 @@ import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt,
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
+  it("routes claim all fees without inventing a token", () => {
+    expect(groundedCanonicalCommand("claim all my fees")).toEqual({ kind: "claim_fees" });
+  });
   it("requires explicit buy and burn wording for the combined workflow", () => {
     expect(intentClassifierPrompt()).toContain('"buy_and_burn"');
     expect(parameterExtractorPrompt("buy_and_burn", false)).toContain('literal words "buy" and "burn"');

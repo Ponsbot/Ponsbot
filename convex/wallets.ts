@@ -480,7 +480,9 @@ export const listWalletTokenAddresses = internalQuery({
 export const listOwnedLaunchTokens = internalQuery({
   args: { xUserId: v.string() },
   handler: async (ctx, { xUserId }) => (await ctx.db.query("tokenLaunches")
-    .withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", xUserId)).order("desc").take(20))
+    .withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", xUserId)).collect())
+    // claim() collects the ETH escrow at once. Non-ETH pair escrows require
+    // claimToken(pair) and deliberately remain individual token claims.
     .flatMap((launch) => launch.tokenAddress && (!launch.pairToken || /^0x0{40}$/i.test(launch.pairToken)) ? [launch.tokenAddress] : []),
 });
 
@@ -940,7 +942,9 @@ export const executeCommand = internalAction({
               await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
             } catch (error) {
               const message = error instanceof Error ? error.message : "";
-              if (!/sweepFees|revert|no fees|0x8d42130c/i.test(message)) throw error;
+              const harmlessEmptySweep = /sweepFees|revert|no fees|0x8d42130c/i.test(message);
+              const staleOwnedLaunch = !commandToken && /no completed Pons launch|not the launch creator fee beneficiary/i.test(message);
+              if (!harmlessEmptySweep && !staleOwnedLaunch) throw error;
             }
           }
         }
