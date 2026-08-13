@@ -72,6 +72,7 @@
 .social-x-button{width:36px;padding-inline:0!important}
 .social-x-button img{width:13px;height:13px;object-fit:contain}
 .detail-socials{flex-wrap:nowrap}.detail-socials a{width:32px;height:32px;display:grid;place-items:center;flex:0 0 auto;border:1px solid var(--line);border-radius:50%;color:var(--muted)}.detail-socials a:hover{color:var(--ink);border-color:var(--ink)}.detail-socials svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.8}.detail-socials .social-x-logo{width:13px;height:13px;object-fit:contain}
+.detail-link-row{display:flex;align-items:center;gap:10px;margin:20px 0 24px}.detail-link-row .detail-socials{margin:0}.detail-link-row .detail-actions{flex-wrap:nowrap}
 .wallet-x-link{display:inline-block;margin-top:9px;color:var(--green);font-size:14px;font-weight:750}
 .holding-balance small{color:var(--muted);font-size:13px;font-weight:600}
 .facts .fact-contract{border-right:0;border-bottom:1px solid var(--line)}
@@ -83,7 +84,7 @@
 @media(max-width:1100px){.token-market-overview{grid-template-columns:minmax(130px,38%) minmax(0,1fr)}}
 @media(max-width:900px){.token-page-columns{grid-template-columns:1fr;row-gap:52px}.token-left-column,.token-right-column{display:grid;gap:52px;min-width:0}.token-market-overview,.token-chart-column,.token-details-column,.token-activity-column{grid-column:auto;grid-row:auto}.token-market-overview{grid-template-columns:minmax(140px,34vw) minmax(0,1fr)}}
 @media(max-width:600px){.token-market-overview{grid-template-columns:minmax(110px,36%) minmax(0,1fr);gap:16px}.token-market-summary .detail-copy h1{font-size:clamp(30px,9vw,44px)}.token-market-summary .description{font-size:13px}.token-chart-column{margin-top:0}}
-@media(max-width:600px){.token-market-overview{grid-template-columns:minmax(96px,31%) minmax(0,1fr);gap:14px}.token-market-artwork .detail-art{max-width:128px}.token-market-summary .detail-socials{display:flex;flex-wrap:nowrap;gap:7px}}
+@media(max-width:600px){.token-market-overview{grid-template-columns:minmax(0,1fr) minmax(96px,31%);gap:14px}.token-market-artwork .detail-art{max-width:128px}.token-market-summary .detail-socials{display:flex;flex-wrap:nowrap;gap:7px}}
 @media(max-width:600px){.facts .fact-contract,.facts .fact-launched,.facts .fact-launcher,.facts .fact-market{grid-column:auto;border-right:0;border-bottom:1px solid var(--line)}.facts .fact-pair{border-right:0;border-bottom:1px solid var(--line)}}
 .token-chart-column .market-chart-head,.token-activity-column .activity-tabs{min-height:50px}
 .header-ca-mobile{display:none}
@@ -93,3 +94,5 @@
 .launch-section .launch-toolbar{margin-top:17px}
 @media(min-width:901px){.launch-section{padding-top:28px}}
 @media(max-width:600px){.launch-section{padding-top:24px}}
+@media(max-width:600px){.home-hero .hero-actions{flex-wrap:nowrap;gap:7px}.home-hero .hero-actions .button{padding:12px 11px;font-size:12px;white-space:nowrap}}
+@media(max-width:600px){.detail-link-row{display:flex;align-items:center;gap:6px;margin:16px 0 24px}.detail-link-row .detail-socials{margin:0;gap:5px}.detail-link-row .detail-socials a{width:28px;height:28px}.detail-link-row .detail-actions .button{padding:9px 8px;font-size:10px;white-space:nowrap}}
