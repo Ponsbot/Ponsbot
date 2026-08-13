@@ -96,3 +96,4 @@
 @media(max-width:600px){.launch-section{padding-top:24px}}
 @media(max-width:600px){.home-hero .hero-actions{flex-wrap:nowrap;gap:7px}.home-hero .hero-actions .button{padding:12px 11px;font-size:12px;white-space:nowrap}}
 @media(max-width:600px){.detail-link-row{display:flex;align-items:center;gap:6px;margin:16px 0 24px}.detail-link-row .detail-socials{margin:0;gap:5px}.detail-link-row .detail-socials a{width:28px;height:28px}.detail-link-row .detail-actions .button{padding:9px 8px;font-size:10px;white-space:nowrap}}
+@media(max-width:600px){.token-market-artwork .detail-art-mcap{display:none}}
