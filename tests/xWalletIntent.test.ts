@@ -18,6 +18,15 @@ describe("deterministic X wallet replies", () => {
     expect(prompt).toContain("Determine intent only");
     expect(prompt).not.toContain('"amount"');
     expect(prompt).not.toContain('"recipient"');
+    expect(prompt).toContain("inside quotes as additional operations");
+  });
+
+  it("does not count command words inside quoted launch metadata", () => {
+    const post = 'launch "Pons Bot" ticker $PONSBOT X: www.x.com/ponsbotfamily description "Swap, sell, and launch on Pons V2 with just one X post."';
+    expect(parseWalletCommand(canonicalCommandText(post))).toMatchObject({ kind: "launch", name: "Pons Bot", symbol: "PONSBOT" });
+    expect(groundedCanonicalCommand(post)).toMatchObject({
+      kind: "launch", name: "Pons Bot", symbol: "PONSBOT", twitter: "https://x.com/ponsbotfamily", description: "Swap, sell, and launch on Pons V2 with just one X post.",
+    });
   });
 
   it("uses operation-specific parameter prompts", () => {
