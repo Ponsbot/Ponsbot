@@ -71,6 +71,21 @@ describe("deterministic X wallet replies", () => {
     });
   });
 
+  it("distinguishes the bot invocation from an explicit bot recipient", () => {
+    expect(groundedCanonicalCommand("@Ponsbotfamily send 10 SNDK")).toBeNull();
+    expect(groundedCanonicalCommand("Hey @Ponsbotfamily send @Ponsbotfamily 10 SNDK")).toMatchObject({
+      kind: "send", amount: "10", unit: "token", token: "SNDK", recipient: "@Ponsbotfamily",
+    });
+    expect(groundedCanonicalCommand("@Ponsbotfamily send @charlie 0.01 ETH please")).toMatchObject({
+      kind: "send", amount: "0.01", unit: "eth", recipient: "@charlie",
+    });
+  });
+
+  it("tells both AI stages to isolate the operative request and ignore politeness", () => {
+    expect(intentClassifierPrompt()).toContain("operative clause");
+    expect(parameterExtractorPrompt("buy", false)).toContain('trailing "please"');
+  });
+
   it("normalizes approved trading slang into grounded commands", () => {
     const examples = [
       ["put $100 into SNDK @Ponsbotfamily", "buy"],

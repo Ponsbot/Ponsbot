@@ -69,9 +69,9 @@ const rows: Row[] = [
     "Would something like buy $20 of SNDK work @Ponsbotfamily?",
     "For example, could I buy a token using CA 0xD002000000000000000000000000000000000348 @Ponsbotfamily?",
     "Do I have to type buy specifically or would something like grab $20 of SNDK work @Ponsbotfamily?",
-    "How would I buy $POTATO through this bot @Ponsbotfamily? Just asking how, don't buy it yet",
+    "How would I buy $HARBOR through this bot @Ponsbotfamily? Just asking how, don't buy it yet",
     "Would sell half my SNDK be understood @Ponsbotfamily?",
-    "Does dump my whole $POTATO bag count as a sell request @Ponsbotfamily? 😂",
+    "Does dump my whole $HARBOR bag count as a sell request @Ponsbotfamily? 😂",
     "Would a sell using 0xD003000000000000000000000000000000000365 work @Ponsbotfamily? Not asking you to sell it",
     "Can I say cash out all my SNDK or does it have to say sell @Ponsbotfamily?",
   ], true),
@@ -113,7 +113,7 @@ const rows: Row[] = [
     "Can I choose ETH as the pairing asset for a launch @Ponsbotfamily?",
   ]),
   ...questions("launch", [
-    "Not launching this yet, just trying to understand the format — would Launch Potato Party ticker $SPUD, website potato.xyz, pair with ETH be valid @Ponsbotfamily?",
+    "Not launching this yet, just trying to understand the format — would Launch Harbor Party ticker $HARBOR, website harbor.xyz, pair with ETH be valid @Ponsbotfamily?",
   ], true),
 ];
 
