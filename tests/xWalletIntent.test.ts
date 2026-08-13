@@ -3,6 +3,12 @@ import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt,
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
+  it("requires explicit buy and burn wording for the combined workflow", () => {
+    expect(intentClassifierPrompt()).toContain('"buy_and_burn"');
+    expect(parameterExtractorPrompt("buy_and_burn", false)).toContain('literal words "buy" and "burn"');
+    expect(groundedCanonicalCommand("buy $20 of PONSBOT and burn it")).toMatchObject({ kind: "buy_and_burn", amount: "20", token: "PONSBOT" });
+    expect(groundedCanonicalCommand("burn the PONSBOT I buy with 0.01 ETH")).toMatchObject({ kind: "buy_and_burn", amount: "0.01", token: "PONSBOT" });
+  });
   it("grounds flexible launch names and pair-asset syntax", () => {
     expect(parseWalletCommand("Launch a token named Aurora Signal with ticker AURA")).toMatchObject({ kind: "launch", name: "Aurora Signal", symbol: "AURA" });
     expect(parseWalletCommand("launch name: Green Candle; ticker: GC")).toMatchObject({ kind: "launch", name: "Green Candle", symbol: "GC" });

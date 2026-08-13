@@ -3,7 +3,7 @@ import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { TerminalClient } from "@/components/TerminalClient";
 
 export const metadata: Metadata = {
-  title: "Terminal",
+  title: { absolute: "Pons Bot" },
   description: "Connect X to buy, sell, send, and burn from your Pons Bot wallet.",
   alternates: { canonical: "/terminal" },
 };

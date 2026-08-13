@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
 
 describe("X wallet commands", () => {
+  it("parses buy-and-burn only when both literal words are present", () => {
+    expect(parseWalletCommand("buy $25 of PONSBOT and burn it")).toEqual({ kind: "buy_and_burn", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250 });
+    expect(parseWalletCommand("burn the PONSBOT I buy with 0.01 ETH")).toEqual({ kind: "buy_and_burn", amount: "0.01", unit: "eth", token: "PONSBOT", slippageBps: 250 });
+    expect(parseWalletCommand("buy 5 MSFT of PONSBOT then burn the purchase")).toEqual({ kind: "buy_and_burn", amount: "5", unit: "pair", token: "PONSBOT", pairAsset: "MSFT", slippageBps: 250 });
+    expect(parseWalletCommand("purchase $25 of PONSBOT and burn it").kind).not.toBe("buy_and_burn");
+    expect(parseWalletCommand("buy $25 of PONSBOT and destroy it").kind).not.toBe("buy_and_burn");
+  });
+
+  it("strictly validates structured buy-and-burn commands", () => {
+    expect(validateStructuredWalletCommand({ kind: "buy_and_burn", amount: "20", unit: "usd", token: "$PONSBOT", slippageBps: 250 })).toEqual({ kind: "buy_and_burn", amount: "20", unit: "usd", token: "PONSBOT", slippageBps: 250 });
+    expect(validateStructuredWalletCommand({ kind: "buy_and_burn", amount: "5", unit: "pair", token: "PONSBOT" })).toBeNull();
+  });
   it("parses paired-asset developer buys and Telegram launch links", () => {
     expect(parseWalletCommand("launch Ponsbot ticker PONSBOT pair with MSFT dev buy 2 MSFT telegram https://t.me/ponsbotfamily")).toMatchObject({
       kind: "launch", pairToken: "MSFT", devBuy: { amount: "2", unit: "pair" }, telegram: "https://t.me/ponsbotfamily",

@@ -36,7 +36,7 @@ const buyOperation = z.object({
   if (operation.unit !== "pair" && operation.pairAsset) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "paired asset is only valid for pair amounts", path: ["pairAsset"] });
 });
 const sellOperation = z.object({
-  type: z.literal("uniswap_v3_sell"), token, amount, unit: z.enum(["token", "percent"]),
+  type: z.literal("uniswap_v3_sell"), token, amount, unit: z.enum(["usd", "token", "percent"]),
   slippageBps: z.number().int().min(10).max(2_000),
   routerAddress: address, quoterAddress: address, wethAddress: address, ponsFactoryAddress: address,
   v4QuoterAddress: address, universalRouterAddress: address, permit2Address: address, fee: z.literal(10_000),

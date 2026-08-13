@@ -625,7 +625,9 @@ export async function executeTransaction(request: ExecutionRequest) {
   }
   if (operation.type === "uniswap_v3_sell") {
     const resolved = await resolveToken(operation.token);
-    const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit);
+    const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit, {
+      weth: operation.wethAddress as Address, quoter: operation.quoterAddress as Address, fee: operation.fee,
+    });
     const client = rpcClient();
     const pons = await resolveActivePonsCurve(resolved.address, operation.ponsFactoryAddress as Address);
     if (pons) {

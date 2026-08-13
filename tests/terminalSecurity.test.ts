@@ -4,10 +4,11 @@ import { createWebWalletSession, readWebWalletSession, WEB_WALLET_SESSION_SECOND
 
 describe("terminal security boundaries", () => {
   it("allows only the intended terminal operations", () => {
-    for (const kind of ["show_wallet", "show_balance", "buy", "sell", "send", "burn"] as const) {
+    for (const kind of ["show_wallet", "show_balance", "buy", "buy_and_burn", "sell", "send", "burn"] as const) {
       const examples = {
         show_wallet: { kind }, show_balance: { kind },
         buy: { kind, amount: "10", unit: "usd", token: "PONSBOT", slippageBps: 250 },
+        buy_and_burn: { kind, amount: "10", unit: "usd", token: "PONSBOT", slippageBps: 250 },
         sell: { kind, amount: "10", unit: "token", token: "PONSBOT", slippageBps: 250 },
         send: { kind, amount: "10", unit: "token", token: "PONSBOT", recipient: "0x1111111111111111111111111111111111111111" },
         burn: { kind, amount: "10", unit: "token", token: "PONSBOT" },
@@ -18,7 +19,7 @@ describe("terminal security boundaries", () => {
     const launch = validateStructuredWalletCommand({ kind: "launch", launchMode: "pons", name: "Blocked", symbol: "NOPE" });
     const claim = validateStructuredWalletCommand({ kind: "claim_fees" });
     expect(launch && isTerminalCommand(launch)).toBe(false);
-    expect(claim && isTerminalCommand(claim)).toBe(false);
+    expect(claim && isTerminalCommand(claim)).toBe(true);
   });
 
   it("issues short-lived signed sessions and rejects tampering", () => {

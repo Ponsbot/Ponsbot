@@ -20,7 +20,7 @@ export function WalletAccountMenu() {
 
   const signOut = async () => {
     const response = await fetch("/api/auth/x/session", { method: "DELETE" }).catch(() => null);
-    if (response?.ok) setSession({ authenticated: false });
+    if (response?.ok) window.location.reload();
   };
 
   return <details className="wallet-account-menu">

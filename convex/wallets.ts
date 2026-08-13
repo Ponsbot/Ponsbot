@@ -89,7 +89,7 @@ function replyCommand(command: WalletCommand, tokenSymbol: string | undefined, r
     return registry.pairs.find((item) => item.address.toLowerCase() === value.toLowerCase())?.symbol || "token";
   };
   if (command.kind === "send" && command.token) return { ...command, token: displayToken(command.token) };
-  if (command.kind === "burn" || command.kind === "sell" || command.kind === "claim_fees" || command.kind === "buy_and_send") {
+  if (command.kind === "burn" || command.kind === "sell" || command.kind === "claim_fees" || command.kind === "buy_and_send" || command.kind === "buy_and_burn") {
     return { ...command, ...(command.token ? { token: displayToken(command.token) } : {}) } as WalletCommand;
   }
   if (command.kind === "buy") return { ...command, token: displayToken(command.token)!, pairAsset: displayToken(command.pairAsset) };
@@ -112,6 +112,7 @@ function commandSummary(command: WalletCommand) {
   }
   if (command.kind === "buy") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)}!`;
   if (command.kind === "buy_and_send") return `Bought ${command.unit === "usd" ? `$${command.amount}` : `${command.amount} ETH`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
+  if (command.kind === "buy_and_burn") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and burned the purchased tokens!`;
   if (command.kind === "sell") return `Sold ${command.unit === "percent" ? `${command.amount}% of ` : `${command.amount} `}${assetLabel(command.token)}!`;
   if (command.kind === "claim_fees") return `Claimed creator fees${command.token ? ` for ${assetLabel(command.token)}` : ""}!`;
   if (command.kind === "launch") {
@@ -752,7 +753,7 @@ function safeFailure(error: unknown) {
   if (/no claimable creator fees/i.test(message)) return "ℹ️ There aren't any creator fees available to claim in that asset right now.";
   if (/named paired asset does not match/i.test(message)) return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Ask which asset it uses, then try again with that pair or a dollar amount.";
   if (/image/i.test(message)) return "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
-  if (/ticker matches/i.test(message)) return "⚠️ More than one held token uses that ticker. Send me the contract address so I choose the right one!";
+  if (/ticker matches/i.test(message)) return "⚠️ More than indexed token uses that ticker. Send me the contract address so I choose the right one!";
   if (/specify the token|contract address|token lookup|held token/i.test(message)) return "🔎 I couldn't identify that token. Try a ticker you hold or send its contract address.";
   if (/launch was not found|no completed Pons launch/i.test(message)) return "🔎 I couldn't find a completed Pons launch for that token.";
   if (/launch creator|fee beneficiary/i.test(message)) return "🔒 This wallet isn't authorized to claim fees for that launch.";
@@ -980,6 +981,33 @@ export const executeCommand = internalAction({
             throw new Error(`The buy completed, but the send did not. The purchased tokens remain in your wallet. Buy TXN: ${transactionUrl(buy.transactionHash)} ${safeFailure(error)}`);
           }
         }
+        if (command.kind === "buy_and_burn") {
+          if (!commandToken || !safeAddress(commandToken)) throw new Error("token lookup was not resolved by the registry");
+          const before = await exactTokenBalance(wallet, args.xUserId, commandToken);
+          const buyCommand: WalletCommand = {
+            kind: "buy", amount: command.amount, unit: command.unit, token: command.token,
+            ...(command.pairAsset ? { pairAsset: command.pairAsset } : {}), slippageBps: command.slippageBps,
+          };
+          const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:buy`, buyCommand, commandToken, registry);
+          const buyOperation = await operationFor(funded.command, undefined, undefined, undefined, commandToken, registry);
+          const buy = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:buy`, funded.command, buyOperation);
+          await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: wallet._id, requestId });
+          try {
+            const after = await exactTokenBalance(wallet, args.xUserId, commandToken);
+            if (after.decimals !== before.decimals) throw new Error("token decimals changed while processing the purchase");
+            const purchased = BigInt(after.raw) - BigInt(before.raw);
+            if (purchased <= 0n) throw new Error("the confirmed buy did not increase the token balance");
+            const displayPurchased = formatUnits(purchased, after.decimals);
+            const burnCommand: WalletCommand = { kind: "burn", amount: displayPurchased, unit: "token", token: command.token };
+            const burnOperation = await operationFor(burnCommand, undefined, undefined, undefined, commandToken, registry);
+            const burned = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:burn`, burnCommand, burnOperation);
+            await ctx.runMutation(internal.wallets.indexWalletToken, { walletId: wallet._id, tokenAddress: commandToken, symbol: tokenSymbol || "TOKEN", involvedByLaunch: false, involvedByTransaction: true });
+            await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "confirmed", transactionHash: burned.transactionHash });
+            return { ok: true, transactionHash: burned.transactionHash, message: `✅ Success! Bought ${displayPurchased} ${assetLabel(tokenSymbol)} and burned all tokens received from that purchase!\nBuy TXN: ${transactionUrl(buy.transactionHash)}\nBurn TXN: ${transactionUrl(burned.transactionHash)}${warning}` };
+          } catch (error) {
+            throw new Error(`The buy completed, but the burn did not. The purchased tokens remain in your wallet. Buy TXN: ${transactionUrl(buy.transactionHash)} ${safeFailure(error)}`);
+          }
+        }
         let executionCommand: Exclude<WalletCommand, { kind: "unknown" }> = command;
         if (command.kind === "buy" && commandToken) {
           const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, requestId, command, commandToken, registry);
@@ -1118,20 +1146,26 @@ export const recordTerminalMessage = internalMutation({
 export const listTerminalHistory = internalQuery({
   args: { ownerXUserId: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
-    const [messages, requests] = await Promise.all([
+    const [messages, requests, launches, tokenCatalog] = await Promise.all([
       ctx.db.query("terminalMessages").withIndex("by_session_created_at", (q) => q.eq("sessionId", args.sessionId)).order("desc").take(40),
       ctx.db.query("walletRequests").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(40),
+      ctx.db.query("tokenLaunches").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(100),
+      ctx.db.query("tokenLaunches").order("desc").take(500),
     ]);
     return {
       messages: messages.reverse().map((item) => ({ role: item.role, messageType: item.messageType, text: item.text, requestId: item.requestId, createdAt: item.createdAt })),
-      actions: requests.map((item) => ({ requestId: item.requestId, kind: item.kind, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+      actions: requests.map((item) => { let command: Record<string, unknown> = {}; try { command = JSON.parse(item.normalizedJson); } catch {} return { requestId: item.requestId, kind: item.kind, amount: typeof command.amount === "string" ? command.amount : undefined, token: typeof command.token === "string" ? command.token : undefined, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt }; }),
+      launches: launches.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
+      tokenCatalog: tokenCatalog.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
     };
   },
 });
 
 type TerminalHistoryResult = {
   messages: Array<{ role: "user" | "assistant"; messageType: "chat" | "action" | "result"; text: string; requestId?: string; createdAt: number }>;
-  actions: Array<{ requestId: string; kind: string; status: string; source: "x" | "terminal"; transactionHash?: string; safeError?: string; createdAt: number; updatedAt: number }>;
+  actions: Array<{ requestId: string; kind: string; amount?: string; token?: string; status: string; source: "x" | "terminal"; transactionHash?: string; safeError?: string; createdAt: number; updatedAt: number }>;
+  launches: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
+  tokenCatalog: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
 };
 
 export const terminalHistory = action({

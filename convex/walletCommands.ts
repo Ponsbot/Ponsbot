@@ -8,7 +8,8 @@ export type WalletCommand =
   | { kind: "burn"; amount: string; unit: AmountUnit; token: string }
   | { kind: "buy"; amount: string; unit: "eth" | "usd" | "pair"; token: string; pairAsset?: string; slippageBps: number }
   | { kind: "buy_and_send"; amount: string; unit: "eth" | "usd"; token: string; recipient: string; slippageBps: number }
-  | { kind: "sell"; amount: string; unit: "token" | "percent"; token: string; slippageBps: number }
+  | { kind: "buy_and_burn"; amount: string; unit: "eth" | "usd" | "pair"; token: string; pairAsset?: string; slippageBps: number }
+  | { kind: "sell"; amount: string; unit: "usd" | "token" | "percent"; token: string; slippageBps: number }
   | { kind: "claim_fees"; token?: string }
   | {
       kind: "launch";
@@ -32,7 +33,7 @@ const NUMBER_NC = "(?:[0-9][0-9,]*(?:\\.[0-9]+)?|\\.[0-9]+)";
 export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 
 export function isTerminalCommand(command: WalletCommand) {
-  return ["show_wallet", "show_balance", "buy", "sell", "send", "burn"].includes(command.kind);
+  return ["show_wallet", "show_balance", "buy", "buy_and_burn", "sell", "send", "burn", "claim_fees"].includes(command.kind);
 }
 
 function slippageBps(text: string) {
@@ -173,6 +174,21 @@ export function parseWalletCommand(raw: string): WalletCommand {
   const text = raw.replace(/@[a-zA-Z0-9_]{1,15}/g, " ").replace(/\s+/g, " ").trim();
   const launch = parseLaunch(text);
   if (launch) return launch;
+  if (/\bbuy\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) {
+    return { kind: "unknown", reason: "Buy and burn requires both explicit words: buy and burn." };
+  }
+  if (/\bbuy\b/i.test(text) && /\bburn\b/i.test(text)) {
+    const token = tradeToken(text, "buy")
+      || text.match(/\bburn\s+(?:all\s+(?:of\s+)?|the\s+)?\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\b/i)?.[1]
+      || text.match(/\$(?![0-9])([a-zA-Z][a-zA-Z0-9]{0,31})\b/)?.[1];
+    const usd = text.match(new RegExp(`\\$${NUMBER}|${NUMBER}\\s*(?:usd|dollars?)\\b`, "i"));
+    const eth = text.match(new RegExp(`${NUMBER}\\s*(?:eth|weth)\\b`, "i"));
+    const pair = text.match(new RegExp(`${NUMBER}\\s+((?!of\\b|worth\\b|usd\\b|dollars?\\b|eth\\b|weth\\b)[a-zA-Z][a-zA-Z0-9]{0,31})\\s+(?:of\\s+)?\\$?(?:${token || "(?!)"})`, "i"));
+    const slippage = slippageBps(text);
+    if (slippage < 0) return { kind: "unknown", reason: "Slippage must be between 0.1% and 20%." };
+    if (!token || (!usd && !eth && !pair)) return { kind: "unknown", reason: "Buy and burn needs a spend amount and one token." };
+    return { kind: "buy_and_burn", amount: cleanAmount(usd ? usd[1] || usd[2] : eth ? eth[1] : pair![1]), unit: usd ? "usd" : eth ? "eth" : "pair", token, ...(pair ? { pairAsset: pair[2] } : {}), slippageBps: slippage };
+  }
   if (/\bbuy\b/i.test(text) && /\b(?:send|transfer|give)\b/i.test(raw)) {
     const recipient = recipientAddress || recipientHandle;
     const token = tradeToken(text, "buy");
@@ -259,7 +275,7 @@ export function parseWalletCommand(raw: string): WalletCommand {
 }
 
 export function isValueMovingCommand(command: WalletCommand) {
-  return command.kind === "send" || command.kind === "burn" || command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "sell" || command.kind === "launch" || command.kind === "claim_fees";
+  return command.kind === "send" || command.kind === "burn" || command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "buy_and_burn" || command.kind === "sell" || command.kind === "launch" || command.kind === "claim_fees";
 }
 
 function finitePositiveString(value: unknown) {
@@ -303,6 +319,15 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     if (!amount || !token || !recipient || !["eth", "usd"].includes(String(item.unit)) || slippageBps < 10 || slippageBps > 2_000) return null;
     return { kind, amount, unit: item.unit as "eth" | "usd", token, recipient, slippageBps };
   }
+  if (kind === "buy_and_burn") {
+    const amount = finitePositiveString(item.amount);
+    const token = tokenIdentifier(item.token);
+    const pairAsset = item.pairAsset === undefined ? undefined : tokenIdentifier(item.pairAsset);
+    const slippageBps = Number.isInteger(item.slippageBps) ? Number(item.slippageBps) : DEFAULT_SWAP_SLIPPAGE_BPS;
+    if (!amount || !token || !["eth", "usd", "pair"].includes(String(item.unit)) || slippageBps < 10 || slippageBps > 2_000) return null;
+    if (item.unit === "pair" && !pairAsset) return null;
+    return { kind, amount, unit: item.unit as "eth" | "usd" | "pair", token, ...(pairAsset ? { pairAsset } : {}), slippageBps };
+  }
   if (kind === "burn") {
     const amount = finitePositiveString(item.amount);
     const unit = item.unit;
@@ -322,7 +347,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       if (item.pairAsset !== undefined && !pairAsset) return null;
       return { kind, amount, unit: item.unit, token, ...(pairAsset ? { pairAsset } : {}), slippageBps };
     }
-    if (kind === "sell" && (item.unit === "token" || item.unit === "percent") && (item.unit !== "percent" || Number(amount) <= 100)) return { kind, amount, unit: item.unit, token, slippageBps };
+    if (kind === "sell" && (item.unit === "usd" || item.unit === "token" || item.unit === "percent") && (item.unit !== "percent" || Number(amount) <= 100)) return { kind, amount, unit: item.unit, token, slippageBps };
     return null;
   }
   if (kind === "claim_fees") {
