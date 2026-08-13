@@ -86,9 +86,34 @@ function quotedField(text: string, label: string, maxLength: number) {
   return value ? value.slice(0, maxLength) : undefined;
 }
 
+export function extractGroundedLaunchName(text: string) {
+  const quoted = text.match(/\b(?:name|called|named)\s*(?:is|=|:)?\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
+    || text.match(/\b(?:name|called|named)\s*(?:is|=|:)?\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1]
+    || text.match(/\b(?:launch|create|deploy)\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
+    || text.match(/\b(?:launch|create|deploy)\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1];
+  const labeled = text.match(/\bname\s*(?:is|=|:)?\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|$))/i)?.[1];
+  const named = text.match(/\b(?:called|named|call\s+it)\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|using\b|dev\s*buy\b|website\b|site\b|description\b|desc\b|$))/i)?.[1];
+  const prefixed = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:new\s+)?(?:(?:token|coin)\s*:?)?\s*([^,;|]{1,48}?)(?=\s+(?:with\s+)?(?:ticker|symbol)\b|\s+with\s+\$?[A-Z][A-Z0-9]{0,11}\s+as\s+(?:the\s+)?(?:ticker|symbol)\b|\s*\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)|\s*[,;|]|$)/i)?.[1];
+  const candidate = stripWrappingQuotes(quoted || labeled || named || prefixed || "")
+    .replace(/^name\s*(?:is|=|:)?\s*/i, "").replace(/\s+with$/i, "").trim();
+  return candidate && !/^(?:name|ticker|symbol|token|coin)$/i.test(candidate) ? candidate.slice(0, 48) : undefined;
+}
+
+export function extractGroundedPairToken(text: string) {
+  return text.match(/\bpair(?:ing)?\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bpair\s+\$?(?!(?:with|it|against|asset)\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\b(?:paired?\s+with|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
+    || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
+}
+
 function parseLaunch(text: string): WalletCommand | null {
   if (!/\b(?:launch|create|deploy)\b/i.test(text)
     || !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b|\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)/i.test(text)) return null;
+  if (/\b(?:launch|create|deploy)\s+(?:ticker|symbol)\b/i.test(text)) {
+    return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
+  }
   const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,12})\s*["'\u2018\u2019\u201c\u201d]?/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s*\)/)
@@ -99,7 +124,7 @@ function parseLaunch(text: string): WalletCommand | null {
   const namedName = text.match(/\b(?:called|named|name|call\s+it)\s*(?:is|=|:)?\s*([^,;|/]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*[,;|/]|$)/i)?.[1];
   const nameBeforeTicker = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s+(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[a-zA-Z0-9]{1,12}\b/i)?.[1];
   const launchName = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s*(?:called|named)?\s*([^,;|/$()]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*\$[a-zA-Z]|\s*\(|\s*[,;|/]|$)/i)?.[1];
-  const name = (quotedName || namedName || nameBeforeTicker || launchName || "").trim().replace(/^(?:a|the)\s+/i, "").slice(0, 48);
+  const name = extractGroundedLaunchName(text) || "";
   const symbol = cleanSymbol(symbolMatch?.[1] || "");
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
 
@@ -107,12 +132,7 @@ function parseLaunch(text: string): WalletCommand | null {
   const website = labeledUrl(text, "website|site");
   const twitter = labeledUrl(text, "x|twitter");
   const telegram = labeledUrl(text, "telegram|tg");
-  const pairToken = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-    || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-    || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-    || text.match(/\b(?:paired?\s+with|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
-    || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
+  const pairToken = extractGroundedPairToken(text);
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
   const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));

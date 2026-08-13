@@ -1,5 +1,5 @@
 import { openRouter } from "./llm";
-import { parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { extractGroundedLaunchName, extractGroundedPairToken, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 
 export type WalletHelpTopic = "capabilities" | "wallet" | "fund" | "balance" | "send" | "buy_sell" | "burn" | "launch" | "pairs" | "fees";
 export type XWalletIntent =
@@ -249,8 +249,8 @@ const extractionReliabilityGuidance: Partial<Record<WalletOperation, string>> = 
   show_wallet: `The possessive request "show me my wallet address" asks for current account data and returns show_wallet, not help. Requests asking where to send funds also return show_wallet.`,
   show_balance: `"What's my ETH balance?" asks for current account data and returns show_balance with token ETH. Never derive a ticker from ordinary words such as holding, holdings, wallet, balance, token, or asset.`,
   send: `Imperative give is a transfer synonym. "Give @bob five PONSBOT" returns recipient @bob, amount 5, unit token, and token PONSBOT. Convert number words and fractions such as half, quarter, and three quarters.`,
-  buy: `The bot invocation @Ponsbotfamily is never the purchased token. In "buy $12.50 of SNDK please @Ponsbotfamily", return amount 12.50, unit usd, and token SNDK; ignore both please and the bot mention.`,
-  launch: `Create NAME ticker SYMBOL is a launch just like Launch NAME ticker SYMBOL. The bot mention @Ponsbotfamily is never token social metadata; extract twitter only from an explicitly labeled X or Twitter value. ETH is a valid normal pairToken, so "pair with ETH" returns pairToken ETH. In "pair it with MSFT", it is only a connector and pairToken is MSFT. A dollar sign always makes a developer buy USD even if followed by "of" and the pair asset. Therefore "dev buy $25 of MSFT" is {"amount":"25","unit":"usd"}, while "dev buy 25 MSFT" uses unit pair. Example: "Launch North Window ticker NWND pair it with MSFT dev buy $25 of MSFT X @northwindow" returns name North Window, symbol NWND, pairToken MSFT, USD devBuy 25, and twitter https://x.com/northwindow.`,
+  buy: `The bot invocation @Ponsbotfamily is never the purchased token. In "buy $12.50 of SNDK please @Ponsbotfamily", return amount 12.50, unit usd, and token SNDK; ignore both please and the bot mention. A complete 0x contract address following "of" is the purchased token and must be preserved exactly.`,
+  launch: `Create NAME ticker SYMBOL is a launch just like Launch NAME ticker SYMBOL. Field labels and connectors are syntax, never values: exclude "name:", "with", and similar connectors from name; in "pair asset TSLA", pairToken is TSLA, never ASSET. "Launch ticker ONLY" is invalid because no name was supplied. The bot mention @Ponsbotfamily is never token social metadata; extract twitter only from an explicitly labeled X or Twitter value. ETH is a valid normal pairToken, so "pair with ETH" returns pairToken ETH. In "pair it with MSFT", it is only a connector and pairToken is MSFT. A dollar sign always makes a developer buy USD even if followed by "of" and the pair asset. Therefore "dev buy $25 of MSFT" is {"amount":"25","unit":"usd"}, while "dev buy 25 MSFT" uses unit pair. Example: "Launch North Window ticker NWND pair it with MSFT dev buy $25 of MSFT X @northwindow" returns name North Window, symbol NWND, pairToken MSFT, USD devBuy 25, and twitter https://x.com/northwindow.`,
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
@@ -284,13 +284,13 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const labeledQuotedName = text.match(/\b(?:name|full\s+name|token\s+name)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const launchQuotedName = text.match(/\b(?:launch|deploy|create|make)(?:\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin))?(?:\s+(?:called|named))?\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const nameBeforeTicker = text.match(/\b(?:launch|deploy|create|make)\s+(?:(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin)\s+)?(?:(?:called|named)\s+)?(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[A-Za-z0-9]{1,12}\b/i)?.[1];
-    const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || nameBeforeTicker;
+    const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || extractGroundedLaunchName(text);
     if (exactName) item.name = exactName.trim();
     const quotedDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const plainDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*([^\n,;|]+?)(?=\s+(?:pair(?:ing)?(?:\s+asset)?|website|site|x|twitter|telegram|tg|dev(?:eloper)?\s*buy|initial\s+buy)\s*(?:is|=|:)?\b|$)/i);
     const exactDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2] || plainDescriptionMatch?.[1];
     if (exactDescription) item.description = exactDescription.trim().replace(/[.;,]+$/, "");
-    const explicitPair = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
+    const explicitPair = extractGroundedPairToken(text) || text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
       || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
       || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
       || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pairing\b/i)?.[1]
@@ -314,7 +314,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const quotedName = quotedNameMatch?.[1] || quotedNameMatch?.[2];
     const quotedDescriptionMatch = text.match(/\bdescription\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const quotedDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2];
-    const explicitPair = text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+    const explicitPair = extractGroundedPairToken(text) || text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
       || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
       || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
       || text.match(/\b(?:pair\s+it\s+with|pair(?:ed|ing)?\s+(?:asset\s+)?(?:with|against)|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
@@ -327,7 +327,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     return null;
   }
   if (hasConflictingTradeIdentifiers(text)) return null;
-  if (command.kind === "launch" && /^(?:ticker|symbol)$/i.test(command.symbol)) return null;
+  if (command.kind === "launch" && (/^(?:ticker|symbol)$/i.test(command.symbol) || /^(?:name|ticker|symbol|token|coin)$/i.test(command.name))) return null;
   return command;
 }
 

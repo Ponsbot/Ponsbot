@@ -3,6 +3,22 @@ import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt,
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
+  it("grounds flexible launch names and pair-asset syntax", () => {
+    expect(parseWalletCommand("Launch a token named Aurora Signal with ticker AURA")).toMatchObject({ kind: "launch", name: "Aurora Signal", symbol: "AURA" });
+    expect(parseWalletCommand("launch name: Green Candle; ticker: GC")).toMatchObject({ kind: "launch", name: "Green Candle", symbol: "GC" });
+    expect(parseWalletCommand("launch a new token: name Solar Arcade, ticker SOLAR")).toMatchObject({ kind: "launch", name: "Solar Arcade", symbol: "SOLAR" });
+    expect(parseWalletCommand("Deploy Coffee Break with symbol JAVA")).toMatchObject({ kind: "launch", name: "Coffee Break", symbol: "JAVA" });
+    expect(parseWalletCommand("launch ticker ONLY")).toMatchObject({ kind: "unknown" });
+    expect(parseWalletCommand("launch Market Dog ticker MDOG pair asset 0x1111111111111111111111111111111111111111")).toMatchObject({ kind: "launch", pairToken: "0x1111111111111111111111111111111111111111" });
+    expect(parseWalletCommand("Launch Pons Bot ticker PONSBOT, pair asset TSLA")).toMatchObject({ kind: "launch", pairToken: "TSLA" });
+  });
+
+  it("accepts a direct contract address as the buy target", () => {
+    expect(parseWalletCommand("@Ponsbotfamily buy $20 of 0x1111111111111111111111111111111111111111")).toMatchObject({
+      kind: "buy", amount: "20", unit: "usd", token: "0x1111111111111111111111111111111111111111",
+    });
+  });
+
   it("keeps every help and ambiguity response within X's limit", () => {
     const topics = ["capabilities", "wallet", "fund", "balance", "send", "buy_sell", "burn", "launch", "pairs", "fees"] as const;
     for (const topic of topics) expect(walletHelpMessage(topic).length).toBeLessThanOrEqual(280);
