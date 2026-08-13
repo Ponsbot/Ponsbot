@@ -48,7 +48,7 @@ const commands = [
   {
     title: "Burn",
     body: "Burning permanently removes tokens from your wallet. Include the token and an exact amount, percentage, half, or all. You can also buy and burn in one request: Pons Bot confirms the purchase, measures exactly what arrived, and burns only those newly purchased tokens.",
-    tips: ["Burns are permanent and cannot be recovered.", "A combined buy and burn must explicitly contain both words buy and burn, in either order.", "Review the amount carefully before continuing."],
+    tips: ["Burns are permanent and cannot be recovered.", "A combined buy and burn must explicitly contain both words buy and burn.", "Review the amount carefully before continuing."],
     example: "@Ponsbotfamily buy $25 of $PONSBOT and burn it",
   },
   {
