@@ -29,6 +29,21 @@ describe("deterministic X wallet replies", () => {
     });
   });
 
+  it("accepts ticker labels with optional dollars and wrapping quotes", () => {
+    const exactPost = 'Hey @ponsbotfamily, launch "Pons Bot", ticker "PONSBOT", X: www.x.com/ponsbotfamily, website: www.ponsbot.family, dev buy: $100, description "Swap, sell, and launch on Pons V2 with just one X post."';
+    expect(groundedCanonicalCommand(exactPost)).toMatchObject({
+      kind: "launch", name: "Pons Bot", symbol: "PONSBOT",
+      description: "Swap, sell, and launch on Pons V2 with just one X post.",
+      website: "https://www.ponsbot.family", twitter: "https://x.com/ponsbotfamily",
+      devBuy: { amount: "100", unit: "usd" },
+    });
+    for (const ticker of ["PONSBOT", "$PONSBOT", "'PONSBOT'", "‘$PONSBOT’", "\"$PONSBOT\""]) {
+      expect(groundedCanonicalCommand(`launch "Pons Bot" ticker ${ticker}`), ticker).toMatchObject({
+        kind: "launch", name: "Pons Bot", symbol: "PONSBOT",
+      });
+    }
+  });
+
   it("uses operation-specific parameter prompts", () => {
     expect(parameterExtractorPrompt("buy", false)).toContain('"slippageBps"');
     expect(parameterExtractorPrompt("buy", false)).toContain('"eth|usd|pair"');

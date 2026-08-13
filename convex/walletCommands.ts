@@ -56,8 +56,12 @@ function percentageAsset(text: string, verb: "send" | "sell" | "burn") {
   return Number.isFinite(numeric) && numeric > 0 && numeric <= 100 ? { amount, token: match[2] } : null;
 }
 
+function stripWrappingQuotes(value: string) {
+  return value.trim().replace(/^["'\u2018\u2019\u201c\u201d]+|["'\u2018\u2019\u201c\u201d]+$/g, "").trim();
+}
+
 function cleanSymbol(value: string) {
-  return value.replace(/^\$/, "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 12);
+  return stripWrappingQuotes(value).replace(/^\$/, "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase().slice(0, 12);
 }
 
 function cleanToken(value: string) {
@@ -85,7 +89,7 @@ function quotedField(text: string, label: string, maxLength: number) {
 function parseLaunch(text: string): WalletCommand | null {
   if (!/\b(?:launch|create|deploy)\b/i.test(text)
     || !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b|\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)/i.test(text)) return null;
-  const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?([a-zA-Z0-9]{1,12})\b/i)
+  const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,12})\s*["'\u2018\u2019\u201c\u201d]?/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s*\)/)
     || text.match(/\$([a-zA-Z][a-zA-Z0-9]{0,11})\b/)
@@ -304,9 +308,10 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
   }
   if (kind === "launch") {
     const name = typeof item.name === "string" ? item.name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().replace(/^["'“”]+|["'“”,;:]+$/g, "").trim().slice(0, 48) : "";
+    const normalizedName = stripWrappingQuotes(name);
     const symbol = typeof item.symbol === "string" ? cleanSymbol(item.symbol) : "";
-    if (!name || !symbol) return null;
-    const optionalText = (key: string, max: number) => typeof item[key] === "string" && item[key] ? String(item[key]).slice(0, max) : undefined;
+    if (!normalizedName || !symbol) return null;
+    const optionalText = (key: string, max: number) => typeof item[key] === "string" && item[key] ? stripWrappingQuotes(String(item[key])).slice(0, max) : undefined;
     const optionalUrl = (key: string) => {
       const candidate = optionalText(key, 300);
       return candidate && /^https:\/\//i.test(candidate) ? candidate : undefined;
@@ -321,7 +326,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       devBuy = { amount, unit: raw.unit as "eth" | "usd" | "pair" };
     }
     return {
-      kind, launchMode: "pons", name, symbol,
+      kind, launchMode: "pons", name: normalizedName, symbol,
       ...(optionalText("description", 280) ? { description: optionalText("description", 280) } : {}),
       ...(optionalUrl("website") ? { website: optionalUrl("website") } : {}),
       ...(optionalUrl("twitter") ? { twitter: optionalUrl("twitter") } : {}),
