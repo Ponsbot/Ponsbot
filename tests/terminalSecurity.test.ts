@@ -31,4 +31,5 @@ describe("terminal security boundaries", () => {
     expect(readWebWalletSession(`${token.slice(0, -1)}x`, "test-secret")).toBeNull();
     expect(readWebWalletSession(token, "wrong-secret")).toBeNull();
   });
+
 });

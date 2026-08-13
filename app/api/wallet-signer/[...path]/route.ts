@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, launchPreparationRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
 import { authorizeSigner, broadcastTransaction, executeTransaction, ponsPairInfo, prepareLaunchAddresses, provisionWallet, transactionStatus, walletBalance } from "@/lib/wallet-signer/service";
+import { boundedJson, RequestBodyError } from "@/lib/bounded-json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,7 +15,6 @@ function errorResponse(error: unknown) {
     return NextResponse.json(
       {
         error: "invalid signer request",
-        details: error.issues,
       },
       { status: 400 },
     );
@@ -32,17 +32,16 @@ function errorResponse(error: unknown) {
     cause: error instanceof Error ? error.cause : undefined,
   });
 
-  return NextResponse.json(
-    { error: message },
-    { status: 400 },
-  );
+  const safe = /insufficient|slippage|revert|allowance|balance|gas|limit|mismatch|not found|no completed Pons launch|not the launch creator|paired asset|confirmation|unsupported token|quote returned no output/i.test(message)
+    ? message.slice(0, 240)
+    : "wallet signer request failed";
+  return NextResponse.json({ error: safe }, { status: 400 });
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ path: string[] }> }) {
   if (!authorizeSigner(request.headers.get("authorization"))) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-  if (Number(request.headers.get("content-length") || "0") > 16_384) return NextResponse.json({ error: "request too large" }, { status: 413 });
   try {
-    const body = await request.json();
+    const body = await boundedJson(request, 16_384);
     const path = (await context.params).path.join("/");
     if (path === "v1/wallets") {
       const input = walletRequestSchema.parse(body);
@@ -81,6 +80,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     }
     return NextResponse.json({ error: "not found" }, { status: 404 });
   } catch (error) {
+    if (error instanceof RequestBodyError) return NextResponse.json({ error: error.message }, { status: error.status });
     return errorResponse(error);
   }
 }

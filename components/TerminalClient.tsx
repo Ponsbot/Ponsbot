@@ -17,6 +17,7 @@ type TerminalData = { authenticated: boolean; username: string; walletAddress: s
 
 function eventId() { return `${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "")}`; }
 function usd(value: number) { return value > 0 && value < .01 ? "<$0.01" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
+function shortContract(address?: string) { return address ? `${address.slice(0, 4)}…${address.slice(-3)}` : ""; }
 
 export function TerminalClient() {
   const [session, setSession] = useState<Session | null>(null);
@@ -89,8 +90,12 @@ function DirectActionForms({ busy, holdings, launches, tokenCatalog, submit }: {
   const key = token.toLowerCase();
   const launch = tokenCatalog.find((item) => item.tokenAddress.toLowerCase() === key || item.symbol.toLowerCase() === key);
   const holding = holdings.find((item) => item.address?.toLowerCase() === key || item.symbol.toLowerCase() === key);
+  const pairAsset = launch?.pairToken ? tokenCatalog.find((item) => item.tokenAddress.toLowerCase() === launch.pairToken?.toLowerCase()) : undefined;
   const pairHolding = launch?.pairToken ? holdings.find((item) => item.address?.toLowerCase() === launch.pairToken?.toLowerCase()) : undefined;
-  const pairLabel = !launch?.pairToken || /^0x0{40}$/i.test(launch.pairToken) ? "ETH" : pairHolding?.symbol || `${launch.pairToken.slice(0, 6)}…${launch.pairToken.slice(-4)}`;
+  const pairLabel = !launch?.pairToken || /^0x0{40}$/i.test(launch.pairToken) ? "ETH" : pairAsset?.symbol || pairHolding?.symbol || "Unknown asset";
+  const options = new Map<string, { address?: string; symbol: string; name: string }>();
+  for (const item of tokenCatalog) options.set(item.tokenAddress.toLowerCase(), { address: item.tokenAddress, symbol: item.symbol, name: item.name });
+  for (const item of holdings) options.set((item.address || item.symbol).toLowerCase(), { address: item.address, symbol: item.symbol, name: item.name });
 
   const execute = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -107,7 +112,10 @@ function DirectActionForms({ busy, holdings, launches, tokenCatalog, submit }: {
     const command: Record<string, unknown> = { kind: tab, amount, unit, token };
     if (tab === "buy" && unit === "pair" && launch?.pairToken) command.pairAsset = launch.pairToken;
     if (tab === "buy" || tab === "sell") command.slippageBps = Math.round(Number(form.get("slippage") || 2.5) * 100);
-    if (tab === "send") command.recipient = String(form.get("recipient") || "").trim();
+    if (tab === "send") {
+      const recipient = String(form.get("recipient") || "").trim();
+      command.recipient = /^0x[a-fA-F0-9]{40}$/.test(recipient) || recipient.startsWith("@") ? recipient : `@${recipient}`;
+    }
     const contract = launch?.tokenAddress || holding?.address;
     if (!window.confirm(`Confirm ${tab.toUpperCase()} request\n\nAmount: ${amount} ${unit}\nToken: ${launch?.symbol || holding?.symbol || token || "ETH"}${contract ? `\nContract address: ${contract}` : ""}${tab === "send" ? `\nDestination: ${command.recipient}` : ""}`)) return;
     void submit({ channel: "terminal_form", text: `${tab} ${amount} ${unit} ${token}`.trim(), command });
@@ -122,11 +130,11 @@ function DirectActionForms({ busy, holdings, launches, tokenCatalog, submit }: {
       <button className="button button-dark" disabled={busy} type="submit">Review fee claim</button>
     </> : <>
       <label>Amount<input required name="amount" inputMode="decimal" placeholder="25" /></label>
-      <label>Unit<select name="unit" defaultValue={tab === "buy" || tab === "sell" || tab === "burn" ? "usd" : "token"} key={tab}>{tab === "buy" ? <><option value="usd">USD</option><option value="eth">ETH</option><option value="pair">Paired asset</option></> : tab === "sell" ? <><option value="usd">USD</option><option value="token">Token</option><option value="percent">Percent</option></> : tab === "burn" ? <><option value="usd">USD</option><option value="token">Token</option><option value="percent">Percent</option></> : <><option value="token">Token</option><option value="eth">ETH</option><option value="usd">USD</option><option value="percent">Percent</option></>}</select></label>
+      <label>Unit<select name="unit" defaultValue={tab === "buy" || tab === "sell" || tab === "burn" ? "usd" : "token"} key={tab}>{tab === "buy" ? <><option value="usd">USD</option><option value="eth">ETH</option><option value="pair">{launch ? pairLabel : "Paired asset"}</option></> : tab === "sell" ? <><option value="usd">USD</option><option value="token">Token</option><option value="percent">Percent</option></> : tab === "burn" ? <><option value="usd">USD</option><option value="token">Token</option><option value="percent">Percent</option></> : <><option value="token">Token</option><option value="eth">ETH</option><option value="usd">USD</option><option value="percent">Percent</option></>}</select></label>
       <label>Token or contract<input list="terminal-token-options" name="token" value={token} onChange={(event) => setToken(event.target.value)} required={tab !== "send"} placeholder={tab === "send" ? "ETH or contract" : "Search ticker or enter contract"} /></label>
-      <datalist id="terminal-token-options"><option value="ETH" />{holdings.filter((item) => item.symbol !== "ETH").map((item) => <option key={`${item.address}-${item.symbol}`} value={item.address || item.symbol}>{item.symbol} — {item.name}</option>)}</datalist>
-      {tab === "buy" || tab === "sell" ? <label>Paired asset<input value={launch ? pairLabel : "Select a known token"} readOnly /></label> : null}
-      {tab === "send" ? <label>Destination<input required name="recipient" placeholder="@user or 0x…" /></label> : null}
+      <datalist id="terminal-token-options"><option value="ETH" label="ETH — Ethereum" />{[...options.values()].filter((item) => item.symbol !== "ETH").map((item) => <option key={`${item.address}-${item.symbol}`} value={item.address || item.symbol} label={`${item.symbol} ${shortContract(item.address)} — ${item.name}`} />)}</datalist>
+      {tab === "buy" || tab === "sell" ? <div className="terminal-pair-display"><span>Paired asset</span><strong>{launch ? pairLabel : "Select a known token"}</strong></div> : null}
+      {tab === "send" ? <label>Destination<input required name="recipient" autoCapitalize="none" spellCheck={false} placeholder="@USER, USER, or 0x…" /></label> : null}
       {tab === "buy" || tab === "sell" ? <label>Slippage (%)<input name="slippage" type="number" min="0.1" max="20" step="0.1" defaultValue="2.5" /></label> : null}
       <button className="button button-dark" disabled={busy} type="submit">Review {tab}</button>
     </>}</form>

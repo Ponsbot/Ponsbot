@@ -109,3 +109,6 @@
 .terminal-signed-out{min-height:70vh;display:grid;place-items:center}
 .terminal-connect-modal{width:min(440px,100%);padding:34px;border:1px solid var(--line);border-radius:20px;background:var(--card);text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.12)}
 .terminal-connect-modal h2{margin:0 0 22px;font-size:28px;letter-spacing:-.035em}
+.terminal-pair-display{display:grid;align-content:center;gap:7px;padding:0 2px}
+.terminal-pair-display span{color:var(--muted);font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.05em}
+.terminal-pair-display strong{font-size:15px}

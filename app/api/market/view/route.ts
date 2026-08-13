@@ -3,6 +3,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { createPublicClient, decodeEventLog, encodeAbiParameters, formatUnits, http, keccak256, parseAbi, type Address, type Hex } from "viem";
 import { api } from "@/convex/_generated/api";
 import { tokenMarketCapUsd } from "@/lib/token-market-cap";
+import { boundedJson, RequestBodyError } from "@/lib/bounded-json";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,8 +39,13 @@ export async function POST(request: Request) {
   const secret = process.env.MARKET_INDEX_SECRET;
   if (!convexUrl || !secret) return NextResponse.json({ ok: false }, { status: 503 });
   const convex = new ConvexHttpClient(convexUrl);
-  const requested = await request.json().catch(() => ({ tokenAddresses: [] })) as { tokenAddresses?: string[] };
-  const viewed = new Set((requested.tokenAddresses || []).filter((address) => /^0x[a-fA-F0-9]{40}$/.test(address)).map((address) => address.toLowerCase()));
+  let requested: { tokenAddresses?: unknown };
+  try { requested = await boundedJson(request, 8_192); }
+  catch (error) { return NextResponse.json({ ok: false, error: error instanceof RequestBodyError ? error.message : "invalid request" }, { status: error instanceof RequestBodyError ? error.status : 400 }); }
+  if (requested.tokenAddresses !== undefined && !Array.isArray(requested.tokenAddresses)) return NextResponse.json({ ok: false, error: "tokenAddresses must be an array" }, { status: 400 });
+  const addresses = (requested.tokenAddresses || []) as unknown[];
+  if (addresses.length > 50) return NextResponse.json({ ok: false, error: "too many token addresses" }, { status: 400 });
+  const viewed = new Set(addresses.filter((address): address is string => typeof address === "string" && /^0x[a-fA-F0-9]{40}$/.test(address)).map((address) => address.toLowerCase()));
   const now = Date.now();
   const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret });
   if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });

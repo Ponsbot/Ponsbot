@@ -294,6 +294,31 @@ async function tokenAmount(address: Address, owner: Address, amount: string, uni
   throw new Error("unsupported token amount unit");
 }
 
+async function ponsUsdSellTokenAmount(token: Address, owner: Address, usd: string, launched: {
+  curve: Address; pairToken: Address; phase: number; poolFee: number; tickSpacing: number;
+}, factory: Address, infrastructure: { weth: Address; v3Quoter: Address; v4Quoter: Address }) {
+  const client = rpcClient();
+  const ethAmount = await checkedUsdToEthWei(usd);
+  const quoteAmount = launched.pairToken === zeroAddress
+    ? ethAmount
+    : (await bestV3Route(infrastructure.weth, launched.pairToken, infrastructure.v3Quoter, ethAmount)).amountOut;
+  if (launched.phase === 0) {
+    const quote = await client.simulateContract({
+      account: owner, address: launched.curve, abi: ponsCurveAbi, functionName: "buy",
+      args: [quoteAmount, 0n, owner], value: launched.pairToken === zeroAddress ? quoteAmount : 0n,
+    });
+    if (quote.result <= 0n) throw new Error("USD sell amount resolved to zero tokens");
+    return quote.result;
+  }
+  if (launched.phase !== 2) throw new Error("this Pons V2 token is still finalizing its Uniswap V4 pool");
+  const hook = await client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "memeHook" });
+  const tokenIsCurrency0 = BigInt(token) < BigInt(launched.pairToken);
+  const poolKey = { currency0: tokenIsCurrency0 ? token : launched.pairToken, currency1: tokenIsCurrency0 ? launched.pairToken : token, fee: launched.poolFee, tickSpacing: launched.tickSpacing, hooks: hook };
+  const quote = await client.simulateContract({ address: infrastructure.v4Quoter, abi: v4QuoterAbi, functionName: "quoteExactInputSingle", args: [{ poolKey, zeroForOne: !tokenIsCurrency0, exactAmount: quoteAmount, hookData: "0x" }] });
+  if (quote.result[0] <= 0n) throw new Error("USD sell amount resolved to zero tokens");
+  return quote.result[0];
+}
+
 async function enforceEthLimit(valueWei: bigint) {
   const maximum = Number(process.env.WALLET_MAX_TRANSACTION_USD || "10000");
   const usd = Number(formatEther(valueWei)) * await ethUsdPrice();
@@ -625,11 +650,18 @@ export async function executeTransaction(request: ExecutionRequest) {
   }
   if (operation.type === "uniswap_v3_sell") {
     const resolved = await resolveToken(operation.token);
-    const amount = await tokenAmount(resolved.address, owner, operation.amount, operation.unit, {
-      weth: operation.wethAddress as Address, quoter: operation.quoterAddress as Address, fee: operation.fee,
-    });
     const client = rpcClient();
     const pons = await resolveActivePonsCurve(resolved.address, operation.ponsFactoryAddress as Address);
+    const amount = operation.unit === "usd" && pons
+      ? await ponsUsdSellTokenAmount(resolved.address, owner, operation.amount, pons, operation.ponsFactoryAddress as Address, {
+        weth: operation.wethAddress as Address, v3Quoter: operation.quoterAddress as Address,
+        v4Quoter: configuredAddress("PONS_V4_QUOTER_ADDRESS", operation.v4QuoterAddress),
+      })
+      : await tokenAmount(resolved.address, owner, operation.amount, operation.unit, {
+        weth: operation.wethAddress as Address, quoter: operation.quoterAddress as Address, fee: operation.fee,
+      });
+    const balance = await client.readContract({ address: resolved.address, abi: tokenAbi, functionName: "balanceOf", args: [owner] });
+    if (balance < amount) throw new Error("insufficient token balance for the requested sell amount");
     if (pons) {
       if (pons.phase === 2) return prepareGraduatedPonsV4Sell(request, owner, resolved.address, pons, amount, operation.slippageBps, operation.ponsFactoryAddress as Address, {
         quoter: configuredAddress("PONS_V4_QUOTER_ADDRESS", operation.v4QuoterAddress),

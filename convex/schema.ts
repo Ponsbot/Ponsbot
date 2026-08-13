@@ -54,6 +54,14 @@ export default defineSchema({
     requestId: v.optional(v.string()), createdAt: v.number(),
   }).index("by_owner_created_at", ["ownerXUserId", "createdAt"]).index("by_session_created_at", ["sessionId", "createdAt"]),
 
+  webWalletSessions: defineTable({
+    sessionIdHash: v.string(), ownerXUserId: v.string(), expiresAt: v.number(), revokedAt: v.optional(v.number()), createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_session_hash", ["sessionIdHash"]).index("by_owner", ["ownerXUserId"]),
+
+  terminalRateLimits: defineTable({
+    key: v.string(), utcDay: v.string(), dailyCount: v.number(), windowStartedAt: v.number(), windowCount: v.number(), updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   walletTransactions: defineTable({
     requestId: v.string(), walletId: v.id("cryptoWallets"), chainId: v.number(), to: v.string(), valueWei: v.string(),
     callKind: v.string(), transactionHash: v.string(), signedTransaction: v.optional(v.string()),

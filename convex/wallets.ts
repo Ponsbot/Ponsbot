@@ -1143,20 +1143,68 @@ export const recordTerminalMessage = internalMutation({
   handler: async (ctx, args) => ctx.db.insert("terminalMessages", { ...args, text: args.text.slice(0, 1_000), createdAt: Date.now() }),
 });
 
+async function webSessionHash(sessionId: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(sessionId));
+  return Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+export const registerWebSessionRecord = internalMutation({
+  args: { sessionIdHash: v.string(), ownerXUserId: v.string(), expiresAt: v.number() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("webWalletSessions").withIndex("by_session_hash", (q) => q.eq("sessionIdHash", args.sessionIdHash)).unique();
+    const now = Date.now();
+    if (existing) await ctx.db.patch(existing._id, { ownerXUserId: args.ownerXUserId, expiresAt: args.expiresAt, revokedAt: undefined, updatedAt: now });
+    else await ctx.db.insert("webWalletSessions", { ...args, createdAt: now, updatedAt: now });
+  },
+});
+
+export const webSessionRecord = internalQuery({
+  args: { sessionIdHash: v.string() },
+  handler: async (ctx, args) => ctx.db.query("webWalletSessions").withIndex("by_session_hash", (q) => q.eq("sessionIdHash", args.sessionIdHash)).unique(),
+});
+
+export const revokeWebSessionRecord = internalMutation({
+  args: { sessionIdHash: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("webWalletSessions").withIndex("by_session_hash", (q) => q.eq("sessionIdHash", args.sessionIdHash)).unique();
+    if (existing?.ownerXUserId === args.ownerXUserId && !existing.revokedAt) await ctx.db.patch(existing._id, { revokedAt: Date.now(), updatedAt: Date.now() });
+  },
+});
+
+export const consumeTerminalLimit = internalMutation({
+  args: { ownerXUserId: v.string(), channel: v.union(v.literal("terminal_chat"), v.literal("terminal_form")) },
+  handler: async (ctx, args) => {
+    const now = Date.now(); const day = new Date(now).toISOString().slice(0, 10);
+    const limits = args.channel === "terminal_chat" ? { window: 40, daily: 500 } : { window: 100, daily: 2_000 };
+    const key = `${args.channel}:${args.ownerXUserId}`;
+    const record = await ctx.db.query("terminalRateLimits").withIndex("by_key", (q) => q.eq("key", key)).unique();
+    const sameDay = record?.utcDay === day; const sameWindow = Boolean(record && now - record.windowStartedAt < 10 * 60_000);
+    const dailyCount = sameDay ? record!.dailyCount : 0; const windowCount = sameWindow ? record!.windowCount : 0;
+    if (dailyCount >= limits.daily || windowCount >= limits.window) return false;
+    const value = { utcDay: day, dailyCount: dailyCount + 1, windowStartedAt: sameWindow ? record!.windowStartedAt : now, windowCount: windowCount + 1, updatedAt: now };
+    if (record) await ctx.db.patch(record._id, value); else await ctx.db.insert("terminalRateLimits", { key, ...value });
+    return true;
+  },
+});
+
 export const listTerminalHistory = internalQuery({
   args: { ownerXUserId: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
-    const [messages, requests, launches, tokenCatalog] = await Promise.all([
+    const [messages, requests, launches, launchCatalog, registryTokens] = await Promise.all([
       ctx.db.query("terminalMessages").withIndex("by_session_created_at", (q) => q.eq("sessionId", args.sessionId)).order("desc").take(40),
       ctx.db.query("walletRequests").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(40),
       ctx.db.query("tokenLaunches").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(100),
-      ctx.db.query("tokenLaunches").order("desc").take(500),
+      ctx.db.query("tokenLaunches").order("desc").take(2_000),
+      ctx.db.query("tokenRegistry").filter((q) => q.eq(q.field("active"), true)).take(250),
     ]);
+    const catalog = new Map<string, { tokenAddress: string; symbol: string; name: string; pairToken?: string }>();
+    for (const item of launchCatalog) if (item.tokenAddress) catalog.set(item.tokenAddress.toLowerCase(), { tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken });
+    for (const item of registryTokens) if (!catalog.has(item.normalizedAddress)) catalog.set(item.normalizedAddress, { tokenAddress: item.address, symbol: item.symbol, name: item.name });
     return {
       messages: messages.reverse().map((item) => ({ role: item.role, messageType: item.messageType, text: item.text, requestId: item.requestId, createdAt: item.createdAt })),
       actions: requests.map((item) => { let command: Record<string, unknown> = {}; try { command = JSON.parse(item.normalizedJson); } catch {} return { requestId: item.requestId, kind: item.kind, amount: typeof command.amount === "string" ? command.amount : undefined, token: typeof command.token === "string" ? command.token : undefined, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt }; }),
       launches: launches.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
-      tokenCatalog: tokenCatalog.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
+      tokenCatalog: [...catalog.values()],
     };
   },
 });
@@ -1187,6 +1235,8 @@ export const executeTerminalCommand = action({
     if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId) || !/^[a-zA-Z0-9_-]{12,100}$/.test(args.eventId)) throw new Error("invalid terminal request identity");
     const user = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.ownerXUserId });
     if (!user) throw new Error("authenticated wallet was not found");
+    const allowed = await ctx.runMutation(internal.wallets.consumeTerminalLimit, { ownerXUserId: args.ownerXUserId, channel: args.channel });
+    if (!allowed) return { ok: false, message: "⏳ You’ve reached the terminal request limit. Please wait a few minutes and try again." };
     let command: WalletCommand | null = null;
     let displayText = args.text?.trim() || "";
     if (args.channel === "terminal_chat") {
@@ -1226,6 +1276,34 @@ export const executeTerminalCommand = action({
     });
     await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: result.message, requestId });
     return result;
+  },
+});
+
+export const registerWebSession = action({
+  args: { secret: v.string(), sessionId: v.string(), ownerXUserId: v.string(), expiresAt: v.number() },
+  handler: async (ctx, args) => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("web session authorization failed");
+    if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId) || !/^\d{1,30}$/.test(args.ownerXUserId) || !Number.isSafeInteger(args.expiresAt)) throw new Error("invalid web session");
+    await ctx.runMutation(internal.wallets.registerWebSessionRecord, { sessionIdHash: await webSessionHash(args.sessionId), ownerXUserId: args.ownerXUserId, expiresAt: args.expiresAt });
+    return true;
+  },
+});
+
+export const verifyWebSession = action({
+  args: { secret: v.string(), sessionId: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) return false;
+    const record: Doc<"webWalletSessions"> | null = await ctx.runQuery(internal.wallets.webSessionRecord, { sessionIdHash: await webSessionHash(args.sessionId) });
+    return Boolean(record && record.ownerXUserId === args.ownerXUserId && !record.revokedAt && record.expiresAt > Math.floor(Date.now() / 1_000));
+  },
+});
+
+export const revokeWebSession = action({
+  args: { secret: v.string(), sessionId: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("web session authorization failed");
+    await ctx.runMutation(internal.wallets.revokeWebSessionRecord, { sessionIdHash: await webSessionHash(args.sessionId), ownerXUserId: args.ownerXUserId });
+    return true;
   },
 });
 

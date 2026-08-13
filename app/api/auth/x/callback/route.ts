@@ -1,7 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 import { api } from "@/convex/_generated/api";
-import { createWebWalletSession, WEB_WALLET_SESSION_COOKIE, WEB_WALLET_SESSION_SECONDS } from "@/lib/web-wallet-session";
+import { createWebWalletSession, readWebWalletSession, WEB_WALLET_SESSION_COOKIE, WEB_WALLET_SESSION_SECONDS } from "@/lib/web-wallet-session";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,11 +70,17 @@ export async function GET(request: NextRequest) {
       ...(identity.verified_type ? { verifiedType: identity.verified_type } : {}),
     });
     const returnTo = request.cookies.get("pons_x_oauth_return")?.value === "/terminal" ? "/terminal" : `/wallet/${wallet.address}`;
+    const sessionCookie = createWebWalletSession(wallet.address, identity.id, identity.username, webSecret);
+    const session = readWebWalletSession(sessionCookie, webSecret);
+    if (!session) return errorRedirect(request, "session");
+    await new ConvexHttpClient(convexUrl).action(api.wallets.registerWebSession, {
+      secret: webSecret, sessionId: session.sessionId, ownerXUserId: session.xUserId, expiresAt: session.expiresAt,
+    });
     const response = NextResponse.redirect(new URL(returnTo, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
     response.cookies.delete("pons_x_oauth_return");
-    response.cookies.set(WEB_WALLET_SESSION_COOKIE, createWebWalletSession(wallet.address, identity.id, identity.username, webSecret), {
+    response.cookies.set(WEB_WALLET_SESSION_COOKIE, sessionCookie, {
       httpOnly: true,
       secure: siteUrl.startsWith("https://"),
       sameSite: "lax",
