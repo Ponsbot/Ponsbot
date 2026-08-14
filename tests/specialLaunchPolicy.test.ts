@@ -4,11 +4,11 @@ import { applyProtectedLaunchProfile } from "../lib/special-launch-policy";
 describe("protected Pons Bot launch profile", () => {
   it("does not alter launches from other wallets", () => {
     const command = { kind: "launch", launchMode: "pons", name: "Other", symbol: "OTHER" } as const;
-    expect(applyProtectedLaunchProfile("someoneelse", command, undefined)).toBe(command);
+    expect(applyProtectedLaunchProfile("123", command, undefined)).toBe(command);
   });
 
   it("overrides every fixed field while retaining separately supplied artwork", () => {
-    expect(applyProtectedLaunchProfile("@PonsBoyFamily", {
+    expect(applyProtectedLaunchProfile("2085516993315188736", {
       kind: "launch", launchMode: "pons", name: "Wrong", symbol: "WRONG",
       description: "wrong", website: "https://wrong.example", twitter: "https://x.com/wrong",
       telegram: "https://t.me/wrong", pairToken: "MSFT", devBuy: { amount: "1", unit: "pair" },
@@ -21,7 +21,7 @@ describe("protected Pons Bot launch profile", () => {
   });
 
   it("rejects the protected launch when its X-post artwork is absent", () => {
-    expect(() => applyProtectedLaunchProfile("ponsboyfamily", {
+    expect(() => applyProtectedLaunchProfile("2085516993315188736", {
       kind: "launch", launchMode: "pons", name: "Pons Bot", symbol: "PONSBOT",
     }, undefined)).toThrow("protected launch image missing");
   });

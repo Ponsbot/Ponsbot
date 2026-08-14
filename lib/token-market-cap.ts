@@ -16,8 +16,8 @@ const erc20Abi = parseAbi(["function totalSupply() view returns (uint256)", "fun
 const stateViewAbi = parseAbi(["function getSlot0(bytes32 poolId) view returns (uint160 sqrtPriceX96,int24 tick,uint24 protocolFee,uint24 lpFee)"]);
 const marketCapCache = new Map<string, { value?: number; expiresAt: number }>();
 
-function rpcClient() {
-  return createPublicClient({ batch: { multicall: true }, transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000 }) });
+function rpcClient(signal?: AbortSignal) {
+  return createPublicClient({ batch: { multicall: true }, transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000, ...(signal ? { fetchOptions: { signal } } : {}) }) });
 }
 
 export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Promise<T[]> {
@@ -35,17 +35,18 @@ export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Prom
   }));
 }
 
-export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint) {
+export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const key = token.toLowerCase();
   const existing = marketCapCache.get(key);
   if (blockNumber === undefined && existing && existing.expiresAt > Date.now()) return existing.value;
-  const rpc = rpcClient();
+  const rpc = rpcClient(signal);
   const launched = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [token], blockNumber });
   if (!launched.exists || launched.phase === 1 || launched.phase === 3) return remember(key, undefined);
   const [supplyRaw, tokenDecimals, quote] = await Promise.all([
     rpc.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply", blockNumber }),
     rpc.readContract({ address: token, abi: erc20Abi, functionName: "decimals", blockNumber }),
-    quoteDetails(rpc, launched.pairToken),
+    quoteDetails(rpc, launched.pairToken, signal),
   ]);
   const supply = Number(formatUnits(supplyRaw, tokenDecimals));
   let tokenPriceInQuote: number;
@@ -71,11 +72,12 @@ export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint) {
   return blockNumber === undefined ? remember(key, valid) : valid;
 }
 
-export async function tokenUnitPriceUsd(token: Address) {
+export async function tokenUnitPriceUsd(token: Address, signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const [marketCap, supplyRaw, decimals] = await Promise.all([
-    tokenMarketCapUsd(token),
-    rpcClient().readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
-    rpcClient().readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
+    tokenMarketCapUsd(token, undefined, signal),
+    rpcClient(signal).readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
+    rpcClient(signal).readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
   ]);
   const supply = Number(formatUnits(supplyRaw, decimals));
   if (marketCap === undefined || !Number.isFinite(supply) || supply <= 0) return undefined;
@@ -87,8 +89,8 @@ function remember(key: string, value?: number) {
   return value;
 }
 
-async function quoteDetails(rpc: ReturnType<typeof rpcClient>, pairToken: Address) {
-  if (pairToken === zeroAddress) return { decimals: 18, usd: await ethUsdPrice() };
+async function quoteDetails(rpc: ReturnType<typeof rpcClient>, pairToken: Address, signal?: AbortSignal) {
+  if (pairToken === zeroAddress) return { decimals: 18, usd: await ethUsdPrice(signal) };
   const [decimals, symbol] = await Promise.all([
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "decimals" }),
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "symbol" }),
@@ -96,8 +98,8 @@ async function quoteDetails(rpc: ReturnType<typeof rpcClient>, pairToken: Addres
   const cachedUsd = await sharedPrice(`pair-usd:${symbol.toUpperCase()}`);
   if (cachedUsd && Number.isFinite(cachedUsd) && cachedUsd > 0) return { decimals, usd: cachedUsd };
   const [assetResponse, priceResponse] = await Promise.all([
-    fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.timeout(5_000) }),
-    fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(symbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.timeout(5_000) }),
+    fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000) }),
+    fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(symbol)}`, { next: { revalidate: 15 }, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5_000)]) : AbortSignal.timeout(5_000) }),
   ]);
   if (!assetResponse.ok || !priceResponse.ok) throw new Error("paired asset price is unavailable");
   const assets = await assetResponse.json() as { assets?: Array<{ tokenSymbol: string; currentMultiplier: string; deployments?: Array<{ contractAddress: string; chainId: number }> }> };

@@ -7,8 +7,8 @@ const REQUEST_TIMEOUT_MS = 4_000;
 const MAX_SOURCE_AGE_MS = 5 * 60_000;
 let cached: { price: number; expiresAt: number } | undefined;
 
-async function fetchJson(url: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), cache: "no-store" });
+async function fetchJson(url: string, signal?: AbortSignal) {
+  const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(REQUEST_TIMEOUT_MS), cache: "no-store" });
   if (!response.ok) throw new Error(`price source failed (${response.status})`);
   return await response.json() as unknown;
 }
@@ -20,15 +20,15 @@ function assertFresh(timestampMs: number, source: string) {
   }
 }
 
-async function coinbaseEthUsd() {
-  const payload = await fetchJson("https://api.exchange.coinbase.com/products/ETH-USD/ticker") as { price?: string; time?: string };
+async function coinbaseEthUsd(signal?: AbortSignal) {
+  const payload = await fetchJson("https://api.exchange.coinbase.com/products/ETH-USD/ticker", signal) as { price?: string; time?: string };
   const timestamp = Date.parse(payload.time || "");
   assertFresh(timestamp, "Coinbase");
   return Number(payload.price);
 }
 
-async function coinGeckoEthUsd() {
-  const payload = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_last_updated_at=true") as {
+async function coinGeckoEthUsd(signal?: AbortSignal) {
+  const payload = await fetchJson("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd&include_last_updated_at=true", signal) as {
     ethereum?: { usd?: number; last_updated_at?: number };
   };
   assertFresh(Number(payload.ethereum?.last_updated_at) * 1_000, "CoinGecko");
@@ -39,11 +39,12 @@ function validPrice(value: number) {
   return Number.isFinite(value) && value > 100 && value < 100_000;
 }
 
-export async function ethUsdPrice() {
+export async function ethUsdPrice(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   if (cached && cached.expiresAt > Date.now()) return cached.price;
   const shared = await sharedPrice("eth-usd");
   if (shared && validPrice(shared)) { cached = { price: shared, expiresAt: Date.now() + CACHE_MS }; return shared; }
-  const [coinbase, coinGecko] = await Promise.all([coinbaseEthUsd(), coinGeckoEthUsd()]);
+  const [coinbase, coinGecko] = await Promise.all([coinbaseEthUsd(signal), coinGeckoEthUsd(signal)]);
   if (!validPrice(coinbase) || !validPrice(coinGecko)) throw new Error("ETH/USD price source returned an invalid value");
   const midpoint = (coinbase + coinGecko) / 2;
   const deviationBps = Math.abs(coinbase - coinGecko) / midpoint * 10_000;

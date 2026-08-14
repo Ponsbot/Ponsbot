@@ -21,16 +21,17 @@ export default defineSchema({
   xReplyState: defineTable({
     key: v.string(), newestSeenPostId: v.optional(v.string()), lastPolledAt: v.optional(v.number()),
     backlogPaginationToken: v.optional(v.string()), backlogNewestPostId: v.optional(v.string()),
-    leaseUntil: v.optional(v.number()), updatedAt: v.number(),
+    backlogPaginationFailures: v.optional(v.number()), leaseUntil: v.optional(v.number()), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   xReplyRateLimits: defineTable({
     key: v.string(), utcDay: v.string(), dailyCount: v.number(), windowStartedAt: v.number(),
-    windowCount: v.number(), lastAcceptedAt: v.number(), lastCooldownNoticeAt: v.optional(v.number()), updatedAt: v.number(),
+    windowCount: v.number(), lastAcceptedAt: v.number(), lastCooldownNoticeAt: v.optional(v.number()),
+    lastDailyNoticeAt: v.optional(v.number()), lastBurstNoticeAt: v.optional(v.number()), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   cryptoWallets: defineTable({
-    ownerXUserId: v.string(), address: v.string(), normalizedAddress: v.optional(v.string()), signerWalletRef: v.string(), chainId: v.number(),
+    ownerXUserId: v.string(), xUsername: v.optional(v.string()), address: v.string(), normalizedAddress: v.optional(v.string()), signerWalletRef: v.string(), chainId: v.number(),
     status: v.union(v.literal("active"), v.literal("frozen")), launchEnabled: v.optional(v.boolean()), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_owner_x_user_id", ["ownerXUserId"]).index("by_address", ["address"]).index("by_normalized_address", ["normalizedAddress"]),
 
@@ -77,6 +78,7 @@ export default defineSchema({
     name: v.string(), symbol: v.string(), imageUri: v.string(), description: v.optional(v.string()), website: v.optional(v.string()),
     twitter: v.optional(v.string()), telegram: v.optional(v.string()), pairToken: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()), normalizedTokenAddress: v.optional(v.string()),
     poolAddress: v.optional(v.string()), positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
+    creatorAddress: v.optional(v.string()), pairSymbol: v.optional(v.string()), publicMarketCapUsd: v.optional(v.number()), publicVolume24hUsd: v.optional(v.number()), publicLastBuyAt: v.optional(v.number()), publicGraduated: v.optional(v.boolean()),
     createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
     .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"]),
@@ -84,8 +86,9 @@ export default defineSchema({
   tokenActivity: defineTable({
     tokenAddress: v.string(), normalizedTokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(),
     kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(),
-    tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), usdAmount: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number(), createdAt: v.number(),
+    tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), usdAmount: v.optional(v.number()), volumeBucketed: v.optional(v.boolean()), blockNumber: v.string(), timestamp: v.number(), createdAt: v.number(),
   }).index("by_token_time", ["normalizedTokenAddress", "timestamp"])
+    .index("by_token_bucketed_time", ["normalizedTokenAddress", "volumeBucketed", "timestamp"])
     .index("by_transaction_log", ["transactionHash", "logIndex"]),
 
   tokenVolumeBuckets: defineTable({
@@ -103,6 +106,10 @@ export default defineSchema({
 
   marketIndexState: defineTable({
     key: v.string(), indexedThroughBlock: v.optional(v.string()), leaseUntil: v.number(), lastViewerAt: v.number(), updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  marketViewerRateLimits: defineTable({
+    key: v.string(), windowStartedAt: v.number(), count: v.number(), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   marketPriceCache: defineTable({

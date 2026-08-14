@@ -231,7 +231,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
     if (deployment) byAddress.set(deployment.contractAddress.toLowerCase(), asset);
   }
   if (signal.aborted) return enriched;
-  const ethPrice = enriched.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice().catch(() => undefined) : undefined;
+  const ethPrice = enriched.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice(signal).catch(() => undefined) : undefined;
   await Promise.all(enriched.map(async (holding) => {
     if (signal.aborted) return;
     const balance = Number(holding.balance.replace(/,/g, ""));
@@ -257,7 +257,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
     }
     if (holding.isPonsbotLaunch && holding.address) {
       if (signal.aborted) return;
-      const price = await tokenUnitPriceUsd(holding.address as Address).catch(() => undefined);
+      const price = await tokenUnitPriceUsd(holding.address as Address, signal).catch(() => undefined);
       if (price !== undefined) holding.usdValue = balance * price;
     }
   }));

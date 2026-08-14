@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { internalMutation } from "./_generated/server";
+import { paginationOptsValidator } from "convex/server";
 
 export const PREVIEW_WALLET = "0x0000000000000000000000000000000000000B07";
 export const PREVIEW_TOKEN = "0x0000000000000000000000000000000000000A11";
@@ -10,6 +11,7 @@ function publicLaunch(launch: {
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; createdAt: number;
   pairToken?: string; poolAddress?: string; launcherUsername?: string;
+  creatorAddress?: string; pairSymbol?: string; publicLastBuyAt?: number; publicMarketCapUsd?: number; publicVolume24hUsd?: number; publicGraduated?: boolean;
 }, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string, lastBuyAt?: number, storedMarketCapUsd?: number, volume24hUsd?: number, graduated?: boolean) {
   return {
     name: launch.name,
@@ -23,15 +25,15 @@ function publicLaunch(launch: {
     transactionHash: launch.transactionHash,
     devBuySucceeded: launch.devBuySucceeded,
     pairToken: launch.pairToken,
-    pairSymbol,
+    pairSymbol: launch.pairSymbol || pairSymbol,
     poolAddress: launch.poolAddress,
-    creatorAddress,
+    creatorAddress: launch.creatorAddress || creatorAddress,
     launcherUsername: launch.launcherUsername || launcherUsername,
     createdAt: launch.createdAt,
-    lastBuyAt,
-    storedMarketCapUsd,
-    volume24hUsd,
-    graduated,
+    lastBuyAt: launch.publicLastBuyAt ?? lastBuyAt,
+    storedMarketCapUsd: launch.publicMarketCapUsd ?? storedMarketCapUsd,
+    volume24hUsd: launch.publicVolume24hUsd ?? volume24hUsd,
+    graduated: launch.publicGraduated ?? graduated,
   };
 }
 
@@ -39,13 +41,16 @@ export const listLaunches = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
     const launches = await ctx.db.query("tokenLaunches").order("desc").take(Math.min(Math.max(limit || 24, 1), 100));
-    return await Promise.all(launches.filter((launch) => launch.tokenAddress).map(async (launch) => {
-      const wallet = await ctx.db.get(launch.walletId);
-      const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
-      const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
-      const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", launch.tokenAddress!.toLowerCase())).unique();
-      return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd, market?.volume24hUsd, market?.graduated);
-    }));
+    return launches.filter((launch) => launch.tokenAddress).map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
+  },
+});
+
+export const listLaunchesPage = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { paginationOpts }) => {
+    const result = await ctx.db.query("tokenLaunches").order("desc").paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 40) });
+    const page = result.page.filter((launch) => launch.tokenAddress).map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
+    return { ...result, page };
   },
 });
 
@@ -73,10 +78,9 @@ export const tokenActivity = query({
 export const marketIndexTargets = query({
   args: { tokenAddresses: v.optional(v.array(v.string())) },
   handler: async (ctx, { tokenAddresses }) => {
-    const recent = await ctx.db.query("tokenLaunches").order("desc").take(100);
     const requested = await Promise.all((tokenAddresses || []).slice(0, 50).map((address) => ctx.db.query("tokenLaunches")
       .withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", address.toLowerCase())).unique()));
-    const launches = [...new Map([...recent, ...requested.filter((item) => item !== null)].map((launch) => [launch!._id, launch!])).values()];
+    const launches = requested.filter((item) => item !== null);
     return Promise.all(launches
     .filter((launch) => launch.tokenAddress && launch.poolAddress)
     .map(async (launch) => {
@@ -95,27 +99,42 @@ export const marketRuntimeConfig = query({
 });
 
 export const acquireMarketIndexLease = mutation({
-  args: { now: v.number(), secret: v.string() },
-  handler: async (ctx, { now, secret }) => {
+  args: { now: v.number(), secret: v.string(), viewerKey: v.string() },
+  handler: async (ctx, { now, secret, viewerKey }) => {
     if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
+    const viewer = await ctx.db.query("marketViewerRateLimits").withIndex("by_key", (q) => q.eq("key", viewerKey)).unique();
+    const sameWindow = Boolean(viewer && now - viewer.windowStartedAt < 60_000);
+    const count = sameWindow ? viewer!.count : 0;
+    if (count >= 12) return { acquired: false, rateLimited: true, indexedThroughBlock: undefined };
+    if (viewer) await ctx.db.patch(viewer._id, { windowStartedAt: sameWindow ? viewer.windowStartedAt : now, count: count + 1, updatedAt: now });
+    else await ctx.db.insert("marketViewerRateLimits", { key: viewerKey, windowStartedAt: now, count: 1, updatedAt: now });
     const current = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
     if (current && current.leaseUntil > now) {
       await ctx.db.patch(current._id, { lastViewerAt: now, updatedAt: now });
       return { acquired: false, indexedThroughBlock: current.indexedThroughBlock };
     }
     if (current) {
-      await ctx.db.patch(current._id, { leaseUntil: now + 9_000, lastViewerAt: now, updatedAt: now });
+      await ctx.db.patch(current._id, { leaseUntil: now + 30_000, lastViewerAt: now, updatedAt: now });
       return { acquired: true, indexedThroughBlock: current.indexedThroughBlock };
     }
-    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 9_000, lastViewerAt: now, updatedAt: now });
+    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 30_000, lastViewerAt: now, updatedAt: now });
     return { acquired: true };
+  },
+});
+
+export const cleanupMarketViewerRateLimits = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const expired = await ctx.db.query("marketViewerRateLimits").filter((q) => q.lt(q.field("updatedAt"), Date.now() - 24 * 60 * 60_000)).take(500);
+    await Promise.all(expired.map((record) => ctx.db.delete(record._id)));
+    return expired.length;
   },
 });
 
 export const recordMarketIndex = mutation({
   args: {
     secret: v.string(),
-    indexedThroughBlock: v.string(), marketCaps: v.array(v.object({ tokenAddress: v.string(), marketCapUsd: v.optional(v.number()), graduated: v.optional(v.boolean()), poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()), graduationCheckedAt: v.optional(v.number()), activityBackfilledAt: v.optional(v.number()) })),
+    indexedThroughBlock: v.string(), marketCaps: v.array(v.object({ tokenAddress: v.string(), indexedThroughBlock: v.string(), marketCapUsd: v.optional(v.number()), graduated: v.optional(v.boolean()), poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()), graduationCheckedAt: v.optional(v.number()), activityBackfilledAt: v.optional(v.number()) })),
     events: v.array(v.object({ tokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(), kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(), tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), usdAmount: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number() })),
   },
   handler: async (ctx, { secret, indexedThroughBlock, marketCaps, events }) => {
@@ -125,7 +144,7 @@ export const recordMarketIndex = mutation({
       const exists = await ctx.db.query("tokenActivity").withIndex("by_transaction_log", (q) => q.eq("transactionHash", event.transactionHash).eq("logIndex", event.logIndex)).unique();
       if (!exists) {
         const normalizedTokenAddress = event.tokenAddress.toLowerCase();
-        await ctx.db.insert("tokenActivity", { ...event, normalizedTokenAddress, createdAt: now });
+        await ctx.db.insert("tokenActivity", { ...event, normalizedTokenAddress, volumeBucketed: true, createdAt: now });
         if (event.kind !== "burn" && event.usdAmount !== undefined) {
           // Five-minute buckets avoid unbounded event scans while keeping the
           // rolling 24-hour figure close to the exact cutoff.
@@ -141,22 +160,28 @@ export const recordMarketIndex = mutation({
       const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress)).unique();
       const lastBuyAt = events.filter((event) => event.kind === "buy" && event.tokenAddress.toLowerCase() === normalizedTokenAddress).reduce<number | undefined>((latest, event) => latest === undefined || event.timestamp > latest ? event.timestamp : latest, state?.lastBuyAt);
       if (!state?.volumeBucketsInitializedAt) {
-        const legacyEvents = await ctx.db.query("tokenActivity").withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("timestamp", now - 24 * 60 * 60_000)).collect();
+        const legacyEvents = await ctx.db.query("tokenActivity").withIndex("by_token_bucketed_time", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).eq("volumeBucketed", undefined)).take(200);
         const totals = new Map<number, number>();
-        for (const event of legacyEvents) if (event.kind !== "burn" && event.usdAmount !== undefined) {
-          const bucketStart = Math.floor(event.timestamp / 300_000) * 300_000;
-          totals.set(bucketStart, (totals.get(bucketStart) || 0) + event.usdAmount);
+        for (const event of legacyEvents) {
+          if (event.kind !== "burn" && event.usdAmount !== undefined && event.timestamp >= now - 24 * 60 * 60_000) {
+            const bucketStart = Math.floor(event.timestamp / 300_000) * 300_000;
+            totals.set(bucketStart, (totals.get(bucketStart) || 0) + event.usdAmount);
+          }
+          await ctx.db.patch(event._id, { volumeBucketed: true });
         }
-        for (const [hourStartedAt, volumeUsd] of totals) {
+        for (const [hourStartedAt, additionalVolume] of totals) {
           const bucket = await ctx.db.query("tokenVolumeBuckets").withIndex("by_token_hour", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).eq("hourStartedAt", hourStartedAt)).unique();
-          if (bucket) await ctx.db.patch(bucket._id, { volumeUsd, updatedAt: now });
-          else await ctx.db.insert("tokenVolumeBuckets", { normalizedTokenAddress, hourStartedAt, volumeUsd, updatedAt: now });
+          if (bucket) await ctx.db.patch(bucket._id, { volumeUsd: bucket.volumeUsd + additionalVolume, updatedAt: now });
+          else await ctx.db.insert("tokenVolumeBuckets", { normalizedTokenAddress, hourStartedAt, volumeUsd: additionalVolume, updatedAt: now });
         }
+        if (legacyEvents.length < 200 && state) await ctx.db.patch(state._id, { volumeBucketsInitializedAt: now, updatedAt: now });
       }
       const buckets = await ctx.db.query("tokenVolumeBuckets").withIndex("by_token_hour", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("hourStartedAt", now - 24 * 60 * 60_000)).collect();
       const volume24hUsd = buckets.reduce((sum, bucket) => sum + bucket.volumeUsd, 0);
-      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, volume24hUsd, graduated: item.graduated, poolFee: item.poolFee, tickSpacing: item.tickSpacing, graduationCheckedAt: item.graduationCheckedAt, activityBackfilledAt: item.activityBackfilledAt, volumeBucketsInitializedAt: state?.volumeBucketsInitializedAt || now, indexedThroughBlock, updatedAt: now };
+      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, volume24hUsd, graduated: item.graduated, poolFee: item.poolFee, tickSpacing: item.tickSpacing, graduationCheckedAt: item.graduationCheckedAt, activityBackfilledAt: item.activityBackfilledAt, ...(state?.volumeBucketsInitializedAt ? { volumeBucketsInitializedAt: state.volumeBucketsInitializedAt } : {}), indexedThroughBlock: item.indexedThroughBlock, updatedAt: now };
       if (state) await ctx.db.patch(state._id, patch); else await ctx.db.insert("tokenMarketState", patch);
+      const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress)).unique();
+      if (launch) await ctx.db.patch(launch._id, { publicLastBuyAt: lastBuyAt, publicMarketCapUsd: item.marketCapUsd, publicVolume24hUsd: volume24hUsd, publicGraduated: item.graduated, updatedAt: now });
     }
     const cursor = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
     if (cursor) await ctx.db.patch(cursor._id, { indexedThroughBlock, leaseUntil: 0, updatedAt: now });

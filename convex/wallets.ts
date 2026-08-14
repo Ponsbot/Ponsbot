@@ -233,6 +233,7 @@ export const upsertXUser = internalMutation({
     const existing = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", args.xUserId)).unique();
     if (existing) {
       await ctx.db.patch(existing._id, { ...args, updatedAt: now });
+      if (existing.walletId) await ctx.db.patch(existing.walletId, { xUsername: args.username, updatedAt: now });
       return existing._id;
     }
     return await ctx.db.insert("xReplyUsers", { ...args, walletStatus: "none", createdAt: now, updatedAt: now });
@@ -284,9 +285,10 @@ export const finishWalletProvisioning = internalMutation({
       || existing.chainId !== ROBINHOOD_CHAIN_ID)) throw new Error("canonical X wallet binding mismatch");
     const now = Date.now();
     const walletId = existing?._id || await ctx.db.insert("cryptoWallets", {
-      ownerXUserId: args.xUserId, address: args.address, normalizedAddress, signerWalletRef: args.signerWalletRef,
+      ownerXUserId: args.xUserId, xUsername: user.username, address: args.address, normalizedAddress, signerWalletRef: args.signerWalletRef,
       chainId: ROBINHOOD_CHAIN_ID, status: "active", launchEnabled: true, createdAt: now, updatedAt: now,
     });
+    if (existing && existing.xUsername !== user.username) await ctx.db.patch(existing._id, { xUsername: user.username, updatedAt: now });
     await ctx.db.patch(user._id, { walletId, walletStatus: "active", updatedAt: now });
     return walletId;
   },
@@ -598,12 +600,15 @@ export const recordConfirmedExecution = internalMutation({
       involvedPairTokenAddress: args.involvedPairTokenAddress || existing.involvedPairTokenAddress, updatedAt: now,
     });
     if (args.launch) {
+      const launchWallet = await ctx.db.get(args.walletId);
+      const launchPair = args.launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", args.launch!.pairToken!.toLowerCase())).unique() : null;
+      const publicFields = { creatorAddress: launchWallet?.address, pairSymbol: args.launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launchPair?.symbol };
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
       if (!launch) await ctx.db.insert("tokenLaunches", {
         requestId: args.requestId, walletId: args.walletId, transactionHash: args.transactionHash,
-        ...args.launch, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), createdAt: now, updatedAt: now,
+        ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), createdAt: now, updatedAt: now,
       });
-      if (launch) await ctx.db.patch(launch._id, { ...args.launch, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), updatedAt: now });
+      if (launch) await ctx.db.patch(launch._id, { ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), updatedAt: now });
     }
     const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (request) await ctx.db.patch(request._id, { status: "confirmed", transactionHash: args.transactionHash, nextReconcileAt: undefined, updatedAt: now });
@@ -871,7 +876,7 @@ export const executeCommand = internalAction({
     }
     if (!wallet || wallet.status !== "active") return { ok: false, message: "🔒 This wallet isn't available right now. Please try again shortly." };
     try {
-      command = applyProtectedLaunchProfile(userContext.user.username, command, args.mediaUrl);
+      command = applyProtectedLaunchProfile(args.xUserId, command, args.mediaUrl);
     } catch {
       return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
     }

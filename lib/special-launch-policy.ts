@@ -1,6 +1,6 @@
 import type { WalletCommand } from "../convex/walletCommands";
 
-const PROTECTED_LAUNCH_USERNAME = "ponsboyfamily";
+export const PROTECTED_LAUNCH_X_USER_ID = "2085516993315188736";
 
 const PROTECTED_LAUNCH = {
   kind: "launch",
@@ -15,11 +15,11 @@ const PROTECTED_LAUNCH = {
 } as const satisfies Extract<WalletCommand, { kind: "launch" }>;
 
 export function applyProtectedLaunchProfile(
-  username: string | undefined,
+  xUserId: string,
   command: WalletCommand,
   mediaUrl: string | undefined,
 ): WalletCommand {
-  if (username?.replace(/^@/, "").toLowerCase() !== PROTECTED_LAUNCH_USERNAME || command.kind !== "launch") {
+  if (xUserId !== PROTECTED_LAUNCH_X_USER_ID || command.kind !== "launch") {
     return command;
   }
 
@@ -28,4 +28,3 @@ export function applyProtectedLaunchProfile(
   if (!mediaUrl?.trim()) throw new Error("protected launch image missing");
   return { ...PROTECTED_LAUNCH };
 }
-

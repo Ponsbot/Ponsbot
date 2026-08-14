@@ -5,6 +5,7 @@ import type { ActionCtx } from "./_generated/server";
 import { shouldSuppressXResponse } from "./xReplyPolicy";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { fitXReply, xWeightedLength } from "./xText";
+import { paginationFailureState, shouldSendBurstNotice, shouldSendCooldownNotice, shouldSendDailyNotice } from "../lib/x-operational-policy";
 
 const X_API = "https://api.x.com/2";
 const X_MENTION_PAGE_SIZE = 100;
@@ -150,14 +151,22 @@ export const consumeReplyLimit = internalMutation({
     if (now - states[0].lastAcceptedAt < limits.cooldownMs) {
       // Publish at most one notice for each accepted-request cooldown period.
       // A later accepted request starts a new period and may receive one new notice.
-      const shouldNotify = !records[0]?.lastCooldownNoticeAt || records[0].lastCooldownNoticeAt < states[0].lastAcceptedAt;
+      const shouldNotify = shouldSendCooldownNotice(records[0]?.lastCooldownNoticeAt, states[0].lastAcceptedAt);
       if (shouldNotify && records[0]) await ctx.db.patch(records[0]._id, { lastCooldownNoticeAt: now, updatedAt: now });
       return { allowed: false, reason: "user cooldown", shouldNotify };
     }
-    if (states[0].dailyCount >= limits.userDaily) return { allowed: false, reason: "user daily limit" };
-    if (states[1].dailyCount >= limits.globalDaily) return { allowed: false, reason: "global daily limit" };
-    if (states[0].windowCount >= limits.userWindow) return { allowed: false, reason: "user burst limit" };
-    if (states[1].windowCount >= limits.globalWindow) return { allowed: false, reason: "global burst limit" };
+    if (states[0].dailyCount >= limits.userDaily) {
+      const shouldNotify = shouldSendDailyNotice(records[0]?.lastDailyNoticeAt, day);
+      if (shouldNotify && records[0]) await ctx.db.patch(records[0]._id, { lastDailyNoticeAt: now, updatedAt: now });
+      return { allowed: false, reason: "user daily limit", shouldNotify };
+    }
+    if (states[1].dailyCount >= limits.globalDaily) return { allowed: false, reason: "global daily limit", shouldNotify: false };
+    if (states[0].windowCount >= limits.userWindow) {
+      const shouldNotify = shouldSendBurstNotice(records[0]?.lastBurstNoticeAt, states[0].windowStartedAt);
+      if (shouldNotify && records[0]) await ctx.db.patch(records[0]._id, { lastBurstNoticeAt: now, updatedAt: now });
+      return { allowed: false, reason: "user burst limit", shouldNotify };
+    }
+    if (states[1].windowCount >= limits.globalWindow) return { allowed: false, reason: "global burst limit", shouldNotify: false };
     for (let index = 0; index < keys.length; index += 1) {
       const value = {
         utcDay: day, dailyCount: states[index].dailyCount + 1,
@@ -175,7 +184,7 @@ export const updatePollState = internalMutation({
   args: {
     newestSeenPostId: v.optional(v.string()),
     backlogPaginationToken: v.optional(v.string()),
-    backlogNewestPostId: v.optional(v.string()),
+    backlogNewestPostId: v.optional(v.string()), backlogPaginationFailures: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -225,6 +234,19 @@ export const updateInteraction = internalMutation({
   handler: async (ctx, args) => {
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
     if (interaction) await ctx.db.patch(interaction._id, { status: args.status, commandKind: args.commandKind, responsePostId: args.responsePostId, safeError: args.safeError, updatedAt: Date.now() });
+  },
+});
+
+export const recordBacklogPaginationFailure = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const state = await ctx.db.query("xReplyState").withIndex("by_key", (q) => q.eq("key", "mentions")).unique();
+    if (!state?.backlogPaginationToken) return false;
+    const { failures, reset } = paginationFailureState(state.backlogPaginationFailures);
+    await ctx.db.patch(state._id, reset
+      ? { backlogPaginationToken: undefined, backlogNewestPostId: undefined, backlogPaginationFailures: 0, updatedAt: Date.now() }
+      : { backlogPaginationFailures: failures, updatedAt: Date.now() });
+    return reset;
   },
 });
 
@@ -427,11 +449,16 @@ export const pollMentions = internalAction({
         });
         if (state?.newestSeenPostId) query.set("since_id", state.newestSeenPostId);
         if (paginationToken) query.set("pagination_token", paginationToken);
-        const page = await xGet<{
+        let page: {
           data?: Mention[];
           includes?: { users?: XUser[]; media?: Media[] };
           meta?: { newest_id?: string; next_token?: string };
-        }>(`/users/${botUserId}/mentions`, query);
+        };
+        try { page = await xGet<typeof page>(`/users/${botUserId}/mentions`, query); }
+        catch (error) {
+          if (state?.backlogPaginationToken) await ctx.runMutation(internal.xReplies.recordBacklogPaginationFailure, {});
+          throw error;
+        }
         mentions.push(...(page.data || []));
         for (const user of page.includes?.users || []) users.set(user.id, user);
         for (const item of page.includes?.media || []) media.set(item.media_key, item);
@@ -463,7 +490,7 @@ export const pollMentions = internalAction({
           premium: premiumSubscription(user.subscription_type),
         });
         if (!rate.allowed) {
-          const shouldNotify = rate.reason !== "user cooldown" || rate.shouldNotify;
+          const shouldNotify = Boolean(rate.shouldNotify);
           const responsePostId = shouldNotify ? await publishReplyOnce(ctx, rateLimitMessage(rate.reason), mention.id) : undefined;
           await ctx.runMutation(internal.xReplies.updateInteraction, {
             postId: mention.id, status: "rejected", commandKind: "rate_limited", ...(responsePostId ? { responsePostId } : {}), safeError: rate.reason,
@@ -530,8 +557,8 @@ export const pollMentions = internalAction({
       }
       const backlogRemaining: boolean = Boolean(paginationToken);
       await ctx.runMutation(internal.xReplies.updatePollState, backlogRemaining
-        ? { newestSeenPostId: state?.newestSeenPostId, backlogPaginationToken: paginationToken, backlogNewestPostId: newestFetchedPostId }
-        : { newestSeenPostId: newestFetchedPostId || state?.newestSeenPostId, backlogPaginationToken: undefined, backlogNewestPostId: undefined });
+        ? { newestSeenPostId: state?.newestSeenPostId, backlogPaginationToken: paginationToken, backlogNewestPostId: newestFetchedPostId, backlogPaginationFailures: 0 }
+        : { newestSeenPostId: newestFetchedPostId || state?.newestSeenPostId, backlogPaginationToken: undefined, backlogNewestPostId: undefined, backlogPaginationFailures: 0 });
       return { enabled: true, processed, backlogRemaining };
     } finally {
       await ctx.runMutation(internal.xReplies.releasePollLease, {});

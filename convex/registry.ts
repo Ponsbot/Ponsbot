@@ -47,6 +47,29 @@ export const ensureInitialized = internalMutation({
       }
       await ctx.db.insert("protocolContracts", { key: "normalized_address_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
     }
+    const usernameMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "wallet_username_migration_v1")).unique();
+    if (!usernameMigration) {
+      for (const wallet of await ctx.db.query("cryptoWallets").collect()) {
+        const user = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", wallet.ownerXUserId)).unique();
+        if (user?.username) await ctx.db.patch(wallet._id, { xUsername: user.username, updatedAt: now });
+      }
+      await ctx.db.insert("protocolContracts", { key: "wallet_username_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
+    }
+    const launchViewMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "public_launch_view_migration_v1")).unique();
+    if (!launchViewMigration) {
+      for (const launch of await ctx.db.query("tokenLaunches").collect()) {
+        const wallet = await ctx.db.get(launch.walletId);
+        const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
+        const market = launch.tokenAddress ? await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", launch.tokenAddress!.toLowerCase())).unique() : null;
+        await ctx.db.patch(launch._id, {
+          creatorAddress: wallet?.address,
+          pairSymbol: launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol,
+          publicLastBuyAt: market?.lastBuyAt, publicMarketCapUsd: market?.marketCapUsd,
+          publicVolume24hUsd: market?.volume24hUsd, publicGraduated: market?.graduated, updatedAt: now,
+        });
+      }
+      await ctx.db.insert("protocolContracts", { key: "public_launch_view_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
+    }
     const previouslyInitialized = Boolean(await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique());
     for (const [key, address] of Object.entries(BOOTSTRAP_CONTRACTS)) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error(`${key} contract address is invalid`);
