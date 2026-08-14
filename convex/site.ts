@@ -53,8 +53,7 @@ export const getLaunch = query({
   args: { tokenAddress: v.string() },
   handler: async (ctx, { tokenAddress }) => {
     const normalized = tokenAddress.toLowerCase();
-    const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", normalized)).unique()
-      || (await ctx.db.query("tokenLaunches").collect()).find((item) => item.tokenAddress?.toLowerCase() === normalized);
+    const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", normalized)).unique();
     if (!launch) return null;
     const wallet = await ctx.db.get(launch.walletId);
     const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
@@ -72,13 +71,27 @@ export const tokenActivity = query({
 });
 
 export const marketIndexTargets = query({
-  args: {},
-  handler: async (ctx) => Promise.all((await ctx.db.query("tokenLaunches").order("desc").take(100))
+  args: { tokenAddresses: v.optional(v.array(v.string())) },
+  handler: async (ctx, { tokenAddresses }) => {
+    const recent = await ctx.db.query("tokenLaunches").order("desc").take(100);
+    const requested = await Promise.all((tokenAddresses || []).slice(0, 50).map((address) => ctx.db.query("tokenLaunches")
+      .withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", address.toLowerCase())).unique()));
+    const launches = [...new Map([...recent, ...requested.filter((item) => item !== null)].map((launch) => [launch!._id, launch!])).values()];
+    return Promise.all(launches
     .filter((launch) => launch.tokenAddress && launch.poolAddress)
     .map(async (launch) => {
       const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", launch.tokenAddress!.toLowerCase())).unique();
       return { tokenAddress: launch.tokenAddress!, curveAddress: launch.poolAddress!, pairToken: launch.pairToken || "0x0000000000000000000000000000000000000000", indexedThroughBlock: market?.indexedThroughBlock, graduated: market?.graduated, poolFee: market?.poolFee, tickSpacing: market?.tickSpacing, activityBackfilledAt: market?.activityBackfilledAt };
-    })),
+    }));
+  },
+});
+
+export const marketRuntimeConfig = query({
+  args: {},
+  handler: async (ctx) => {
+    const factory = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique();
+    return { factory: factory?.active ? factory.address : null };
+  },
 });
 
 export const acquireMarketIndexLease = mutation({
@@ -110,15 +123,39 @@ export const recordMarketIndex = mutation({
     const now = Date.now();
     for (const event of events) {
       const exists = await ctx.db.query("tokenActivity").withIndex("by_transaction_log", (q) => q.eq("transactionHash", event.transactionHash).eq("logIndex", event.logIndex)).unique();
-      if (!exists) await ctx.db.insert("tokenActivity", { ...event, normalizedTokenAddress: event.tokenAddress.toLowerCase(), createdAt: now });
+      if (!exists) {
+        const normalizedTokenAddress = event.tokenAddress.toLowerCase();
+        await ctx.db.insert("tokenActivity", { ...event, normalizedTokenAddress, createdAt: now });
+        if (event.kind !== "burn" && event.usdAmount !== undefined) {
+          // Five-minute buckets avoid unbounded event scans while keeping the
+          // rolling 24-hour figure close to the exact cutoff.
+          const hourStartedAt = Math.floor(event.timestamp / 300_000) * 300_000;
+          const bucket = await ctx.db.query("tokenVolumeBuckets").withIndex("by_token_hour", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).eq("hourStartedAt", hourStartedAt)).unique();
+          if (bucket) await ctx.db.patch(bucket._id, { volumeUsd: bucket.volumeUsd + event.usdAmount, updatedAt: now });
+          else await ctx.db.insert("tokenVolumeBuckets", { normalizedTokenAddress, hourStartedAt, volumeUsd: event.usdAmount, updatedAt: now });
+        }
+      }
     }
     for (const item of marketCaps) {
       const normalizedTokenAddress = item.tokenAddress.toLowerCase();
       const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress)).unique();
       const lastBuyAt = events.filter((event) => event.kind === "buy" && event.tokenAddress.toLowerCase() === normalizedTokenAddress).reduce<number | undefined>((latest, event) => latest === undefined || event.timestamp > latest ? event.timestamp : latest, state?.lastBuyAt);
-      const recent = await ctx.db.query("tokenActivity").withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("timestamp", now - 24 * 60 * 60_000)).take(1000);
-      const volume24hUsd = recent.reduce((sum, event) => event.kind === "burn" ? sum : sum + (event.usdAmount ?? (event.marketCapUsd === undefined ? 0 : Number(event.tokenAmount) * event.marketCapUsd / 1_000_000_000)), 0);
-      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, volume24hUsd, graduated: item.graduated, poolFee: item.poolFee, tickSpacing: item.tickSpacing, graduationCheckedAt: item.graduationCheckedAt, activityBackfilledAt: item.activityBackfilledAt, indexedThroughBlock, updatedAt: now };
+      if (!state?.volumeBucketsInitializedAt) {
+        const legacyEvents = await ctx.db.query("tokenActivity").withIndex("by_token_time", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("timestamp", now - 24 * 60 * 60_000)).collect();
+        const totals = new Map<number, number>();
+        for (const event of legacyEvents) if (event.kind !== "burn" && event.usdAmount !== undefined) {
+          const bucketStart = Math.floor(event.timestamp / 300_000) * 300_000;
+          totals.set(bucketStart, (totals.get(bucketStart) || 0) + event.usdAmount);
+        }
+        for (const [hourStartedAt, volumeUsd] of totals) {
+          const bucket = await ctx.db.query("tokenVolumeBuckets").withIndex("by_token_hour", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).eq("hourStartedAt", hourStartedAt)).unique();
+          if (bucket) await ctx.db.patch(bucket._id, { volumeUsd, updatedAt: now });
+          else await ctx.db.insert("tokenVolumeBuckets", { normalizedTokenAddress, hourStartedAt, volumeUsd, updatedAt: now });
+        }
+      }
+      const buckets = await ctx.db.query("tokenVolumeBuckets").withIndex("by_token_hour", (q) => q.eq("normalizedTokenAddress", normalizedTokenAddress).gte("hourStartedAt", now - 24 * 60 * 60_000)).collect();
+      const volume24hUsd = buckets.reduce((sum, bucket) => sum + bucket.volumeUsd, 0);
+      const patch = { tokenAddress: item.tokenAddress, normalizedTokenAddress, lastBuyAt, marketCapUsd: item.marketCapUsd, volume24hUsd, graduated: item.graduated, poolFee: item.poolFee, tickSpacing: item.tickSpacing, graduationCheckedAt: item.graduationCheckedAt, activityBackfilledAt: item.activityBackfilledAt, volumeBucketsInitializedAt: state?.volumeBucketsInitializedAt || now, indexedThroughBlock, updatedAt: now };
       if (state) await ctx.db.patch(state._id, patch); else await ctx.db.insert("tokenMarketState", patch);
     }
     const cursor = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
@@ -156,8 +193,7 @@ export const getWallet = query({
   args: { address: v.string() },
   handler: async (ctx, { address }) => {
     const normalized = address.toLowerCase();
-    const wallet = await ctx.db.query("cryptoWallets").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", normalized)).unique()
-      || (await ctx.db.query("cryptoWallets").collect()).find((item) => item.address.toLowerCase() === normalized);
+    const wallet = await ctx.db.query("cryptoWallets").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", normalized)).unique();
     if (!wallet) return null;
     const tokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", wallet._id)).take(100);
     const user = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", wallet.ownerXUserId)).unique();

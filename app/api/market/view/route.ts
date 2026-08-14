@@ -19,8 +19,8 @@ const factoryAbi = parseAbi([
   "function memeHook() view returns(address)", "function poolManager() view returns(address)",
 ]);
 const v4SwapEvent = parseAbi(["event Swap(bytes32 indexed id,address indexed sender,int128 amount0,int128 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint24 fee)"])[0];
-const FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
 const DEAD = "0x000000000000000000000000000000000000dead";
+const tokenReadAbi = parseAbi(["function decimals() view returns(uint8)", "function totalSupply() view returns(uint256)"]);
 
 type RawLog = { address: Address; blockNumber: Hex; transactionHash: Hex; logIndex: Hex; topics: [Hex, ...Hex[]]; data: Hex };
 
@@ -48,17 +48,22 @@ export async function POST(request: Request) {
   const viewed = new Set(addresses.filter((address): address is string => typeof address === "string" && /^0x[a-fA-F0-9]{40}$/.test(address)).map((address) => address.toLowerCase()));
   const now = Date.now();
   const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret });
-  if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
+  if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }), launches: await convex.query(api.site.listLaunches, { limit: 100 }) });
   try {
     const rpc = createPublicClient({ transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000 }) });
-    const [targets, latest] = await Promise.all([convex.query(api.site.marketIndexTargets, {}), rpc.getBlockNumber()]);
+    const [targets, latest, runtimeConfig] = await Promise.all([
+      convex.query(api.site.marketIndexTargets, { tokenAddresses: [...viewed] }),
+      rpc.getBlockNumber(),
+      convex.query(api.site.marketRuntimeConfig, {}),
+    ]);
+    if (!runtimeConfig.factory || !/^0x[a-fA-F0-9]{40}$/.test(runtimeConfig.factory)) throw new Error("Pons factory is not configured");
+    const factory = runtimeConfig.factory as Address;
     if (!targets.length) {
       await convex.mutation(api.site.recordMarketIndex, { secret, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
-      return NextResponse.json({ ok: true, indexed: true });
+      return NextResponse.json({ ok: true, indexed: true, launches: await convex.query(api.site.listLaunches, { limit: 100 }) });
     }
-    const from = lease.indexedThroughBlock ? BigInt(lease.indexedThroughBlock) + 1n : latest;
-    const cappedFrom = latest > from && latest - from > 5_000n ? latest - 5_000n : from;
-    const scanFrom = cappedFrom;
+    const scanFrom = lease.indexedThroughBlock ? BigInt(lease.indexedThroughBlock) + 1n : latest;
+    const scanTo = scanFrom + 4_999n < latest ? scanFrom + 4_999n : latest;
     const prioritized = targets.filter((target) => viewed.has(target.tokenAddress.toLowerCase()));
     const addressMap = new Map<string, { tokenAddress: string; curveAddress: string }>();
     for (const target of targets) {
@@ -66,8 +71,8 @@ export async function POST(request: Request) {
       addressMap.set(target.tokenAddress.toLowerCase(), target);
     }
     const [hook, poolManager] = await Promise.all([
-      rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "memeHook" }),
-      rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "poolManager" }),
+      rpc.readContract({ address: factory, abi: factoryAbi, functionName: "memeHook" }),
+      rpc.readContract({ address: factory, abi: factoryAbi, functionName: "poolManager" }),
     ]);
     const graduated = new Map<string, { tokenAddress: string; tokenIsCurrency0: boolean }>();
     const graduationStatus = new Map<string, boolean>();
@@ -83,7 +88,7 @@ export async function POST(request: Request) {
       if (target.graduated && target.poolFee !== undefined && target.tickSpacing !== undefined) addGraduatedPool(target, target.poolFee, target.tickSpacing);
     }
     const phaseTargets = prioritized.filter((target) => !target.graduated);
-    const phaseResults = phaseTargets.length ? await rpc.multicall({ contracts: phaseTargets.map((target) => ({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken" as const, args: [target.tokenAddress as Address] as const })), allowFailure: true }) : [];
+    const phaseResults = phaseTargets.length ? await rpc.multicall({ contracts: phaseTargets.map((target) => ({ address: factory, abi: factoryAbi, functionName: "getLaunchedToken" as const, args: [target.tokenAddress as Address] as const })), allowFailure: true }) : [];
     phaseResults.forEach((result, index) => {
       const target = phaseTargets[index]; const launch = result.status === "success" ? result.result : undefined;
       const isGraduated = launch?.phase === 2;
@@ -91,9 +96,9 @@ export async function POST(request: Request) {
       if (launch) graduationMetadata.set(target.tokenAddress.toLowerCase(), { poolFee: launch.poolFee, tickSpacing: launch.tickSpacing, checkedAt: now });
       if (isGraduated && launch) addGraduatedPool(target, launch.poolFee, launch.tickSpacing);
     });
-    const [incrementalDirectLogs, incrementalSwapLogs] = scanFrom <= latest ? await Promise.all([
-      rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: [...addressMap.keys()] as Address[] }] }) as Promise<RawLog[]>,
-      graduated.size ? rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${latest.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)")), [...graduated.keys()] as Hex[]] }] }) as Promise<RawLog[]> : Promise.resolve([]),
+    const [incrementalDirectLogs, incrementalSwapLogs] = scanFrom <= scanTo ? await Promise.all([
+      rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${scanTo.toString(16)}`, address: [...addressMap.keys()] as Address[] }] }) as Promise<RawLog[]>,
+      graduated.size ? rpc.request({ method: "eth_getLogs", params: [{ fromBlock: `0x${scanFrom.toString(16)}`, toBlock: `0x${scanTo.toString(16)}`, address: poolManager, topics: [keccak256(new TextEncoder().encode("Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)")), [...graduated.keys()] as Hex[]] }] }) as Promise<RawLog[]> : Promise.resolve([]),
     ]) : [[], []];
     // Backfill at most one actively viewed token per run. This never expands
     // the global incremental range and keeps an expensive first view bounded.
@@ -112,6 +117,13 @@ export async function POST(request: Request) {
     const swapLogs = uniqueLogs([...incrementalSwapLogs, ...backfillSwapLogs]);
     const blockTimes = new Map<string, number>();
     const marketCaps = new Map<string, number | undefined>();
+    const supplies = new Map<string, bigint>();
+    const tokenSupply = async (tokenAddress: string, blockNumber: bigint) => {
+      const key = `${tokenAddress.toLowerCase()}:${blockNumber}`;
+      const cached = supplies.get(key); if (cached !== undefined) return cached;
+      const supply = await rpc.readContract({ address: tokenAddress as Address, abi: tokenReadAbi, functionName: "totalSupply", blockNumber });
+      supplies.set(key, supply); return supply;
+    };
     const events: Array<{ tokenAddress: string; transactionHash: string; logIndex: number; kind: "buy" | "sell" | "burn"; walletAddress: string; tokenAmount: string; marketCapUsd?: number; usdAmount?: number; blockNumber: string; timestamp: number }> = [];
     for (const log of logs) {
       const target = addressMap.get(log.address.toLowerCase());
@@ -134,10 +146,12 @@ export async function POST(request: Request) {
         timestamp = Number((await rpc.getBlock({ blockNumber })).timestamp) * 1_000;
         blockTimes.set(log.blockNumber, timestamp);
       }
-      const decimals = await rpc.readContract({ address: target.tokenAddress as Address, abi: parseAbi(["function decimals() view returns(uint8)"]), functionName: "decimals", blockNumber }).catch(() => 18);
+      const decimals = await rpc.readContract({ address: target.tokenAddress as Address, abi: tokenReadAbi, functionName: "decimals", blockNumber }).catch(() => 18);
       const marketCapUsd = kind === "burn" ? undefined : await tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined);
       const tokenAmount = formatUnits(amount, decimals);
-      const usdAmount = kind !== "burn" && marketCapUsd !== undefined ? Number(tokenAmount) * marketCapUsd / 1_000_000_000 : undefined;
+      const totalSupply = kind !== "burn" && marketCapUsd !== undefined ? await tokenSupply(target.tokenAddress, blockNumber).catch(() => 0n) : 0n;
+      const displaySupply = Number(formatUnits(totalSupply, decimals));
+      const usdAmount = kind !== "burn" && marketCapUsd !== undefined && displaySupply > 0 ? Number(tokenAmount) * marketCapUsd / displaySupply : undefined;
       events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
     }
     for (const log of swapLogs) {
@@ -151,11 +165,13 @@ export async function POST(request: Request) {
         if (timestamp === undefined) { timestamp = Number((await rpc.getBlock({ blockNumber })).timestamp) * 1_000; blockTimes.set(log.blockNumber, timestamp); }
         const [transaction, decimals, marketCapUsd] = await Promise.all([
           rpc.getTransaction({ hash: log.transactionHash }),
-          rpc.readContract({ address: target.tokenAddress as Address, abi: parseAbi(["function decimals() view returns(uint8)"]), functionName: "decimals", blockNumber }).catch(() => 18),
+          rpc.readContract({ address: target.tokenAddress as Address, abi: tokenReadAbi, functionName: "decimals", blockNumber }).catch(() => 18),
           tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined),
         ]);
         const tokenAmount = formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, decimals);
-        const usdAmount = marketCapUsd === undefined ? undefined : Number(tokenAmount) * marketCapUsd / 1_000_000_000;
+        const totalSupply = marketCapUsd === undefined ? 0n : await tokenSupply(target.tokenAddress, blockNumber).catch(() => 0n);
+        const displaySupply = Number(formatUnits(totalSupply, decimals));
+        const usdAmount = marketCapUsd !== undefined && displaySupply > 0 ? Number(tokenAmount) * marketCapUsd / displaySupply : undefined;
         events.push({ tokenAddress: target.tokenAddress, transactionHash: log.transactionHash, logIndex: Number(BigInt(log.logIndex)), kind, walletAddress: transaction.from, tokenAmount, marketCapUsd, ...(usdAmount === undefined ? {} : { usdAmount }), blockNumber: blockNumber.toString(), timestamp });
       } catch { /* Ignore unrelated or malformed PoolManager logs. */ }
     }
@@ -163,14 +179,14 @@ export async function POST(request: Request) {
     await Promise.all(prioritized.map(async (target) => marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined))));
     await convex.mutation(api.site.recordMarketIndex, {
       secret,
-      indexedThroughBlock: latest.toString(),
+      indexedThroughBlock: scanTo.toString(),
       marketCaps: prioritized.map((target) => {
         const normalized = target.tokenAddress.toLowerCase(); const metadata = graduationMetadata.get(normalized);
         return { tokenAddress: target.tokenAddress, ...(marketCaps.get(target.tokenAddress) === undefined ? {} : { marketCapUsd: marketCaps.get(target.tokenAddress) }), graduated: graduationStatus.get(normalized) || false, ...(metadata ? { poolFee: metadata.poolFee, tickSpacing: metadata.tickSpacing, graduationCheckedAt: metadata.checkedAt } : {}), ...(backfilledToken?.toLowerCase() === normalized ? { activityBackfilledAt: now } : {}) };
       }),
       events,
     });
-    return NextResponse.json({ ok: true, indexed: true, events: events.length, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
+    return NextResponse.json({ ok: true, indexed: true, events: events.length, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }), launches: await convex.query(api.site.listLaunches, { limit: 100 }) });
   } catch (error) {
     console.error("market_view_index_failed", error instanceof Error ? error.message : "unknown");
     return NextResponse.json({ ok: false }, { status: 502 });

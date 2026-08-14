@@ -27,20 +27,29 @@ export function TerminalClient() {
   const [chat, setChat] = useState("");
   const [notice, setNotice] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
+  const refreshing = useRef(false);
 
-  const refresh = useCallback(async () => {
-    const response = await fetch("/api/terminal", { cache: "no-store" });
-    if (response.ok) setData(await response.json());
+  const refresh = useCallback(async (includeHoldings = false) => {
+    if (refreshing.current || document.visibilityState === "hidden") return;
+    refreshing.current = true;
+    try {
+      const response = await fetch(includeHoldings ? "/api/terminal" : "/api/terminal?scope=history", { cache: "no-store" });
+      if (response.ok) {
+        const next = await response.json() as TerminalData;
+        setData((current) => ({ ...next, holdings: next.holdings ?? current?.holdings ?? [] }));
+      }
+    } finally { refreshing.current = false; }
   }, []);
   useEffect(() => {
     fetch("/api/auth/x/session", { cache: "no-store" }).then((response) => response.json()).then(async (value: Session) => {
-      setSession(value); if (value.authenticated) await refresh(); setLoading(false);
+      setSession(value); if (value.authenticated) await refresh(true); setLoading(false);
     }).catch(() => setLoading(false));
   }, [refresh]);
   useEffect(() => {
     if (!session?.authenticated) return;
-    const timer = window.setInterval(refresh, 5_000);
-    return () => window.clearInterval(timer);
+    const historyTimer = window.setInterval(() => void refresh(false), 5_000);
+    const holdingsTimer = window.setInterval(() => void refresh(true), 60_000);
+    return () => { window.clearInterval(historyTimer); window.clearInterval(holdingsTimer); };
   }, [refresh, session?.authenticated]);
   useEffect(() => { const log = logRef.current; if (log) log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); }, [data?.history.messages.length, notice]);
 
@@ -52,7 +61,7 @@ export function TerminalClient() {
       const result = await response.json();
       if (result.reauthRequired) { window.location.href = "/api/auth/x/start?returnTo=/terminal"; return; }
       setNotice(result.message || result.error || "Request completed.");
-      await refresh();
+      await refresh(true);
     } finally { setBusy(false); }
   };
   const submitChat = (event: FormEvent) => { event.preventDefault(); const text = chat.trim(); if (!text) return; setChat(""); void submit({ channel: "terminal_chat", text }); };
@@ -61,7 +70,7 @@ export function TerminalClient() {
   if (!session?.authenticated) return <section className="terminal-shell terminal-signed-out"><div className="terminal-connect-modal" role="dialog" aria-modal="true"><h2>Connect to X to use the terminal.</h2><a className="button button-dark" href="/api/auth/x/start?returnTo=/terminal">Connect X</a></div></section>;
 
   return <section className="terminal-shell">
-    <header className="terminal-heading"><div><p className="eyebrow">Pons Bot Terminal</p><h1>Welcome, @{session.username}</h1><p>Buy, sell, send, and burn directly from your connected wallet.</p></div><Link className="button button-quiet" href={`/wallet/${session.walletAddress}`}>View Wallet</Link></header>
+    <header className="terminal-heading"><div><p className="eyebrow">Pons Bot Terminal</p><h1>Welcome, @{session.username}</h1><p>Buy, sell, swap, send, burn, and claim fees directly from your connected wallet.</p></div><Link className="button button-quiet" href={`/wallet/${session.walletAddress}`}>View Wallet</Link></header>
     <div className="terminal-layout">
       <div className="terminal-tools"><DirectActionForms busy={busy} holdings={data?.holdings || []} launches={data?.history.launches || []} tokenCatalog={data?.history.tokenCatalog || []} submit={submit} /></div>
       <div className="terminal-console">

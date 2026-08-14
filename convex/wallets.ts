@@ -897,6 +897,11 @@ export const executeCommand = internalAction({
         return { ok: false, message: safeFailure(error) };
       }
     }
+    // The bot's own X identity may expose a wallet page and balances, but it
+    // must never become a transaction source through either X or the terminal.
+    if (process.env.X_BOT_USER_ID && args.xUserId === process.env.X_BOT_USER_ID) {
+      return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
+    }
     const source = args.source || "x";
     if (source === "terminal" && !isTerminalCommand(command)) {
       return { ok: false, message: command.kind === "launch" ? "🚀 Launches are available through X posts only." : "❌ That action is not available in the terminal." };
@@ -1498,7 +1503,7 @@ async function exactTokenBalance(wallet: Doc<"cryptoWallets">, xUserId: string, 
 
 async function resolveSellToken(ctx: ActionCtx, wallet: Doc<"cryptoWallets">, xUserId: string, identifier: string) {
   if (safeAddress(identifier)) return identifier;
-  const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier, walletId: wallet._id });
+  const matches: string[] = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier, walletId: wallet._id });
   if (matches.length <= 1) return matches[0] || identifier;
   const balances = await Promise.all(matches.map(async (token) => {
     try {

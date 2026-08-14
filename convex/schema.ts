@@ -20,12 +20,13 @@ export default defineSchema({
 
   xReplyState: defineTable({
     key: v.string(), newestSeenPostId: v.optional(v.string()), lastPolledAt: v.optional(v.number()),
+    backlogPaginationToken: v.optional(v.string()), backlogNewestPostId: v.optional(v.string()),
     leaseUntil: v.optional(v.number()), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   xReplyRateLimits: defineTable({
     key: v.string(), utcDay: v.string(), dailyCount: v.number(), windowStartedAt: v.number(),
-    windowCount: v.number(), lastAcceptedAt: v.number(), updatedAt: v.number(),
+    windowCount: v.number(), lastAcceptedAt: v.number(), lastCooldownNoticeAt: v.optional(v.number()), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   cryptoWallets: defineTable({
@@ -87,10 +88,15 @@ export default defineSchema({
   }).index("by_token_time", ["normalizedTokenAddress", "timestamp"])
     .index("by_transaction_log", ["transactionHash", "logIndex"]),
 
+  tokenVolumeBuckets: defineTable({
+    normalizedTokenAddress: v.string(), hourStartedAt: v.number(), volumeUsd: v.number(), updatedAt: v.number(),
+  }).index("by_token_hour", ["normalizedTokenAddress", "hourStartedAt"]),
+
   tokenMarketState: defineTable({
     tokenAddress: v.string(), normalizedTokenAddress: v.string(), lastBuyAt: v.optional(v.number()),
     marketCapUsd: v.optional(v.number()), volume24hUsd: v.optional(v.number()), graduated: v.optional(v.boolean()),
     poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()), graduationCheckedAt: v.optional(v.number()), activityBackfilledAt: v.optional(v.number()),
+    volumeBucketsInitializedAt: v.optional(v.number()),
     indexedThroughBlock: v.optional(v.string()), updatedAt: v.number(),
   }).index("by_normalized_token", ["normalizedTokenAddress"])
     .index("by_last_buy", ["lastBuyAt"]),

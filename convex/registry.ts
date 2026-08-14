@@ -37,6 +37,16 @@ export const ensureInitialized = internalMutation({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
+    const addressMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "normalized_address_migration_v1")).unique();
+    if (!addressMigration) {
+      for (const wallet of await ctx.db.query("cryptoWallets").collect()) {
+        if (!wallet.normalizedAddress) await ctx.db.patch(wallet._id, { normalizedAddress: wallet.address.toLowerCase(), updatedAt: now });
+      }
+      for (const launch of await ctx.db.query("tokenLaunches").collect()) {
+        if (launch.tokenAddress && !launch.normalizedTokenAddress) await ctx.db.patch(launch._id, { normalizedTokenAddress: launch.tokenAddress.toLowerCase(), updatedAt: now });
+      }
+      await ctx.db.insert("protocolContracts", { key: "normalized_address_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
+    }
     const previouslyInitialized = Boolean(await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique());
     for (const [key, address] of Object.entries(BOOTSTRAP_CONTRACTS)) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error(`${key} contract address is invalid`);

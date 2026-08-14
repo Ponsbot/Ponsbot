@@ -8,7 +8,6 @@ import { fitXReply, xWeightedLength } from "./xText";
 
 const X_API = "https://api.x.com/2";
 const X_MENTION_PAGE_SIZE = 100;
-const X_MENTION_MAX_PAGES_PER_POLL = 1;
 const X_POLL_LEASE_MS = 15 * 60_000;
 
 function repliesEnabled() {
@@ -148,7 +147,13 @@ export const consumeReplyLimit = internalMutation({
         lastAcceptedAt: record?.lastAcceptedAt || 0,
       };
     });
-    if (now - states[0].lastAcceptedAt < limits.cooldownMs) return { allowed: false, reason: "user cooldown" };
+    if (now - states[0].lastAcceptedAt < limits.cooldownMs) {
+      // Publish at most one notice for each accepted-request cooldown period.
+      // A later accepted request starts a new period and may receive one new notice.
+      const shouldNotify = !records[0]?.lastCooldownNoticeAt || records[0].lastCooldownNoticeAt < states[0].lastAcceptedAt;
+      if (shouldNotify && records[0]) await ctx.db.patch(records[0]._id, { lastCooldownNoticeAt: now, updatedAt: now });
+      return { allowed: false, reason: "user cooldown", shouldNotify };
+    }
     if (states[0].dailyCount >= limits.userDaily) return { allowed: false, reason: "user daily limit" };
     if (states[1].dailyCount >= limits.globalDaily) return { allowed: false, reason: "global daily limit" };
     if (states[0].windowCount >= limits.userWindow) return { allowed: false, reason: "user burst limit" };
@@ -162,12 +167,16 @@ export const consumeReplyLimit = internalMutation({
       if (records[index]) await ctx.db.patch(records[index]!._id, value);
       else await ctx.db.insert("xReplyRateLimits", { key: keys[index], ...value });
     }
-    return { allowed: true, reason: "accepted" };
+    return { allowed: true, reason: "accepted", shouldNotify: false };
   },
 });
 
 export const updatePollState = internalMutation({
-  args: { newestSeenPostId: v.optional(v.string()) },
+  args: {
+    newestSeenPostId: v.optional(v.string()),
+    backlogPaginationToken: v.optional(v.string()),
+    backlogNewestPostId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const now = Date.now();
     const state = await ctx.db.query("xReplyState").withIndex("by_key", (q) => q.eq("key", "mentions")).unique();
@@ -393,20 +402,20 @@ function expandXUrls(mention: Mention) {
 
 export const pollMentions = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<{ enabled: boolean; processed: number; skipped?: string; backlogRemaining?: boolean }> => {
     if (!repliesEnabled()) return { enabled: false, processed: 0 };
     const acquired = await ctx.runMutation(internal.xReplies.acquirePollLease, {});
     if (!acquired) return { enabled: true, processed: 0, skipped: "poll already running" };
     const botUserId = process.env.X_BOT_USER_ID;
     try {
       if (!botUserId) throw new Error("X_BOT_USER_ID is not configured");
-      const state = await ctx.runQuery(internal.xReplies.getPollState, {});
+      const state: { newestSeenPostId?: string; backlogPaginationToken?: string; backlogNewestPostId?: string } | null = await ctx.runQuery(internal.xReplies.getPollState, {});
       const mentions: Mention[] = [];
       const users = new Map<string, XUser>();
       const media = new Map<string, Media>();
-      let paginationToken: string | undefined;
-      let newestFetchedPostId: string | undefined;
-      for (let pageNumber = 0; pageNumber < X_MENTION_MAX_PAGES_PER_POLL; pageNumber += 1) {
+      let paginationToken: string | undefined = state?.backlogPaginationToken;
+      let newestFetchedPostId = state?.backlogNewestPostId;
+      {
         const query = new URLSearchParams({
           max_results: String(X_MENTION_PAGE_SIZE),
           expansions: "author_id,attachments.media_keys",
@@ -426,12 +435,8 @@ export const pollMentions = internalAction({
         mentions.push(...(page.data || []));
         for (const user of page.includes?.users || []) users.set(user.id, user);
         for (const item of page.includes?.media || []) media.set(item.media_key, item);
-        if (pageNumber === 0) newestFetchedPostId = page.meta?.newest_id;
+        if (!state?.backlogPaginationToken) newestFetchedPostId = page.meta?.newest_id;
         paginationToken = page.meta?.next_token;
-        if (!paginationToken) break;
-        if (pageNumber === X_MENTION_MAX_PAGES_PER_POLL - 1) {
-          throw new Error(`X mention backlog exceeded ${X_MENTION_PAGE_SIZE * X_MENTION_MAX_PAGES_PER_POLL} posts; poll cursor was not advanced`);
-        }
       }
       let processed = 0;
       for (const mention of mentions.sort((left, right) => {
@@ -458,10 +463,10 @@ export const pollMentions = internalAction({
           premium: premiumSubscription(user.subscription_type),
         });
         if (!rate.allowed) {
-          const reply = rateLimitMessage(rate.reason);
-          const responsePostId = await publishReplyOnce(ctx, reply, mention.id);
+          const shouldNotify = rate.reason !== "user cooldown" || rate.shouldNotify;
+          const responsePostId = shouldNotify ? await publishReplyOnce(ctx, rateLimitMessage(rate.reason), mention.id) : undefined;
           await ctx.runMutation(internal.xReplies.updateInteraction, {
-            postId: mention.id, status: "rejected", commandKind: "rate_limited", responsePostId, safeError: rate.reason,
+            postId: mention.id, status: "rejected", commandKind: "rate_limited", ...(responsePostId ? { responsePostId } : {}), safeError: rate.reason,
           });
           processed += 1;
           continue;
@@ -523,8 +528,11 @@ export const pollMentions = internalAction({
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, { postId: mention.id, safeError: "the reply workflow failed before confirmation" });
         }
       }
-      await ctx.runMutation(internal.xReplies.updatePollState, { newestSeenPostId: newestFetchedPostId || state?.newestSeenPostId });
-      return { enabled: true, processed };
+      const backlogRemaining: boolean = Boolean(paginationToken);
+      await ctx.runMutation(internal.xReplies.updatePollState, backlogRemaining
+        ? { newestSeenPostId: state?.newestSeenPostId, backlogPaginationToken: paginationToken, backlogNewestPostId: newestFetchedPostId }
+        : { newestSeenPostId: newestFetchedPostId || state?.newestSeenPostId, backlogPaginationToken: undefined, backlogNewestPostId: undefined });
+      return { enabled: true, processed, backlogRemaining };
     } finally {
       await ctx.runMutation(internal.xReplies.releasePollLease, {});
     }

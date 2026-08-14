@@ -14,6 +14,7 @@ export type PublicLaunch = {
 
 const PREVIEW_WALLET = "0x0000000000000000000000000000000000000b07";
 const PREVIEW_TOKEN = "0x0000000000000000000000000000000000000a11";
+export class SiteDataUnavailableError extends Error {}
 
 function previewLaunch(tokenAddress: string): PublicLaunch {
   return {
@@ -37,13 +38,13 @@ function previewLaunch(tokenAddress: string): PublicLaunch {
 
 export async function listLaunches(limit = 24): Promise<PublicLaunch[]> {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) return [];
+  if (!url) throw new SiteDataUnavailableError("Public site data is not configured");
   try {
     const launches = await new ConvexHttpClient(url).query(api.site.listLaunches, { limit });
     return await addMarketCaps(launches.map((launch) => launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }));
   } catch (error) {
     console.error("public_launch_list_failed", error instanceof Error ? error.message : "unknown");
-    return [];
+    throw new SiteDataUnavailableError("Launch data is temporarily unavailable");
   }
 }
 
@@ -51,14 +52,14 @@ export async function getLaunch(tokenAddress: string): Promise<PublicLaunch | nu
   if (!isAddress(tokenAddress)) return null;
   if (tokenAddress.toLowerCase() === PREVIEW_TOKEN) return previewLaunch(tokenAddress);
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) return null;
+  if (!url) throw new SiteDataUnavailableError("Public site data is not configured");
   try {
     const launch = await new ConvexHttpClient(url).query(api.site.getLaunch, { tokenAddress });
     if (!launch) return null;
     return (await addMarketCaps([launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }]))[0];
   } catch (error) {
     console.error("public_launch_lookup_failed", error instanceof Error ? error.message : "unknown");
-    return null;
+    throw new SiteDataUnavailableError("Launch data is temporarily unavailable");
   }
 }
 
@@ -131,11 +132,11 @@ export async function isPonsbotWallet(address: string) {
   if (!isAddress(address)) return false;
   if (address.toLowerCase() === PREVIEW_WALLET) return true;
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) return false;
+  if (!url) throw new SiteDataUnavailableError("Public site data is not configured");
   try {
     return Boolean(await new ConvexHttpClient(url).query(api.site.getWallet, { address }));
   } catch {
-    return false;
+    throw new SiteDataUnavailableError("Wallet data is temporarily unavailable");
   }
 }
 
@@ -210,16 +211,18 @@ export async function getWalletHoldings(address: string): Promise<{ holdings: Pu
   // Balances are the primary wallet-page data. Give pricing a short window,
   // then render balances without USD estimates rather than making a slow
   // third-party price service hold up the whole page.
+  const pricingController = new AbortController();
   const displayedHoldings = await Promise.race([
-    enrichHoldingDisplay(holdings),
+    enrichHoldingDisplay(holdings, pricingController.signal),
     new Promise<PublicHolding[]>((resolve) => setTimeout(() => resolve(holdings), 750)),
   ]);
+  pricingController.abort();
   return { holdings: displayedHoldings, available, username: walletRecord?.username };
 }
 
-async function enrichHoldingDisplay(holdings: PublicHolding[]) {
+async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSignal) {
   const enriched = holdings.map((holding) => ({ ...holding }));
-  const stockAssets = await fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.timeout(5_000) })
+  const stockAssets = await fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })
     .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
     .catch(() => [] as StockAsset[]);
   const byAddress = new Map<string, StockAsset>();
@@ -227,8 +230,10 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
     const deployment = asset.deployments?.find((item) => item.chainId === 4663);
     if (deployment) byAddress.set(deployment.contractAddress.toLowerCase(), asset);
   }
+  if (signal.aborted) return enriched;
   const ethPrice = enriched.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice().catch(() => undefined) : undefined;
   await Promise.all(enriched.map(async (holding) => {
+    if (signal.aborted) return;
     const balance = Number(holding.balance.replace(/,/g, ""));
     if (!Number.isFinite(balance)) return;
     if (holding.symbol === "ETH") {
@@ -241,7 +246,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
       // Prefer the recognizable underlying company/asset icon in the wallet.
       holding.iconUrl = stockIconUrl(stock.tokenSymbol) || stock.logoUrl || holding.iconUrl;
       holding.isPairAsset = true;
-      const quote = await fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(stock.tokenSymbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.timeout(5_000) })
+      const quote = await fetch(`https://api.robinhood.com/rhj/prices/${encodeURIComponent(stock.tokenSymbol)}`, { next: { revalidate: 15 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })
         .then(async (response) => response.ok ? (await response.json() as { quotes?: Array<{ bid: string; ask: string; generatedAt: string }> }).quotes?.[0] : undefined)
         .catch(() => undefined);
       if (quote && Date.now() - Date.parse(quote.generatedAt) <= 5 * 60_000) {
@@ -251,6 +256,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[]) {
       return;
     }
     if (holding.isPonsbotLaunch && holding.address) {
+      if (signal.aborted) return;
       const price = await tokenUnitPriceUsd(holding.address as Address).catch(() => undefined);
       if (price !== undefined) holding.usdValue = balance * price;
     }

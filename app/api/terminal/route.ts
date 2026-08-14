@@ -34,11 +34,12 @@ export async function GET(request: NextRequest) {
   if (!convexUrl) return NextResponse.json({ error: "Terminal data is not configured" }, { status: 503 });
   if (!await activeSession(auth.secret, auth.session)) return NextResponse.json({ authenticated: false }, { status: 401, headers: { "cache-control": "no-store" } });
   const client = new ConvexHttpClient(convexUrl);
+  const historyOnly = request.nextUrl.searchParams.get("scope") === "history";
   const [history, wallet] = await Promise.all([
     client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId }),
-    getWalletHoldings(auth.session.walletAddress),
+    historyOnly ? Promise.resolve(null) : getWalletHoldings(auth.session.walletAddress),
   ]);
-  return NextResponse.json({ authenticated: true, username: auth.session.username, walletAddress: auth.session.walletAddress, expiresAt: auth.session.expiresAt, history, holdings: wallet.holdings }, { headers: { "cache-control": "no-store" } });
+  return NextResponse.json({ authenticated: true, username: auth.session.username, walletAddress: auth.session.walletAddress, expiresAt: auth.session.expiresAt, history, ...(wallet ? { holdings: wallet.holdings } : {}) }, { headers: { "cache-control": "no-store" } });
 }
 
 export async function POST(request: NextRequest) {
