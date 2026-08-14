@@ -3,7 +3,7 @@ import "./globals.css";
 
 const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://ponsbot-one.vercel.app";
 const siteUrl = configuredSiteUrl.startsWith("http") ? configuredSiteUrl : `https://${configuredSiteUrl}`;
-const description = "Claim a Robinhood Chain wallet, check holdings, buy, sell, send assets, and launch tokens on Pons V2 directly from X with Pons Bot.";
+const description = "Use a Robinhood Chain wallet to check holdings, buy, sell, swap, send, burn, claim creator fees, and launch tokens on Pons V2 with Pons Bot.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),

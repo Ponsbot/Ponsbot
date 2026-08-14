@@ -6,6 +6,8 @@ import type { Doc } from "./_generated/dataModel";
 import { isTerminalCommand, isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { formatUnits } from "viem";
+import { walletCanLaunch } from "../lib/wallet-launch-policy";
+import { applyProtectedLaunchProfile } from "../lib/special-launch-policy";
 
 const ROBINHOOD_CHAIN_ID = 4663;
 const NON_PREMIUM_DAILY_LIMIT = 50;
@@ -82,6 +84,12 @@ function assetLabel(token: string | undefined, fallback = "ETH") {
   return `$${token.replace(/^\$/, "").toUpperCase()}`;
 }
 
+function tradeDisplayAmount(display: string) {
+  const amount = display.trim().match(/^([0-9]+(?:\.[0-9]+)?)/)?.[1];
+  if (!amount || Number(amount) <= 0) throw new Error("trade output amount was not verified");
+  return amount;
+}
+
 function replyCommand(command: WalletCommand, tokenSymbol: string | undefined, registry: RuntimeRegistry): WalletCommand {
   const displayToken = (value: string | undefined) => {
     if (!value || !safeAddress(value)) return value;
@@ -93,6 +101,9 @@ function replyCommand(command: WalletCommand, tokenSymbol: string | undefined, r
     return { ...command, ...(command.token ? { token: displayToken(command.token) } : {}) } as WalletCommand;
   }
   if (command.kind === "buy") return { ...command, token: displayToken(command.token)!, pairAsset: displayToken(command.pairAsset) };
+  if (command.kind === "swap_token_for_token") return {
+    ...command, fromToken: displayToken(command.fromToken)!, toToken: displayToken(command.toToken)!,
+  };
   if (command.kind === "show_balance" && command.token) return { ...command, token: displayToken(command.token) };
   if (command.kind === "launch" && command.pairToken) return { ...command, pairToken: displayToken(command.pairToken) };
   return command;
@@ -113,6 +124,7 @@ function commandSummary(command: WalletCommand) {
   if (command.kind === "buy") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)}!`;
   if (command.kind === "buy_and_send") return `Bought ${command.unit === "usd" ? `$${command.amount}` : `${command.amount} ETH`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
   if (command.kind === "buy_and_burn") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and burned the purchased tokens!`;
+  if (command.kind === "swap_token_for_token") return `Swapped $${command.amount} of ${assetLabel(command.fromToken)} for ${assetLabel(command.toToken)}!`;
   if (command.kind === "sell") return `Sold ${command.unit === "percent" ? `${command.amount}% of ` : `${command.amount} `}${assetLabel(command.token)}!`;
   if (command.kind === "claim_fees") return `Claimed creator fees${command.token ? ` for ${assetLabel(command.token)}` : ""}!`;
   if (command.kind === "launch") {
@@ -273,7 +285,7 @@ export const finishWalletProvisioning = internalMutation({
     const now = Date.now();
     const walletId = existing?._id || await ctx.db.insert("cryptoWallets", {
       ownerXUserId: args.xUserId, address: args.address, normalizedAddress, signerWalletRef: args.signerWalletRef,
-      chainId: ROBINHOOD_CHAIN_ID, status: "active", createdAt: now, updatedAt: now,
+      chainId: ROBINHOOD_CHAIN_ID, status: "active", launchEnabled: true, createdAt: now, updatedAt: now,
     });
     await ctx.db.patch(user._id, { walletId, walletStatus: "active", updatedAt: now });
     return walletId;
@@ -468,6 +480,24 @@ export const resolveKnownToken = internalQuery({
     for (const launch of launches) if (launch.tokenAddress) matches.add(launch.tokenAddress);
     if (matches.size > 1) throw new Error("that ticker matches more than one token; use the contract address");
     return [...matches][0] || identifier;
+  },
+});
+
+export const listKnownTokenMatches = internalQuery({
+  args: { identifier: v.string(), walletId: v.optional(v.id("cryptoWallets")) },
+  handler: async (ctx, { identifier, walletId }) => {
+    const normalized = identifier.replace(/^\$/, "").toLowerCase();
+    if (safeAddress(normalized)) return [identifier];
+    const matches = new Set<string>();
+    if (walletId) {
+      const walletTokens = await ctx.db.query("walletTokenIndex").withIndex("by_wallet", (q) => q.eq("walletId", walletId)).collect();
+      for (const item of walletTokens) if (item.symbol.toLowerCase() === normalized) matches.add(item.tokenAddress);
+    }
+    const registered = await ctx.db.query("tokenRegistry").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).collect();
+    for (const item of registered) if (item.active) matches.add(item.address);
+    const launches = await ctx.db.query("tokenLaunches").withIndex("by_symbol", (q) => q.eq("symbol", normalized.toUpperCase())).take(100);
+    for (const launch of launches) if (launch.tokenAddress) matches.add(launch.tokenAddress);
+    return [...matches];
   },
 });
 
@@ -748,14 +778,15 @@ function walletPageUrl(address: string) {
 function safeFailure(error: unknown) {
   const message = error instanceof Error ? error.message : "wallet request failed";
   if (/^The buy completed, but the send did not\./i.test(message)) return `⚠️ ${message}`;
+  if (/^The .+ sale completed, but the purchase of /i.test(message)) return `⚠️ ${message}`;
   if (/ETH transfer amount plus gas exceeds/i.test(message)) return "❌ There isn't enough ETH for the transfer plus gas. Add a little ETH and try again!";
   if (/insufficient ETH for gas/i.test(message)) return "⛽ This wallet needs a little more ETH for gas. Top it up and try again!";
   if (/insufficient paired asset balance|first you need to buy the paired asset/i.test(message)) return "❌ You don't have enough of this token's paired asset yet. First you need to buy the paired asset, then try the Pons Bot purchase again.";
   if (/insufficient/i.test(message)) return "❌ There aren't enough funds for that amount. Check the balance or try a smaller amount.";
   if (/no claimable creator fees/i.test(message)) return "ℹ️ There aren't any creator fees available to claim in that asset right now.";
-  if (/named paired asset does not match/i.test(message)) return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Ask which asset it uses, then try again with that pair or a dollar amount.";
+  if (/named paired asset does not match/i.test(message)) return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Check which asset it uses, then try again with that pair or a dollar amount.";
   if (/image/i.test(message)) return "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
-  if (/ticker matches/i.test(message)) return "⚠️ More than indexed token uses that ticker. Send me the contract address so I choose the right one!";
+  if (/ticker matches/i.test(message)) return "⚠️ More than one indexed token uses that ticker. Send me the contract address so I choose the right one!";
   if (/specify the token|contract address|token lookup|held token/i.test(message)) return "🔎 I couldn't identify that token. Try a ticker you hold or send its contract address.";
   if (/launch was not found|no completed Pons launch/i.test(message)) return "🔎 I couldn't find a completed Pons launch for that token.";
   if (/launch creator|fee beneficiary/i.test(message)) return "🔒 This wallet isn't authorized to claim fees for that launch.";
@@ -828,7 +859,7 @@ export const executeCommand = internalAction({
     const structured = args.parsedCommandJson
       ? validateStructuredWalletCommand(JSON.parse(args.parsedCommandJson) as unknown)
       : null;
-    const command = structured || parseWalletCommand(args.text);
+    let command = structured || parseWalletCommand(args.text);
     if (command.kind === "unknown") return { ok: false, message: command.reason };
     const userContext = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.xUserId });
     if (!userContext) return { ok: false, message: "❌ I couldn't connect this X account to its wallet. Please try again!" };
@@ -839,8 +870,13 @@ export const executeCommand = internalAction({
       return { ok: false, message: safeFailure(error) };
     }
     if (!wallet || wallet.status !== "active") return { ok: false, message: "🔒 This wallet isn't available right now. Please try again shortly." };
+    try {
+      command = applyProtectedLaunchProfile(userContext.user.username, command, args.mediaUrl);
+    } catch {
+      return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
+    }
     if (command.kind === "create_wallet" || command.kind === "show_wallet") {
-      return { ok: true, message: `👛 Your Robinhood Chain wallet is ready!\nYour wallet: ${walletPageUrl(wallet.address)}` };
+      return { ok: true, message: `👛 Your Pons Bot wallet is ready!\nYour wallet: ${walletPageUrl(wallet.address)}` };
     }
     if (command.kind === "show_balance") {
       try {
@@ -864,6 +900,9 @@ export const executeCommand = internalAction({
     const source = args.source || "x";
     if (source === "terminal" && !isTerminalCommand(command)) {
       return { ok: false, message: command.kind === "launch" ? "🚀 Launches are available through X posts only." : "❌ That action is not available in the terminal." };
+    }
+    if (source === "terminal" && args.channel === "terminal_form" && command.kind === "swap_token_for_token") {
+      return { ok: false, message: "❌ That action is available through terminal chat only." };
     }
     const requestId = args.requestId || `x:${args.sourcePostId}:${command.kind}`;
     const reserved = await ctx.runMutation(internal.wallets.reserveWalletRequest, {
@@ -891,6 +930,10 @@ export const executeCommand = internalAction({
       await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "rejected", safeError: "verified X account required" });
       return { ok: false, message: "🔒 Token launches are currently available to verified X accounts. Once verified, you'll be ready to launch!" };
     }
+    if (command.kind === "launch" && !walletCanLaunch(wallet.launchEnabled)) {
+      await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "rejected", safeError: "launch unavailable" });
+      return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
+    }
     if (isValueMovingCommand(command)) {
       const limit = reserved.retried
         ? { allowed: true, count: 0, remaining: null as number | null }
@@ -916,7 +959,9 @@ export const executeCommand = internalAction({
         if (command.kind === "launch") await ctx.runAction(internal.ponsV2.refreshRegistry, { identifier: command.pairToken });
         const registry = await ctx.runQuery(internal.registry.runtimeConfig, {});
         const commandToken = "token" in command && typeof command.token === "string"
-          ? await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
+          ? command.kind === "sell"
+            ? await resolveSellToken(ctx, wallet, args.xUserId, command.token)
+            : await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id })
           : undefined;
         const tokenInfo = commandToken && safeAddress(commandToken)
           ? await signerRequest<{ symbol?: string }>("/v1/wallets/balance", {
@@ -946,6 +991,106 @@ export const executeCommand = internalAction({
               const staleOwnedLaunch = !commandToken && /no completed Pons launch|not the launch creator fee beneficiary/i.test(message);
               if (!harmlessEmptySweep && !staleOwnedLaunch) throw error;
             }
+          }
+        }
+        if (command.kind === "swap_token_for_token") {
+          const fromIsEth = /^eth$/i.test(command.fromToken);
+          const toIsEth = /^eth$/i.test(command.toToken);
+          const fromToken = fromIsEth ? undefined : await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.fromToken, walletId: wallet._id });
+          const toToken = toIsEth ? undefined : await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.toToken, walletId: wallet._id });
+          if (!fromIsEth && (!fromToken || !safeAddress(fromToken))) throw new Error("source token lookup was not resolved by the registry");
+          if (!toIsEth && (!toToken || !safeAddress(toToken))) throw new Error("destination token lookup was not resolved by the registry");
+          if ((fromIsEth && toIsEth) || (fromToken && toToken && fromToken.toLowerCase() === toToken.toLowerCase())) throw new Error("a swap needs two different assets");
+
+          const txns: string[] = [];
+          let ethAmount: string;
+          let targetSpendUnit: "eth" | "usd" = "eth";
+          let sourceCompleted = false;
+          try {
+            if (fromToken && toToken) {
+              const factoryAddress = registry.contracts.pons_v2_factory;
+              const wethAddress = registry.contracts.weth;
+              const quoterAddress = registry.contracts.swap_quoter;
+              if (!safeAddress(factoryAddress) || !safeAddress(wethAddress) || !safeAddress(quoterAddress)) throw new Error("swap contracts are missing from the registry");
+              const targetPair = await signerRequest<PonsPairInfo>("/v1/tokens/pons-pair", { token: toToken, factoryAddress });
+              if (targetPair.isPons && !targetPair.nativePair && targetPair.pairToken?.toLowerCase() === fromToken.toLowerCase()) {
+                const quoted = await signerRequest<{ raw: string; display: string }>("/v1/tokens/usd-amount", {
+                  token: fromToken, amount: command.amount, wethAddress, quoterAddress,
+                });
+                if (!/^\d+$/.test(quoted.raw) || !/^[0-9]+(?:\.[0-9]+)?$/.test(quoted.display) || BigInt(quoted.raw) <= 0n) throw new Error("direct pair amount was not verified");
+                const before = await exactTokenBalance(wallet, args.xUserId, toToken);
+                const directBuy: Extract<WalletCommand, { kind: "buy" }> = {
+                  kind: "buy", amount: quoted.display, unit: "pair", token: command.toToken,
+                  pairAsset: fromToken, slippageBps: command.slippageBps,
+                };
+                const direct = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:direct-pair-buy`, directBuy,
+                  await operationFor(directBuy, undefined, undefined, undefined, toToken, registry));
+                const after = await exactTokenBalance(wallet, args.xUserId, toToken);
+                const received = BigInt(after.raw) - BigInt(before.raw);
+                if (received <= 0n || after.decimals !== before.decimals) throw new Error("destination token output was not verified");
+                await Promise.all([
+                  ctx.runMutation(internal.wallets.indexWalletToken, { walletId: wallet._id, tokenAddress: fromToken, symbol: command.fromToken, involvedByLaunch: false, involvedByTransaction: true }),
+                  ctx.runMutation(internal.wallets.indexWalletToken, { walletId: wallet._id, tokenAddress: toToken, symbol: command.toToken, involvedByLaunch: false, involvedByTransaction: true }),
+                ]);
+                await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "confirmed", transactionHash: direct.transactionHash });
+                return {
+                  ok: true, transactionHash: direct.transactionHash,
+                  message: `✅ Success! Swapped $${command.amount} of ${assetLabel(command.fromToken)} directly for ${formatUnits(received, after.decimals)} ${assetLabel(command.toToken)}!\nYour TXN: ${transactionUrl(direct.transactionHash)}${warning}`,
+                };
+              }
+            }
+            if (fromIsEth) {
+              ethAmount = command.amount;
+              targetSpendUnit = "usd";
+            } else {
+              const sourceSale: WalletCommand = { kind: "sell", amount: command.amount, unit: "usd", token: command.fromToken, slippageBps: command.slippageBps };
+              const sold = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:source-sale`, sourceSale,
+                await operationFor(sourceSale, undefined, undefined, undefined, fromToken, registry));
+              txns.push(sold.transactionHash);
+              sourceCompleted = true;
+              if (!sold.tradeOutputDisplay || !sold.tradeOutputTokenAddress) throw new Error("source sale output was not verified");
+              const outputAmount = tradeDisplayAmount(sold.tradeOutputDisplay);
+              if (/^0x0{40}$/i.test(sold.tradeOutputTokenAddress)) {
+                ethAmount = outputAmount;
+              } else {
+                const bridgeSale: WalletCommand = { kind: "sell", amount: outputAmount, unit: "token", token: sold.tradeOutputTokenAddress, slippageBps: command.slippageBps };
+                const bridged = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:source-pair-to-eth`, bridgeSale,
+                  await operationFor(bridgeSale, undefined, undefined, undefined, sold.tradeOutputTokenAddress, registry));
+                txns.push(bridged.transactionHash);
+                if (!bridged.tradeOutputDisplay || !bridged.tradeOutputTokenAddress || !/^0x0{40}$/i.test(bridged.tradeOutputTokenAddress)) throw new Error("ETH bridge output was not verified");
+                ethAmount = tradeDisplayAmount(bridged.tradeOutputDisplay);
+              }
+            }
+
+            if (toIsEth) {
+              await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "confirmed", transactionHash: txns.at(-1)! });
+              return { ok: true, transactionHash: txns.at(-1), message: `✅ Success! Swapped $${command.amount} of ${assetLabel(command.fromToken)} for ETH!\n${txns.map((hash, index) => `Swap ${index + 1} TXN: ${transactionUrl(hash)}`).join("\n")}${warning}` };
+            }
+
+            const targetBefore = await exactTokenBalance(wallet, args.xUserId, toToken!);
+            const targetBuy: Extract<WalletCommand, { kind: "buy" }> = { kind: "buy", amount: ethAmount, unit: targetSpendUnit, token: command.toToken, slippageBps: command.slippageBps };
+            const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:target`, targetBuy, toToken!, registry);
+            if (funded.fundingTransactionHash) txns.push(funded.fundingTransactionHash);
+            const bought = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:target-buy`, funded.command,
+              await operationFor(funded.command, undefined, undefined, undefined, toToken, registry));
+            txns.push(bought.transactionHash);
+            const targetAfter = await exactTokenBalance(wallet, args.xUserId, toToken!);
+            const received = BigInt(targetAfter.raw) - BigInt(targetBefore.raw);
+            if (received <= 0n || targetAfter.decimals !== targetBefore.decimals) throw new Error("destination token output was not verified");
+            const receivedDisplay = formatUnits(received, targetAfter.decimals);
+            const indexing: Array<Promise<unknown>> = [
+              ctx.runMutation(internal.wallets.indexWalletToken, { walletId: wallet._id, tokenAddress: toToken!, symbol: command.toToken, involvedByLaunch: false, involvedByTransaction: true }),
+            ];
+            if (fromToken) indexing.push(ctx.runMutation(internal.wallets.indexWalletToken, { walletId: wallet._id, tokenAddress: fromToken, symbol: command.fromToken, involvedByLaunch: false, involvedByTransaction: true }));
+            await Promise.all(indexing);
+            await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "confirmed", transactionHash: bought.transactionHash });
+            return {
+              ok: true, transactionHash: bought.transactionHash,
+              message: `✅ Success! Swapped $${command.amount} of ${assetLabel(command.fromToken)} for ${receivedDisplay} ${assetLabel(command.toToken)}!\n${txns.map((hash, index) => `Swap ${index + 1} TXN: ${transactionUrl(hash)}`).join("\n")}${warning}`,
+            };
+          } catch (error) {
+            if (sourceCompleted && txns.length) throw new Error(`The ${assetLabel(command.fromToken)} sale completed, but the purchase of ${assetLabel(command.toToken)} did not. The intermediate proceeds remain in your wallet. Completed TXN: ${transactionUrl(txns.at(-1)!)} ${safeFailure(error)}`);
+            throw error;
           }
         }
         if (command.kind === "buy_and_send") {
@@ -1135,7 +1280,7 @@ export const executeCommand = internalAction({
         if (executionLockHeld) await ctx.runMutation(internal.wallets.releaseWalletExecutionLock, { walletId: wallet._id, requestId });
       }
     }
-    return { ok: false, message: "✨ I can create your wallet, show balances, buy, sell, send, burn, launch on Pons V2, and claim fees after launch. Tell me what you'd like to do!" };
+    return { ok: false, message: "✨ I can create your wallet, show balances, buy, sell, swap tokens, send, burn, launch on Pons V2, and claim creator fees. Tell me what you'd like to do!" };
   },
 });
 
@@ -1206,7 +1351,7 @@ export const listTerminalHistory = internalQuery({
     for (const item of registryTokens) if (!catalog.has(item.normalizedAddress)) catalog.set(item.normalizedAddress, { tokenAddress: item.address, symbol: item.symbol, name: item.name });
     return {
       messages: messages.reverse().map((item) => ({ role: item.role, messageType: item.messageType, text: item.text, requestId: item.requestId, createdAt: item.createdAt })),
-      actions: requests.map((item) => { let command: Record<string, unknown> = {}; try { command = JSON.parse(item.normalizedJson); } catch {} return { requestId: item.requestId, kind: item.kind, amount: typeof command.amount === "string" ? command.amount : undefined, token: typeof command.token === "string" ? command.token : undefined, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt }; }),
+      actions: requests.map((item) => { let command: Record<string, unknown> = {}; try { command = JSON.parse(item.normalizedJson); } catch {} return { requestId: item.requestId, kind: item.kind, amount: typeof command.amount === "string" ? command.amount : undefined, token: typeof command.token === "string" ? command.token : typeof command.fromToken === "string" && typeof command.toToken === "string" ? `${command.fromToken} → ${command.toToken}` : undefined, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt }; }),
       launches: launches.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
       tokenCatalog: [...catalog.values()],
     };
@@ -1253,7 +1398,7 @@ export const executeTerminalCommand = action({
         return { ok: true, message };
       }
       if (intent.kind !== "command") {
-        const message = intent.kind === "irrelevant" ? "Ask about your wallet or enter a Buy, Sell, Send, or Burn request." : unknownWalletMessage();
+        const message = intent.kind === "irrelevant" ? "Ask about your wallet, or enter a buy, sell, swap, send, burn, or fee-claim request." : unknownWalletMessage();
         await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
         return { ok: false, message };
       }
@@ -1351,6 +1496,23 @@ async function exactTokenBalance(wallet: Doc<"cryptoWallets">, xUserId: string, 
   return { raw: balance.raw, decimals: balance.decimals! };
 }
 
+async function resolveSellToken(ctx: ActionCtx, wallet: Doc<"cryptoWallets">, xUserId: string, identifier: string) {
+  if (safeAddress(identifier)) return identifier;
+  const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier, walletId: wallet._id });
+  if (matches.length <= 1) return matches[0] || identifier;
+  const balances = await Promise.all(matches.map(async (token) => {
+    try {
+      const balance = await exactTokenBalance(wallet, xUserId, token);
+      return BigInt(balance.raw) > 0n ? token : undefined;
+    } catch {
+      return undefined;
+    }
+  }));
+  const held = balances.filter((token): token is string => Boolean(token));
+  if (held.length === 1) return held[0];
+  throw new Error("that ticker matches more than one token; use the contract address");
+}
+
 async function fundPairAsset(
   ctx: ActionCtx,
   wallet: Doc<"cryptoWallets">,
@@ -1410,6 +1572,7 @@ async function waitForConfirmedRequest(ctx: ActionCtx, requestId: string) {
       return {
         transactionHash: current.request.transactionHash, tokenAddress: current.launch?.tokenAddress,
         claimedDisplay: current.transaction?.claimedDisplay, tradeOutputDisplay: current.transaction?.tradeOutputDisplay,
+        tradeOutputTokenAddress: current.transaction?.tradeOutputTokenAddress,
         involvedPairTokenAddress: current.transaction?.involvedPairTokenAddress,
       };
     }
@@ -1436,7 +1599,13 @@ async function executeConfirmedStep(
   });
   if (!reserved.inserted) {
     if (reserved.request?.status === "confirmed" && reserved.request.transactionHash) {
-      return { transactionHash: reserved.request.transactionHash };
+      const current = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId });
+      return {
+        transactionHash: reserved.request.transactionHash,
+        tradeOutputDisplay: current?.transaction?.tradeOutputDisplay,
+        tradeOutputTokenAddress: current?.transaction?.tradeOutputTokenAddress,
+        involvedPairTokenAddress: current?.transaction?.involvedPairTokenAddress,
+      };
     }
     if (reserved.request?.status === "failed" || reserved.request?.status === "rejected") {
       throw new Error(reserved.request.safeError || `${command.kind} step failed`);
@@ -1463,7 +1632,10 @@ async function executeConfirmedStep(
         tradeOutputDisplay: result.tradeOutputDisplay, tradeOutputTokenAddress: result.tradeOutputTokenAddress,
         tradeOutputBalanceBefore: result.tradeOutputBalanceBefore, involvedPairTokenAddress: result.involvedPairTokenAddress,
       });
-      return { transactionHash: result.transactionHash };
+      return {
+        transactionHash: result.transactionHash, tradeOutputDisplay: result.tradeOutputDisplay,
+        tradeOutputTokenAddress: result.tradeOutputTokenAddress, involvedPairTokenAddress: result.involvedPairTokenAddress,
+      };
     }
     if (result.status === "prepared") {
       if (!result.signedTransaction || !/^0x[a-fA-F0-9]+$/.test(result.signedTransaction)) throw new Error("signer returned an invalid prepared transaction");

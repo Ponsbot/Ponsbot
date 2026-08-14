@@ -86,7 +86,9 @@ describe("deterministic X wallet replies", () => {
   it("explains live creator-fee claims and paired-asset trades", () => {
     expect(walletHelpMessage("fees")).toContain("claim my fees");
     expect(walletHelpMessage("fees")).not.toContain("not currently supported");
-    expect(walletHelpMessage("buy_sell")).toContain("buy 5 MSFT of PONSBOT");
+    expect(walletHelpMessage("buy_sell")).toContain("buy $5 of PONSBOT");
+    expect(walletHelpMessage("buy_sell")).toContain("sell 100 MSFT");
+    expect(walletHelpMessage("buy_sell")).toContain("swap $25 of SNDK for PONSBOT");
   });
 
   it("recognizes the one supported combined operation", () => {

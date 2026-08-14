@@ -91,6 +91,10 @@ export const ponsPairRequestSchema = z.object({
   token: address, factoryAddress: address,
 }).strict();
 
+export const usdTokenAmountRequestSchema = z.object({
+  token: address, amount, wethAddress: address, quoterAddress: address,
+}).strict();
+
 const transactionRequest = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID), ownerReference, walletRef: address, expectedFrom: address,
   expectedTo: address,

@@ -69,7 +69,7 @@ export function TerminalClient() {
           {(data?.history.messages || []).map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.createdAt}-${index}`}><small>{message.role === "user" ? `@${session.username}` : "Pons Bot"}</small><p>{message.text}</p></div>)}
           {!data?.history.messages.length ? <div className="terminal-line assistant"><small>Pons Bot</small><p>Pons Bot terminal active. What would you like to do?</p></div> : null}
         </div>
-        <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, send, or burn, or ask about what I can do!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
+        <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
         {notice ? <p className="terminal-notice">{notice}</p> : null}
       </div>
     </div>

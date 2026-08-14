@@ -30,7 +30,7 @@ export default defineSchema({
 
   cryptoWallets: defineTable({
     ownerXUserId: v.string(), address: v.string(), normalizedAddress: v.optional(v.string()), signerWalletRef: v.string(), chainId: v.number(),
-    status: v.union(v.literal("active"), v.literal("frozen")), createdAt: v.number(), updatedAt: v.number(),
+    status: v.union(v.literal("active"), v.literal("frozen")), launchEnabled: v.optional(v.boolean()), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_owner_x_user_id", ["ownerXUserId"]).index("by_address", ["address"]).index("by_normalized_address", ["normalizedAddress"]),
 
   walletHoldingSnapshots: defineTable({

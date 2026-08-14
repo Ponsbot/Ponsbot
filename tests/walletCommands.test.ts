@@ -2,6 +2,25 @@ import { describe, expect, it } from "vitest";
 import { parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
 
 describe("X wallet commands", () => {
+  it("parses only the explicit dollar token-for-token swap shape", () => {
+    expect(parseWalletCommand("Swap $25 of SNDK for PONSBOT")).toEqual({
+      kind: "swap_token_for_token", amount: "25", unit: "usd", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250,
+    });
+    expect(parseWalletCommand("swap $12.50 worth of 0x1111111111111111111111111111111111111111 for $MSFT at 1% slippage")).toEqual({
+      kind: "swap_token_for_token", amount: "12.50", unit: "usd", fromToken: "0x1111111111111111111111111111111111111111", toToken: "MSFT", slippageBps: 100,
+    });
+    expect(parseWalletCommand("swap SNDK into PONSBOT").kind).toBe("unknown");
+    expect(parseWalletCommand("swap $25 of SNDK to PONSBOT").kind).toBe("unknown");
+  });
+
+  it("strictly validates structured token-for-token swaps", () => {
+    expect(validateStructuredWalletCommand({ kind: "swap_token_for_token", amount: "25", unit: "usd", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250 })).toEqual({
+      kind: "swap_token_for_token", amount: "25", unit: "usd", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250,
+    });
+    expect(validateStructuredWalletCommand({ kind: "swap_token_for_token", amount: "25", unit: "usd", fromToken: "SNDK", toToken: "SNDK", slippageBps: 250 })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "swap_token_for_token", amount: "25", unit: "token", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250 })).toBeNull();
+  });
+
   it("parses buy-and-burn only when both literal words are present", () => {
     expect(parseWalletCommand("buy $25 of PONSBOT and burn it")).toEqual({ kind: "buy_and_burn", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250 });
     expect(parseWalletCommand("burn the PONSBOT I buy with 0.01 ETH")).toEqual({ kind: "buy_and_burn", amount: "0.01", unit: "eth", token: "PONSBOT", slippageBps: 250 });

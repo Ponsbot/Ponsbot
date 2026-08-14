@@ -183,6 +183,12 @@ export async function ponsPairInfo(token: Address, factory: Address) {
   };
 }
 
+export async function usdTokenAmount(token: Address, amount: string, weth: Address, quoter: Address) {
+  const raw = await tokenAmount(token, zeroAddress, amount, "usd", { weth, quoter, fee: 10_000 });
+  const decimals = await rpcClient().readContract({ address: token, abi: tokenAbi, functionName: "decimals" });
+  return { raw: raw.toString(), display: formatUnits(raw, decimals) };
+}
+
 type V4PoolKey = { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address };
 
 function encodeV4ExactInput(poolKey: V4PoolKey, zeroForOne: boolean, amountIn: bigint, minimum: bigint) {

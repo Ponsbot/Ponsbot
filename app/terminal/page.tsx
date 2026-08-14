@@ -4,7 +4,7 @@ import { TerminalClient } from "@/components/TerminalClient";
 
 export const metadata: Metadata = {
   title: { absolute: "Pons Bot" },
-  description: "Connect X to buy, sell, send, and burn from your Pons Bot wallet.",
+  description: "Connect X to check balances, buy, sell, swap, send, burn, and claim creator fees from your Pons Bot wallet.",
   alternates: { canonical: "/terminal" },
 };
 
