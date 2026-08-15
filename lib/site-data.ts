@@ -77,6 +77,8 @@ const STOCK_ICON_DOMAINS: Record<string, string> = {
   GME: "gamestop.com", AAPL: "apple.com", SPY: "ssga.com", SNDK: "sandisk.com",
   AMD: "amd.com", AMZN: "amazon.com", MSFT: "microsoft.com", META: "meta.com",
   CRCL: "circle.com", COIN: "coinbase.com", MU: "micron.com", PLTR: "palantir.com",
+  TTWO: "take2games.com", COST: "costco.com", DJT: "tmtgcorp.com", MSTR: "strategy.com",
+  QQQ: "invesco.com", RDDT: "reddit.com",
   USDG: "globaldollar.com",
 };
 

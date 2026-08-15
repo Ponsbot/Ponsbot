@@ -32,7 +32,7 @@ const scenarios: Scenario[] = [
   { post: "collect creator revenue for $PONSBOT", kind: "command", operation: "claim_fees", fields: { token: "PONSBOT" } },
   { post: "what currency do my creator fees arrive in?", kind: "help", topic: "fees" },
   { post: "Launch ‘Rain Check’ as $RAIN; pair against AAPL; dev buy $12 of AAPL", kind: "command", operation: "launch", fields: { name: "Rain Check", symbol: "RAIN", pairToken: "AAPL", devBuy: { amount: "12", unit: "usd" } } },
-  { post: "new token: Static Bloom / $BLOOM | site staticbloom.xyz | TG @staticbloom | X @bloomstatic", kind: "command", operation: "launch", fields: { name: "Static Bloom", symbol: "BLOOM", website: "https://staticbloom.xyz", telegram: "https://t.me/staticbloom", twitter: "https://x.com/bloomstatic" } },
+  { post: "new token: Static Bloom / $BLOOM | site staticbloom.xyz | TG t.me/staticbloom | X @bloomstatic", kind: "command", operation: "launch", fields: { name: "Static Bloom", symbol: "BLOOM", website: "https://staticbloom.xyz", telegram: "https://t.me/staticbloom", twitter: "https://x.com/bloomstatic" } },
   { post: "deploy After Hours ticker $LATE, description ‘markets never sleep’, with a 2 MSFT developer buy, paired with MSFT", kind: "command", operation: "launch", fields: { name: "After Hours", symbol: "LATE", description: "markets never sleep", pairToken: "MSFT", devBuy: { amount: "2", unit: "pair" } } },
   { post: "I have art attached—make Signal Fire, ticker $FIRE", kind: "command", operation: "launch" },
   { post: "launch a coin called Maybe Later", kind: "unknown_wallet" },

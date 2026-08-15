@@ -2,6 +2,14 @@ import type { WalletCommand } from "../convex/walletCommands";
 
 export const PROTECTED_LAUNCH_X_USER_ID = "2085516993315188736";
 
+export function launchTickerAllowed(xUserId: string, command: WalletCommand) {
+  if (command.kind !== "launch") return true;
+  const symbol = command.symbol.trim().replace(/^\$/, "").toUpperCase();
+  if (symbol === "PONS") return false;
+  if (symbol === "PONSBOT") return xUserId === PROTECTED_LAUNCH_X_USER_ID;
+  return true;
+}
+
 const PROTECTED_LAUNCH = {
   kind: "launch",
   launchMode: "pons",

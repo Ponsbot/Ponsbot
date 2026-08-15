@@ -80,9 +80,116 @@ function cleanAmount(value: string) {
   return cleaned.startsWith(".") ? `0${cleaned}` : cleaned;
 }
 
-function labeledUrl(text: string, labels: string) {
-  return text.match(new RegExp(`\\b(?:${labels})\\s*(?:is|=|:)?\\s*(https:\\/\\/[^\\s,;]+)`, "i"))?.[1]
-    ?.replace(/[.)]+$/, "");
+function cleanLabeledLink(value: string) {
+  return stripWrappingQuotes(value.trim()).replace(/[.,;!?)}\]]+$/, "");
+}
+
+function labeledWebsiteValue(text: string) {
+  return text.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
+}
+
+function labeledXValue(text: string) {
+  const valueShape = "(@[a-zA-Z0-9_]{1,15}|(?:https?:\\/\\/)?(?:www\\.)?[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}(?:\\/[^\\s,;]*)?)";
+  return text.match(new RegExp(`\\b(?:x|twitter)(?:\\s+link)?\\s*(?:is|=|:)\\s*${valueShape}`, "i"))?.[1]
+    || text.match(/\b(?:x|twitter)(?:\s+link)?\s+(@[a-zA-Z0-9_]{1,15}|(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/[^\s,;]+)/i)?.[1];
+}
+
+function textOutsideQuotedContent(text: string) {
+  return text.replace(/"[^"\r\n]*"|“[^”\r\n]*”|'[^'\r\n]*'|‘[^’\r\n]*’/g, (value) => " ".repeat(value.length));
+}
+
+export function normalizeXUrl(value: string) {
+  const cleaned = cleanLabeledLink(value);
+  const handle = cleaned.match(/^@([a-zA-Z0-9_]{1,15})$/)?.[1];
+  const candidate = handle ? `https://x.com/${handle}`
+    : /^https?:\/\//i.test(cleaned) ? cleaned
+      : `https://${cleaned}`;
+  let url: URL;
+  try { url = new URL(candidate); } catch { throw new Error("x link must use x.com/username"); }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const parts = url.pathname.split("/").filter(Boolean);
+  if ((host !== "x.com" && host !== "twitter.com") || parts.length !== 1
+    || !/^[a-zA-Z0-9_]{1,15}$/.test(parts[0]) || url.username || url.password || url.port || url.search || url.hash) {
+    throw new Error("x link must use x.com/username");
+  }
+  return `https://x.com/${parts[0]}`;
+}
+
+function unsafeWebsiteHost(hostname: string) {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")
+    || host.endsWith(".internal") || host.endsWith(".lan") || host.includes(":")) return true;
+  const octets = host.split(".").map(Number);
+  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = octets;
+  return a === 0 || a === 10 || a === 127 || a >= 224
+    || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19));
+}
+
+export function normalizeWebsiteUrl(value: string) {
+  const cleaned = cleanLabeledLink(value);
+  const candidate = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+  let url: URL;
+  try { url = new URL(candidate); } catch { throw new Error("website link is invalid"); }
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("website link is invalid");
+  if (!url.hostname || url.username || url.password || url.port || unsafeWebsiteHost(url.hostname)) throw new Error("website link is invalid or unsafe");
+  if (!/^[a-z0-9.-]+$/i.test(url.hostname) || url.hostname.startsWith(".") || url.hostname.endsWith(".")
+    || url.hostname.includes("..") || (!url.hostname.includes(".") && !/^\d+\.\d+\.\d+\.\d+$/.test(url.hostname))) {
+    throw new Error("website link is invalid");
+  }
+  url.protocol = "https:";
+  return url.pathname === "/" && !url.search && !url.hash ? url.origin : url.toString();
+}
+
+export function normalizeTelegramUrl(value: string) {
+  const cleaned = stripWrappingQuotes(value.trim()).replace(/[.,;!?)}\]]+$/, "");
+  const candidate = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+  let url: URL;
+  try { url = new URL(candidate); } catch { throw new Error("telegram link must use t.me/XXXXX"); }
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  const parts = url.pathname.split("/").filter(Boolean);
+  if ((host !== "t.me" && host !== "telegram.me") || parts.length !== 1
+    || !/^[a-zA-Z0-9_]{1,32}$/.test(parts[0]) || url.username || url.password || url.port || url.search || url.hash) {
+    throw new Error("telegram link must use t.me/XXXXX");
+  }
+  return `https://t.me/${parts[0]}`;
+}
+
+export function normalizeLaunchTelegram(command: WalletCommand, text?: string): WalletCommand {
+  if (command.kind !== "launch") return command;
+  const labeled = text?.match(/\b(?:telegram|tg)\s*(?:is|=|:)?\s*([^\s,;]+)/i)?.[1];
+  const supplied = labeled || command.telegram;
+  if (!supplied) return command;
+  return { ...command, telegram: normalizeTelegramUrl(supplied) };
+}
+
+export function normalizeLaunchLinks(command: WalletCommand, text?: string): WalletCommand {
+  if (command.kind !== "launch") return command;
+  const operativeText = text ? textOutsideQuotedContent(text) : undefined;
+  const explicitWebsite = operativeText?.match(/\b(?:website|site)\s*(?:is|=|:)\s*([^\s,;]+)/i)?.[1];
+  const explicitX = operativeText?.match(/\b(?:x|twitter)(?:\s+link)?\s*(?:is|=|:)\s*([^\s,;]+)/i)?.[1];
+  const website = (operativeText ? labeledWebsiteValue(operativeText) : undefined) || explicitWebsite || command.website;
+  const twitter = (operativeText ? labeledXValue(operativeText) : undefined) || explicitX || command.twitter;
+  return {
+    ...command,
+    ...(website ? { website: normalizeWebsiteUrl(website) } : {}),
+    ...(twitter ? { twitter: normalizeXUrl(twitter) } : {}),
+  };
+}
+
+function normalizedTelegramOrRaw(value: string) {
+  try { return normalizeTelegramUrl(value); } catch { return value; }
+}
+
+
+function normalizedWebsiteOrRaw(value: string) {
+  try { return normalizeWebsiteUrl(value); } catch { return value; }
+}
+
+function normalizedXOrRaw(value: string) {
+  try { return normalizeXUrl(value); } catch { return value; }
 }
 
 function quotedField(text: string, label: string, maxLength: number) {
@@ -135,9 +242,12 @@ function parseLaunch(text: string): WalletCommand | null {
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
 
   const description = quotedField(text, "description|desc", 280);
-  const website = labeledUrl(text, "website|site");
-  const twitter = labeledUrl(text, "x|twitter");
-  const telegram = labeledUrl(text, "telegram|tg");
+  const websiteRaw = labeledWebsiteValue(text);
+  const website = websiteRaw ? normalizedWebsiteOrRaw(websiteRaw) : undefined;
+  const twitterRaw = labeledXValue(text);
+  const twitter = twitterRaw ? normalizedXOrRaw(twitterRaw) : undefined;
+  const telegramRaw = text.match(/\b(?:telegram|tg)\s*(?:is|=|:)?\s*([^\s,;]+)/i)?.[1];
+  const telegram = telegramRaw ? normalizedTelegramOrRaw(telegramRaw) : undefined;
   const pairToken = extractGroundedPairToken(text);
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
@@ -379,10 +489,8 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     const symbol = typeof item.symbol === "string" ? cleanSymbol(item.symbol) : "";
     if (!normalizedName || !symbol) return null;
     const optionalText = (key: string, max: number) => typeof item[key] === "string" && item[key] ? stripWrappingQuotes(String(item[key])).slice(0, max) : undefined;
-    const optionalUrl = (key: string) => {
-      const candidate = optionalText(key, 300);
-      return candidate && /^https:\/\//i.test(candidate) ? candidate : undefined;
-    };
+    const website = optionalText("website", 300);
+    const twitter = optionalText("twitter", 300);
     let devBuy: { amount: string; unit: "eth" | "usd" | "pair" } | undefined;
     const pairToken = item.pairToken === undefined ? undefined : tokenIdentifier(item.pairToken);
     if (item.pairToken !== undefined && !pairToken) return null;
@@ -395,9 +503,9 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     return {
       kind, launchMode: "pons", name: normalizedName, symbol,
       ...(optionalText("description", 280) ? { description: optionalText("description", 280) } : {}),
-      ...(optionalUrl("website") ? { website: optionalUrl("website") } : {}),
-      ...(optionalUrl("twitter") ? { twitter: optionalUrl("twitter") } : {}),
-      ...(optionalUrl("telegram") ? { telegram: optionalUrl("telegram") } : {}),
+      ...(website ? { website: normalizedWebsiteOrRaw(website) } : {}),
+      ...(twitter ? { twitter: normalizedXOrRaw(twitter) } : {}),
+      ...(optionalText("telegram", 300) ? { telegram: normalizedTelegramOrRaw(optionalText("telegram", 300)!) } : {}),
       ...(pairToken ? { pairToken } : {}),
       ...(devBuy ? { devBuy } : {}),
     };

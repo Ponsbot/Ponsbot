@@ -46,7 +46,7 @@ function rateLimitMessage(reason: string) {
 
 async function helpReply(ctx: ActionCtx, topic: Parameters<typeof walletHelpMessage>[0]) {
   if (topic !== "pairs") return walletHelpMessage(topic);
-  const labels = ["NVDA", "SPCX", "GOOGL", "TSLA", "GME", "AAPL", "SPY", "SNDK", "AMD", "AMZN", "MSFT", "META", "CRCL", "COIN", "MU", "PLTR", "USDG", "ETH"];
+  const labels = ["NVDA", "SPCX", "GOOGL", "TSLA", "GME", "AAPL", "SPY", "SNDK", "AMD", "AMZN", "MSFT", "META", "CRCL", "COIN", "MU", "PLTR", "TTWO", "COST", "DJT", "MSTR", "QQQ", "RDDT", "USDG", "ETH"];
   return `🔗 You can pair your Pons V2 launch with: ${labels.join(", ")}.`;
 }
 

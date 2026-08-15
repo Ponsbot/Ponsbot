@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
+import { normalizeLaunchLinks, normalizeLaunchTelegram, normalizeTelegramUrl, normalizeWebsiteUrl, normalizeXUrl, parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
 
 describe("X wallet commands", () => {
   it("parses only the explicit dollar token-for-token swap shape", () => {
@@ -37,6 +37,45 @@ describe("X wallet commands", () => {
     expect(parseWalletCommand("launch Ponsbot ticker PONSBOT pair with MSFT dev buy 2 MSFT telegram https://t.me/ponsbotfamily")).toMatchObject({
       kind: "launch", pairToken: "MSFT", devBuy: { amount: "2", unit: "pair" }, telegram: "https://t.me/ponsbotfamily",
     });
+  });
+  it("normalizes Telegram launch links to canonical HTTPS t.me URLs", () => {
+    expect(normalizeTelegramUrl("t.me/ponsbotfamily")).toBe("https://t.me/ponsbotfamily");
+    expect(normalizeTelegramUrl("http://telegram.me/ponsbotfamily/")).toBe("https://t.me/ponsbotfamily");
+    expect(() => normalizeTelegramUrl("@ponsbotfamily")).toThrow("telegram link must use t.me/XXXXX");
+    expect(parseWalletCommand("launch Test ticker TEST tg t.me/test")).toMatchObject({ telegram: "https://t.me/test" });
+    expect(validateStructuredWalletCommand({ kind: "launch", name: "Test", symbol: "TEST", telegram: "http://t.me/test" })).toMatchObject({ telegram: "https://t.me/test" });
+  });
+  it("rejects malformed or non-Telegram launch links", () => {
+    expect(() => normalizeTelegramUrl("https://example.com/test")).toThrow("telegram link must use t.me/XXXXX");
+    expect(() => normalizeTelegramUrl("https://t.me/one/two")).toThrow("telegram link must use t.me/XXXXX");
+    expect(() => normalizeLaunchTelegram({ kind: "launch", launchMode: "pons", name: "Test", symbol: "TEST" }, "launch Test ticker TEST tg example.com/test")).toThrow("telegram link must use t.me/XXXXX");
+    const parsed = parseWalletCommand("launch Test ticker TEST tg example.com/test");
+    expect(parsed).toMatchObject({ kind: "launch", telegram: "example.com/test" });
+    expect(() => normalizeLaunchTelegram(parsed)).toThrow("telegram link must use t.me/XXXXX");
+  });
+  it("normalizes X handles and legacy links to canonical x.com URLs", () => {
+    expect(normalizeXUrl("@Ponsbotfamily")).toBe("https://x.com/Ponsbotfamily");
+    expect(normalizeXUrl("www.x.com/Ponsbotfamily")).toBe("https://x.com/Ponsbotfamily");
+    expect(normalizeXUrl("http://twitter.com/Ponsbotfamily")).toBe("https://x.com/Ponsbotfamily");
+    expect(validateStructuredWalletCommand({ kind: "launch", name: "Test", symbol: "TEST", twitter: "twitter.com/test" })).toMatchObject({ twitter: "https://x.com/test" });
+  });
+  it("rejects malformed X links instead of silently dropping them", () => {
+    expect(() => normalizeXUrl("https://example.com/user")).toThrow("x link must use x.com/username");
+    expect(() => normalizeXUrl("https://x.com/user/status/1")).toThrow("x link must use x.com/username");
+    expect(() => normalizeXUrl("https://x.com/user?ref=test")).toThrow("x link must use x.com/username");
+    expect(() => normalizeLaunchLinks({ kind: "launch", launchMode: "pons", name: "Test", symbol: "TEST" }, "launch Test ticker TEST X: example.com/user")).toThrow("x link must use x.com/username");
+    expect(normalizeLaunchLinks({ kind: "launch", launchMode: "pons", name: "Test", symbol: "TEST" }, 'launch Test ticker TEST description "mentions X: example.com/user"')).not.toHaveProperty("twitter");
+  });
+  it("normalizes public websites to HTTPS while preserving paths", () => {
+    expect(normalizeWebsiteUrl("example.com")).toBe("https://example.com");
+    expect(normalizeWebsiteUrl("http://www.example.com/project")).toBe("https://www.example.com/project");
+    expect(validateStructuredWalletCommand({ kind: "launch", name: "Test", symbol: "TEST", website: "http://example.com/token" })).toMatchObject({ website: "https://example.com/token" });
+  });
+  it("rejects malformed, credentialed, and private website destinations", () => {
+    expect(() => normalizeWebsiteUrl("localhost/test")).toThrow(/website link is invalid/);
+    expect(() => normalizeWebsiteUrl("http://127.0.0.1/test")).toThrow(/website link is invalid/);
+    expect(() => normalizeWebsiteUrl("https://user:pass@example.com")).toThrow(/website link is invalid/);
+    expect(() => normalizeLaunchLinks({ kind: "launch", launchMode: "pons", name: "Test", symbol: "TEST" }, "launch Test ticker TEST website: localhost/test")).toThrow(/website link is invalid/);
   });
   it("parses buys with default and custom slippage", () => {
     expect(parseWalletCommand("@Ponsbot buy $25 of $ROOT")).toEqual({ kind: "buy", amount: "25", unit: "usd", token: "ROOT", slippageBps: 250 });

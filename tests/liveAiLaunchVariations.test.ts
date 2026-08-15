@@ -7,7 +7,7 @@ loadEnvConfig(process.cwd());
 const scenarios = [
   { post: "Launch ‘Rain Check’ as $RAIN; pair against AAPL; dev buy $12 of AAPL", expected: { name: "Rain Check", symbol: "RAIN", pairToken: "AAPL", devBuy: { amount: "12", unit: "usd" } } },
   { post: 'Launch "Velvet Morning" ticker $VELVET website velvetmorning.xyz', expected: { name: "Velvet Morning", symbol: "VELVET", website: "https://velvetmorning.xyz" } },
-  { post: "deploy Quiet Signal symbol $QUIET — X @quietsignal — TG @quietsignalchat", expected: { name: "Quiet Signal", symbol: "QUIET", twitter: "https://x.com/quietsignal", telegram: "https://t.me/quietsignalchat" } },
+  { post: "deploy Quiet Signal symbol $QUIET — X @quietsignal — TG t.me/quietsignalchat", expected: { name: "Quiet Signal", symbol: "QUIET", twitter: "https://x.com/quietsignal", telegram: "https://t.me/quietsignalchat" } },
   { post: "Create a token named Glass Garden, ticker $GLASS\nWebsite: https://glass.garden\nX: https://x.com/glassgarden", expected: { name: "Glass Garden", symbol: "GLASS", website: "https://glass.garden", twitter: "https://x.com/glassgarden" } },
   { post: "launch ‘After Midnight’ as $LATE, description ‘for traders who never sleep’", expected: { name: "After Midnight", symbol: "LATE", description: "for traders who never sleep" } },
   { post: "New token: Paper Boat / $BOAT | pair with SNDK | dev buy 3 SNDK", expected: { name: "Paper Boat", symbol: "BOAT", pairToken: "SNDK", devBuy: { amount: "3", unit: "pair" } } },

@@ -30,7 +30,18 @@ const BOOTSTRAP_PAIRS = [
   ["0x6330D8C3178a418788dF01a47479c0ce7CCF450b", "COIN", "Coinbase"],
   ["0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD", "MU", "Micron"],
   ["0x894E1EC2D74FFE5AEF8Dc8A9e84686acCB964F2A", "PLTR", "Palantir"],
+  ["0x5e81213613b6B86EaB4c6c50d718d34359459786", "TTWO", "Take-Two Interactive Software"],
+  ["0x4EA005168D7F09a7A0Ba9D1DEf21a479950E44C2", "COST", "Costco"],
+  ["0x1D11f0496982706C5e14A514D4E79F2e6BdE4516", "DJT", "Trump Media & Technology Group"],
+  ["0xec262a75e413fAfD0dF80480274532C79D42da09", "MSTR", "Strategy"],
+  ["0xD5f3879160bc7c32ebb4dC785F8a4F505888de68", "QQQ", "Invesco QQQ"],
+  ["0x05b37Fb53A299a1b874A619e1c4C404D52C36F4C", "RDDT", "Reddit"],
   ["0x5fc5360d0400a0fd4f2af552add042d716f1d168", "USDG", "Global Dollar"],
+] as const;
+
+// Searchable/tradable tokens that must not be offered as launch pairs.
+const BOOTSTRAP_TOKENS = [
+  ["0x39dBED3a2bd333467115dE45665cC57F813C4571", "PONS", "Pons"],
 ] as const;
 
 export const ensureInitialized = internalMutation({
@@ -86,6 +97,20 @@ export const ensureInitialized = internalMutation({
         address, normalizedAddress, symbol, name, decimals: 18, pairCandidate: true,
         pairApproved: false, active: true, updatedAt: now,
       });
+    }
+    for (const [address, symbol, name] of BOOTSTRAP_TOKENS) {
+      const normalizedAddress = address.toLowerCase();
+      const existing = await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", normalizedAddress)).unique();
+      if (!existing) await ctx.db.insert("tokenRegistry", {
+        address, normalizedAddress, symbol, name, decimals: 18, pairCandidate: false,
+        pairApproved: false, active: true, updatedAt: now,
+      });
+      else if (existing.pairCandidate || !existing.active || existing.symbol !== symbol || existing.name !== name || existing.decimals !== 18) {
+        await ctx.db.patch(existing._id, {
+          address, normalizedAddress, symbol, name, decimals: 18,
+          pairCandidate: false, pairApproved: false, active: true, updatedAt: now,
+        });
+      }
     }
     if (previouslyInitialized) return;
     const launches = await ctx.db.query("tokenLaunches").collect();

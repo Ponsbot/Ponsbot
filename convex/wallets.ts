@@ -3,11 +3,11 @@ import { internal } from "./_generated/api";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
-import { isTerminalCommand, isValueMovingCommand, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { isTerminalCommand, isValueMovingCommand, normalizeLaunchLinks, normalizeLaunchTelegram, normalizeTelegramUrl, normalizeWebsiteUrl, normalizeXUrl, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { formatUnits } from "viem";
 import { walletCanLaunch } from "../lib/wallet-launch-policy";
-import { applyProtectedLaunchProfile } from "../lib/special-launch-policy";
+import { applyProtectedLaunchProfile, launchTickerAllowed } from "../lib/special-launch-policy";
 
 const ROBINHOOD_CHAIN_ID = 4663;
 const NON_PREMIUM_DAILY_LIMIT = 50;
@@ -800,8 +800,9 @@ function safeFailure(error: unknown) {
   if (/pool|liquidity|quote returned no output/i.test(message)) return "💧 I couldn't find enough liquidity or a usable route for that trade. Try another amount or asset.";
   if (/max fee per gas less than block base fee/i.test(message)) return "⛽ Network fees moved too quickly before broadcast. Nothing was submitted or spent; please try again shortly.";
   if (/slippage/i.test(message)) return "📉 The price moved beyond your slippage setting. Try again or choose a higher slippage.";
-  if (/website must use https/i.test(message)) return "🔗 Please send a secure website link beginning with https://.";
-  if (/twitter link uses an unsupported host/i.test(message)) return "🔗 Please use an x.com link for the X social field.";
+  if (/website (?:must use https|link is invalid)/i.test(message)) return "🔗 Please use a valid public website link, such as example.com or https://example.com.";
+  if (/x link must use x\.com/i.test(message) || /twitter link uses an unsupported host/i.test(message)) return "🔗 Please use an X handle or link in the format @username or x.com/username.";
+  if (/telegram link must use t\.me/i.test(message) || /telegram link uses an unsupported host/i.test(message)) return "🔗 Please use a Telegram link in the format t.me/XXXXX.";
   if (/disabled|not configured|unavailable/i.test(message)) {
     console.error("wallet_configuration_failure", { message });
     return "🛠️ The wallet service is taking a quick break. Please try again shortly!";
@@ -866,6 +867,12 @@ export const executeCommand = internalAction({
       : null;
     let command = structured || parseWalletCommand(args.text);
     if (command.kind === "unknown") return { ok: false, message: command.reason };
+    try {
+      command = normalizeLaunchLinks(command, args.text);
+      command = normalizeLaunchTelegram(command, args.text);
+    } catch (error) {
+      return { ok: false, message: safeFailure(error) };
+    }
     const userContext = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.xUserId });
     if (!userContext) return { ok: false, message: "❌ I couldn't connect this X account to its wallet. Please try again!" };
     let wallet = userContext.wallet;
@@ -875,9 +882,15 @@ export const executeCommand = internalAction({
       return { ok: false, message: safeFailure(error) };
     }
     if (!wallet || wallet.status !== "active") return { ok: false, message: "🔒 This wallet isn't available right now. Please try again shortly." };
+    if (!launchTickerAllowed(args.xUserId, command)) {
+      return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
+    }
     try {
       command = applyProtectedLaunchProfile(args.xUserId, command, args.mediaUrl);
     } catch {
+      return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
+    }
+    if (!launchTickerAllowed(args.xUserId, command)) {
       return { ok: false, message: "❌ I couldn't complete that wallet request. Check the details and give it another try!" };
     }
     if (command.kind === "create_wallet" || command.kind === "show_wallet") {
@@ -1836,23 +1849,8 @@ async function indexInvolvedPair(
 function resolveLaunchMetadata(command: Extract<WalletCommand, { kind: "launch" }>) {
   return {
     description: command.description?.trim() || "",
-    website: optionalUrl(command.website, "website"),
-    twitter: optionalSocialUrl(command.twitter, "twitter", ["x.com", "twitter.com"]),
-    telegram: optionalSocialUrl(command.telegram || "", "telegram", ["t.me", "telegram.me"]),
+    website: command.website ? normalizeWebsiteUrl(command.website) : "",
+    twitter: command.twitter ? normalizeXUrl(command.twitter) : "",
+    telegram: command.telegram ? normalizeTelegramUrl(command.telegram) : "",
   };
-}
-
-function optionalUrl(value: string | undefined, label: string) {
-  if (!value) return "";
-  const url = new URL(value);
-  if (url.protocol !== "https:") throw new Error(`${label} must use https`);
-  return url.toString();
-}
-
-function optionalSocialUrl(value: string | undefined, label: string, hosts: string[]) {
-  const normalized = optionalUrl(value, label);
-  if (!normalized) return "";
-  const host = new URL(normalized).hostname.toLowerCase();
-  if (!hosts.includes(host)) throw new Error(`${label} link uses an unsupported host`);
-  return normalized;
 }
