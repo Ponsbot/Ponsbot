@@ -73,7 +73,7 @@ type PublicWalletRecord = { address: string; createdAt: number; username?: strin
 type StockAsset = { tokenSymbol: string; tokenName: string; currentMultiplier: string; logoUrl?: string; deployments?: Array<{ contractAddress: string; chainId: number }> };
 const ETH_ICON_URL = "https://cryptologos.cc/logos/ethereum-eth-logo.png";
 const STOCK_ICON_DOMAINS: Record<string, string> = {
-  NVDA: "nvidia.com", SPCX: "spacex.com", GOOGL: "google.com", TSLA: "tesla.com",
+  NVDA: "nvidia.com", SPCX: "spacex.com", GOOGL: "google.com", TSLA: "tesla.com", RIVN: "rivian.com",
   GME: "gamestop.com", AAPL: "apple.com", SPY: "ssga.com", SNDK: "sandisk.com",
   AMD: "amd.com", AMZN: "amazon.com", MSFT: "microsoft.com", META: "meta.com",
   CRCL: "circle.com", COIN: "coinbase.com", MU: "micron.com", PLTR: "palantir.com",

@@ -20,7 +20,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. Try “buy $5 of PONSBOT”, “sell 100 MSFT”, or “swap $25 of SNDK for PONSBOT.”",
     burn: "🔥 Say burn, the amount, and the ticker or contract. To buy and immediately burn what you receive, explicitly say both buy and burn in your command: buy $25 of PONSBOT and burn it.",
     launch: "🚀 Verified X accounts can launch on Pons V2 from an X post! Add a name and ticker, plus optional artwork, description, website, X, and TG links, dev buy, or paired asset. Telegram links must use t.me/XXXXX.",
-    pairs: "🔗 You can pair your Pons V2 launch with: NVDA, SPCX, GOOGL, TSLA, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, TTWO, COST, DJT, MSTR, QQQ, RDDT, USDG, ETH.",
+    pairs: "🔗 You can pair your Pons V2 launch with: NVDA, SPCX, GOOGL, TSLA, RIVN, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, TTWO, COST, DJT, MSTR, QQQ, RDDT, USDG, ETH.",
     fees: "💸 Pons V2 creator fees are paid in each launch's paired asset. Say “claim my fees” to claim all launched tokens paired with ETH, or “claim my fees for PONSBOT” for one launch. Non-ETH-paired launches must be claimed individually.",
   };
   return messages[topic];

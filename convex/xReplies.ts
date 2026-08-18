@@ -6,10 +6,12 @@ import { shouldSuppressXResponse } from "./xReplyPolicy";
 import { parseXWalletIntent, unknownWalletMessage, walletHelpMessage } from "./xWalletIntent";
 import { fitXReply, xWeightedLength } from "./xText";
 import { paginationFailureState, shouldSendBurstNotice, shouldSendCooldownNotice, shouldSendDailyNotice } from "../lib/x-operational-policy";
+import { firstPhotoUrl, requestsReferencedLaunchImage, selectLaunchImageReference, type XReferenceType } from "../lib/x-launch-image-policy";
 
 const X_API = "https://api.x.com/2";
 const X_MENTION_PAGE_SIZE = 100;
 const X_POLL_LEASE_MS = 15 * 60_000;
+const REFERENCED_IMAGE_FAILURE = "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
 
 function repliesEnabled() {
   return process.env.X_REPLIES_ENABLED === "true";
@@ -46,7 +48,7 @@ function rateLimitMessage(reason: string) {
 
 async function helpReply(ctx: ActionCtx, topic: Parameters<typeof walletHelpMessage>[0]) {
   if (topic !== "pairs") return walletHelpMessage(topic);
-  const labels = ["NVDA", "SPCX", "GOOGL", "TSLA", "GME", "AAPL", "SPY", "SNDK", "AMD", "AMZN", "MSFT", "META", "CRCL", "COIN", "MU", "PLTR", "TTWO", "COST", "DJT", "MSTR", "QQQ", "RDDT", "USDG", "ETH"];
+  const labels = ["NVDA", "SPCX", "GOOGL", "TSLA", "RIVN", "GME", "AAPL", "SPY", "SNDK", "AMD", "AMZN", "MSFT", "META", "CRCL", "COIN", "MU", "PLTR", "TTWO", "COST", "DJT", "MSTR", "QQQ", "RDDT", "USDG", "ETH"];
   return `🔗 You can pair your Pons V2 launch with: ${labels.join(", ")}.`;
 }
 
@@ -83,9 +85,9 @@ async function xAuthorization(method: "GET" | "POST", url: string, query: URLSea
   return `OAuth ${Object.entries(oauth).sort(([a], [b]) => a.localeCompare(b)).map(([key, value]) => `${oauthEncode(key)}="${oauthEncode(value)}"`).join(", ")}`;
 }
 
-async function xGet<T>(path: string, query: URLSearchParams): Promise<T> {
+async function xGet<T>(path: string, query: URLSearchParams, timeoutMs = 20_000): Promise<T> {
   const url = `${X_API}${path}`;
-  const response = await fetch(`${url}?${query}`, { headers: { authorization: await xAuthorization("GET", url, query) }, signal: AbortSignal.timeout(20_000) });
+  const response = await fetch(`${url}?${query}`, { headers: { authorization: await xAuthorization("GET", url, query) }, signal: AbortSignal.timeout(timeoutMs) });
   const payload = await response.json().catch(() => ({})) as T & { detail?: string };
   if (!response.ok) throw new Error(payload.detail || `X GET failed (${response.status})`);
   return payload;
@@ -215,7 +217,11 @@ export const releasePollLease = internalMutation({
 });
 
 export const reserveInteraction = internalMutation({
-  args: { postId: v.string(), authorXUserId: v.string(), text: v.string(), mediaUrl: v.optional(v.string()) },
+  args: {
+    postId: v.string(), authorXUserId: v.string(), text: v.string(), mediaUrl: v.optional(v.string()),
+    mediaSource: v.optional(v.literal("direct")), referencedPostId: v.optional(v.string()),
+    referencedPostType: v.optional(v.union(v.literal("quoted"), v.literal("replied_to"))),
+  },
   handler: async (ctx, args) => {
     const existing = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
     if (existing) return false;
@@ -234,6 +240,23 @@ export const updateInteraction = internalMutation({
   handler: async (ctx, args) => {
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
     if (interaction) await ctx.db.patch(interaction._id, { status: args.status, commandKind: args.commandKind, responsePostId: args.responsePostId, safeError: args.safeError, updatedAt: Date.now() });
+  },
+});
+
+export const bindInteractionMedia = internalMutation({
+  args: {
+    postId: v.string(), mediaUrl: v.string(), mediaSource: v.union(v.literal("quoted"), v.literal("replied_to")),
+    referencedPostId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", (q) => q.eq("postId", args.postId)).unique();
+    if (!interaction) throw new Error("X interaction was not reserved");
+    if (interaction.mediaUrl) return interaction.mediaUrl;
+    if (interaction.referencedPostId !== args.referencedPostId || interaction.referencedPostType !== args.mediaSource) {
+      throw new Error("X referenced image binding mismatch");
+    }
+    await ctx.db.patch(interaction._id, { mediaUrl: args.mediaUrl, mediaSource: args.mediaSource, updatedAt: Date.now() });
+    return args.mediaUrl;
   },
 });
 
@@ -322,6 +345,48 @@ export const resolveTerminalRecipient = internalAction({
   },
 });
 
+async function fetchReferencedPhoto(postId: string) {
+  if (!/^\d+$/.test(postId)) return undefined;
+  const query = new URLSearchParams({
+    expansions: "attachments.media_keys",
+    "tweet.fields": "attachments",
+    "media.fields": "media_key,type,url",
+  });
+  const response = await xGet<{
+    data?: { attachments?: { media_keys?: string[] } };
+    includes?: { media?: Media[] };
+  }>(`/tweets/${postId}`, query, 5_000);
+  return firstPhotoUrl(response.data?.attachments?.media_keys, response.includes?.media);
+}
+
+async function prepareReferencedLaunchImage(ctx: ActionCtx, input: {
+  postId: string;
+  text: string;
+  isLaunch: boolean;
+  mediaUrl?: string;
+  referencedPostId?: string;
+  referencedPostType?: XReferenceType;
+}): Promise<{ mediaUrl?: string; lookupFailed?: boolean }> {
+  // A direct attachment (or an image already bound during an earlier attempt)
+  // is final. Do not inspect phrases or touch a referenced post in that case.
+  if (input.mediaUrl) return { mediaUrl: input.mediaUrl };
+  if (!input.isLaunch || !requestsReferencedLaunchImage(input.text) || !input.referencedPostId || !input.referencedPostType) return {};
+  try {
+    const mediaUrl = await fetchReferencedPhoto(input.referencedPostId);
+    if (!mediaUrl) return {};
+    const bound = await ctx.runMutation(internal.xReplies.bindInteractionMedia, {
+      postId: input.postId, mediaUrl, mediaSource: input.referencedPostType, referencedPostId: input.referencedPostId,
+    });
+    return { mediaUrl: bound };
+  } catch (error) {
+    console.error("x_referenced_image_lookup_failed", {
+      postId: input.postId, referencedPostId: input.referencedPostId,
+      message: error instanceof Error ? error.message : "unknown",
+    });
+    return { lookupFailed: true };
+  }
+}
+
 export const getRetryContext = internalQuery({
   args: { postId: v.string() },
   handler: async (ctx, { postId }) => {
@@ -379,6 +444,18 @@ export const retryInteraction = internalAction({
       if (intent.kind === "help") reply = await helpReply(ctx, intent.topic);
       else if (intent.kind === "unknown_wallet") { reply = unknownWalletMessage(); ok = false; }
       else {
+        const preparedMedia = await prepareReferencedLaunchImage(ctx, {
+          postId, text: current.interaction.text, isLaunch: intent.command.kind === "launch",
+          mediaUrl: current.interaction.mediaUrl, referencedPostId: current.interaction.referencedPostId,
+          referencedPostType: current.interaction.referencedPostType,
+        });
+        if (preparedMedia.lookupFailed) {
+          const responsePostId = await publishReplyOnce(ctx, REFERENCED_IMAGE_FAILURE, postId);
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId, status: "rejected", commandKind: "launch", responsePostId, safeError: "referenced image could not be prepared",
+          });
+          return;
+        }
         await ctx.runAction(internal.wallets.ensureWallet, { xUserId: current.user.xUserId });
         const recipientAddress = intent.command.kind === "send" || intent.command.kind === "buy_and_send"
           ? current.interaction.recipientAddress || await resolveXRecipient(ctx, postId, intent.command.recipient)
@@ -386,7 +463,7 @@ export const retryInteraction = internalAction({
         const result = await ctx.runAction(internal.wallets.executeCommand, {
           sourcePostId: postId, xUserId: current.user.xUserId, text: current.interaction.text,
           parsedCommandJson: JSON.stringify(intent.command),
-          ...(current.interaction.mediaUrl ? { mediaUrl: current.interaction.mediaUrl } : {}),
+          ...(preparedMedia.mediaUrl ? { mediaUrl: preparedMedia.mediaUrl } : {}),
           ...(recipientAddress ? { recipientAddress } : {}),
         });
         reply = result.message;
@@ -409,6 +486,7 @@ type Mention = {
   text: string;
   author_id: string;
   attachments?: { media_keys?: string[] };
+  referenced_tweets?: Array<{ type: "replied_to" | "quoted" | "retweeted"; id: string }>;
   entities?: { urls?: XUrlEntity[] };
 };
 type Media = { media_key: string; type: string; url?: string };
@@ -441,9 +519,9 @@ export const pollMentions = internalAction({
         const query = new URLSearchParams({
           max_results: String(X_MENTION_PAGE_SIZE),
           expansions: "author_id,attachments.media_keys",
-          // Deliberately request only the direct post. Never retrieve or assemble
-          // the parent post, quoted post, or wider conversation as bot input.
-          "tweet.fields": "author_id,attachments,created_at,entities",
+          // Reference IDs permit an explicit, launch-only image lookup. Referenced
+          // text and the wider conversation are never retrieved or used as AI input.
+          "tweet.fields": "author_id,attachments,created_at,entities,referenced_tweets",
           "user.fields": "id,username,verified,verified_type,subscription_type",
           "media.fields": "media_key,type,url",
         });
@@ -479,8 +557,13 @@ export const pollMentions = internalAction({
         const user = users.get(mention.author_id);
         if (!user || user.id === botUserId) continue;
         const firstMedia = mention.attachments?.media_keys?.map((key) => media.get(key)).find((item) => item?.type === "photo" && item.url);
+        // Direct media wins absolutely. Only when it is absent do we even retain
+        // a deterministic quote/reply candidate for a possible launch lookup.
+        const imageReference = firstMedia?.url ? undefined : selectLaunchImageReference(mention.referenced_tweets);
         const reserved = await ctx.runMutation(internal.xReplies.reserveInteraction, {
-          postId: mention.id, authorXUserId: user.id, text: directText, ...(firstMedia?.url ? { mediaUrl: firstMedia.url } : {}),
+          postId: mention.id, authorXUserId: user.id, text: directText,
+          ...(firstMedia?.url ? { mediaUrl: firstMedia.url, mediaSource: "direct" as const } : {}),
+          ...(imageReference ? { referencedPostId: imageReference.id, referencedPostType: imageReference.type } : {}),
         });
         if (!reserved) continue;
         // Charge the cheap, deterministic limiter before either AI stage or
@@ -537,13 +620,25 @@ export const pollMentions = internalAction({
             continue;
           }
           const command = intent.command;
+          const preparedMedia = await prepareReferencedLaunchImage(ctx, {
+            postId: mention.id, text: directText, isLaunch: command.kind === "launch", mediaUrl: firstMedia?.url,
+            referencedPostId: imageReference?.id, referencedPostType: imageReference?.type,
+          });
+          if (preparedMedia.lookupFailed) {
+            const responsePostId = await publishReplyOnce(ctx, REFERENCED_IMAGE_FAILURE, mention.id);
+            await ctx.runMutation(internal.xReplies.updateInteraction, {
+              postId: mention.id, status: "rejected", commandKind: "launch", responsePostId, safeError: "referenced image could not be prepared",
+            });
+            processed += 1;
+            continue;
+          }
           const recipientAddress = command.kind === "send" || command.kind === "buy_and_send"
             ? await resolveXRecipient(ctx, mention.id, command.recipient)
             : undefined;
           const result = await ctx.runAction(internal.wallets.executeCommand, {
             sourcePostId: mention.id, xUserId: user.id, text: directText,
             parsedCommandJson: JSON.stringify(command),
-            ...(firstMedia?.url ? { mediaUrl: firstMedia.url } : {}),
+            ...(preparedMedia.mediaUrl ? { mediaUrl: preparedMedia.mediaUrl } : {}),
             ...(recipientAddress ? { recipientAddress } : {}),
           });
           const responsePostId = await publishReplyOnce(ctx, result.message, mention.id);

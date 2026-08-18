@@ -12,6 +12,8 @@ export default defineSchema({
 
   xReplyInteractions: defineTable({
     postId: v.string(), authorXUserId: v.string(), text: v.string(), mediaUrl: v.optional(v.string()),
+    mediaSource: v.optional(v.union(v.literal("direct"), v.literal("quoted"), v.literal("replied_to"))),
+    referencedPostId: v.optional(v.string()), referencedPostType: v.optional(v.union(v.literal("quoted"), v.literal("replied_to"))),
     recipientXUserId: v.optional(v.string()), recipientAddress: v.optional(v.string()),
     status: v.union(v.literal("received"), v.literal("processing"), v.literal("publishing"), v.literal("completed"), v.literal("rejected"), v.literal("failed")),
     commandKind: v.optional(v.string()), responsePostId: v.optional(v.string()), safeError: v.optional(v.string()), publicationAttempted: v.optional(v.boolean()),

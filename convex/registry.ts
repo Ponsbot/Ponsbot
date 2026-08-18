@@ -18,6 +18,7 @@ const BOOTSTRAP_PAIRS = [
   ["0x4a0e65a3eccec6dbe60ae065f2e7bb85fae35eea", "SPCX", "SpaceX"],
   ["0x2e0847e8910a9732eb3fb1bb4b70a580adad4fe3", "GOOGL", "Alphabet Class A"],
   ["0x322f0929c4625ed5bad873c95208d54e1c003b2d", "TSLA", "Tesla"],
+  ["0xB1BF26c1D20ff267A4f93550d1E0d06ac40a114B", "RIVN", "Rivian Automotive"],
   ["0x1b0e319c6a659f002271b69db8a7df2f911c153e", "GME", "GameStop"],
   ["0xaf3d76f1834a1d425780943c99ea8a608f8a93f9", "AAPL", "Apple"],
   ["0x117cc2133c37b721f49de2a7a74833232b3b4c0c", "SPY", "SPDR S&P 500 ETF Trust"],
