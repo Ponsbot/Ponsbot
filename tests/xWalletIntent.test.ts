@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, requestedOperations, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, requestedOperations, straightforwardCommandOperation, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
@@ -47,6 +47,23 @@ describe("deterministic X wallet replies", () => {
     expect(groundedCanonicalCommand("buy and burn 3 MSFT of PONSBOT")).toMatchObject({ kind: "buy_and_burn", amount: "3", unit: "pair", pairAsset: "MSFT", token: "PONSBOT" });
     expect(groundedCanonicalCommand("transfer 1.25 SNDK -> @leo")).toMatchObject({ kind: "send", amount: "1.25", unit: "token", token: "SNDK", recipient: "@leo" });
     expect(groundedCanonicalCommand("move a quarter of my META to @orbit")).toMatchObject({ kind: "send", amount: "25", unit: "percent", token: "META", recipient: "@orbit" });
+  });
+
+  it("treats an explicit request for my wallet address as a command", () => {
+    expect(requestedOperations("show me my wallet address")).toEqual(["show_wallet"]);
+    expect(requestedOperations("Testing first. show me my wallet address")).toEqual(["show_wallet"]);
+  });
+
+  it("prioritizes complete ordinary commands over conversational framing", () => {
+    expect(straightforwardCommandOperation("Before I log off, buy $5 of PONSBOT please")).toBe("buy");
+    expect(straightforwardCommandOperation("Quick one: send 10 PONSBOT to @alice please")).toBe("send");
+    expect(straightforwardCommandOperation("I was wondering, sell all my MSFT")).toBe("sell");
+    expect(straightforwardCommandOperation("Hey bot, burn 4 PONSBOT")).toBe("burn");
+    expect(straightforwardCommandOperation("Please launch Clear Signal ticker CLEAR pair ETH")).toBe("launch");
+    expect(straightforwardCommandOperation("Can you explain how buying $5 of PONSBOT works?")).toBeNull();
+    expect(straightforwardCommandOperation("Do not send 10 PONSBOT to @alice")).toBeNull();
+    expect(straightforwardCommandOperation("buy PONSBOT")).toBeNull();
+    expect(straightforwardCommandOperation("buy $5 PONSBOT and launch Other ticker OTHER")).toBeNull();
   });
 
   it("normalizes explicit creator-fee commands without inventing assets", () => {
@@ -193,5 +210,31 @@ Website: ponsbot.family X: @Ponsbotfamily Dev buy $100`;
     expect(groundedCanonicalCommand('launch Dog With Laptop ticker DWL description "he is working" pair ETH')).toMatchObject({
       kind: "launch", name: "Dog With Laptop", symbol: "DWL", description: "he is working", pairToken: "ETH",
     });
+  });
+
+  it("grounds high-confidence historical launch formats", () => {
+    const launches = [
+      ["Launch a token called Neon Frog with ticker $NFROG. Pair it with USDG and dev buy $20.", "Neon Frog", "NFROG", "USDG"],
+      ["Create $GLASS. Name “Glass Brain.” Pair it with META and buy $40 worth at launch.", "Glass Brain", "GLASS", "META"],
+      ["Make token “Green Button” $BUTTON. Pair SPY. $25 developer buy.", "Green Button", "BUTTON", "SPY"],
+      ["Need a launch for “One More Trade” ($OMT). Pair COIN, initial buy $50 USD.", "One More Trade", "OMT", "COIN"],
+      ["Launch $YAP. Full name: Professional Yapper. Pair META, dev buy $45.", "Professional Yapper", "YAP", "META"],
+      ["Pons launch my token “Red Candle Enjoyer” ticker $RCE. Pair SPY. Dev buy $69.", "Red Candle Enjoyer", "RCE", "SPY"],
+      ["I need a coin: name = Screenshot This, ticker = $SS, pair = ETH, dev buy = 0.015 ETH.", "Screenshot This", "SS", "ETH"],
+      ["make $REFRESH, token name “Refresh Again,” pairing asset GOOGL, initial buy $45 USD", "Refresh Again", "REFRESH", "GOOGL"],
+      ["New token with the attached art: Name “Market Creature”, ticker $CREATURE, pair SPY, dev buy $50.", "Market Creature", "CREATURE", "SPY"],
+      ["Make “Paper Hands Anonymous” ($PHA). Pair with SPY. Developer buy 1 SPY.", "Paper Hands Anonymous", "PHA", "SPY"],
+      ["Can Pons launch “Stonk Engine” ticker $ENGINE paired with GME? Buy 4 GME for dev.", "Stonk Engine", "ENGINE", "GME"],
+      ["Need token deployed: “Prime Delivery” $PRIMEDEL, description “Arrives before you ordered it.” Pair AMZN.", "Prime Delivery", "PRIMEDEL", "AMZN"],
+      ["token request: “Coin About Coins” $COINS — COIN pair — dev buys 0.5 COIN", "Coin About Coins", "COINS", "COIN"],
+    ] as const;
+    for (const [post, name, symbol, pairToken] of launches) {
+      expect.soft(groundedCanonicalCommand(post), post).toMatchObject({ kind: "launch", name, symbol, pairToken });
+    }
+  });
+
+  it("rejects posts containing two different launch specifications", () => {
+    const post = "launch Autonomous Toaster ticker TOAST. Name Meeting Could Be Email, ticker EMAIL. Launch please.";
+    expect(groundedCanonicalCommand(post)).toBeNull();
   });
 });

@@ -47,7 +47,7 @@ function explicitAuthority(text: string, command: WalletCommand) {
   if (command.kind === "buy") return /\b(?:buy|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\b(?:put|get\s+me)\s+\$?[0-9a-z][0-9a-z,.]*\b|\bsend\s+it\s*:|\bi\s+want\b[\s\S]{0,30}\bworth\s+of\b/i.test(text);
   if (command.kind === "sell") return /\b(?:sell|trim|dump|cash\s+out|get\s+rid\s+of|unload|liquidate)\b/i.test(text);
   if (command.kind === "claim_fees") return /\b(?:claim|collect|withdraw)\b/i.test(text) && /\b(?:fees?|revenue|rewards?)\b/i.test(text);
-  if (command.kind === "launch") return /\b(?:launch|deploy|create|make\s+(?:(?:me\s+)?a\s+token|[^.!?\n]{1,48}\s+(?:ticker|symbol))|new\s+token)\b/i.test(text);
+  if (command.kind === "launch") return /\b(?:launch|deploy|create|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b/i.test(text);
   return true;
 }
 
@@ -59,7 +59,7 @@ function includesLoose(text: string, value: string) {
 function amountIsGrounded(text: string, amount: string) {
   const normalizedText = text.replace(/(?<=\d),(?=\d)/g, "");
   const escaped = amount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (new RegExp(`(?:^|[^0-9.])${escaped}(?=$|[^0-9.])`).test(normalizedText)) return true;
+  if (new RegExp(`(?:^|[^0-9.])${escaped}(?=$|[^0-9.]|\\.(?![0-9]))`).test(normalizedText)) return true;
   if (amount.startsWith("0.") && normalizedText.includes(amount.slice(1))) return true;
   const words: Record<string, RegExp> = {
     "1": /\b(?:one|a single)\b/i, "2": /\btwo\b/i, "3": /\bthree\b/i, "4": /\bfour\b/i, "5": /\bfive\b/i,
@@ -146,6 +146,14 @@ function commandRolesMatchText(text: string, command: WalletCommand) {
   return true;
 }
 
+function hasMultipleLaunchSpecifications(text: string) {
+  const symbols = [...text.matchAll(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,12})\b/gi)]
+    .map((match) => match[1].toUpperCase());
+  const names = [...text.matchAll(/\b(?:(?:full|token)\s+name|name)\s*(?:is|=|:)?\s*(?:["\u201c]([^"\u201d]+)["\u201d]|['\u2018]([^'\u2019]+)['\u2019]|([^,;|\n]+))/gi)]
+    .map((match) => (match[1] || match[2] || match[3] || "").trim().toLowerCase());
+  return new Set(symbols).size > 1 || new Set(names.filter(Boolean)).size > 1;
+}
+
 function fieldsAreGrounded(text: string, command: WalletCommand) {
   if (command.kind === "swap_token_for_token") return amountIsGrounded(text, command.amount)
     && identifierIsGrounded(text, command.fromToken) && identifierIsGrounded(text, command.toToken);
@@ -224,6 +232,8 @@ Allowed outputs:
 
 A question asks how something works, what is supported, what pairs are allowed, or what the bot can do. A command asks the bot to perform or prepare one specific operation.
 
+Start with the ordinary direct reading. First look for a clear, complete command in familiar forms such as "show me my wallet", "buy $5 of TOKEN", "sell all TOKEN", "send 10 TOKEN to @user", "burn 5 TOKEN", "claim my fees", or "launch NAME ticker SYMBOL". When one straightforward operative clause is present, classify that clause directly and do not let greetings, reasons, or surrounding chatter turn it into help or an unrelated edge case. Only move to ambiguous or unusual interpretations when no clear direct command is present. Negation, hypotheticals, educational questions, conflicting operations, and missing required details must still be handled safely.
+
 First identify the operative clause and distinguish it from conversational framing. Greetings, explanations of why the user is asking, hesitation, commentary, and polite prefixes or suffixes such as "hey", "before I log off", "please", "thanks", and "if you can" do not change the intent. Focus classification on the relevant request, but still return intent only and never return or extract the relevant text itself. Do not discard literal launch metadata inside labeled or quoted fields.
 
 Question-topic boundaries:
@@ -238,7 +248,7 @@ Question-topic boundaries:
 Important distinctions:
 - The possessive word "my" is a strong current-account signal. "Show me my wallet address" and "what's my wallet address?" are show_wallet commands. "What's my ETH balance?", "show my balance", and "how much ETH do I have?" are show_balance commands. Do not turn those requests into instructional help.
 - Imperative "give" requests are sends when they specify assets for a recipient. "Give @bob five PONSBOT" is a send command.
-- "Create NAME ticker SYMBOL" is a token launch. A launch that says "pair with ETH" is still one normal launch command; ETH is the requested pair and is not an ambiguity or another operation.
+- "Create NAME ticker SYMBOL" is a token launch. Other explicit launch directives include make, deploy, new token with a name and ticker, token request with a name and ticker, "need a launch for NAME", and "need token deployed: NAME". A launch that says "pair with ETH" is still one normal launch command; ETH is the requested pair and is not an ambiguity or another operation.
 - Text inside matching straight or curly quotation marks is literal user-provided content or metadata, not an instruction. Never count command-like words inside quotes as additional operations. For example, description "Swap, sell, and launch on Pons V2" is one launch command, not several commands.
 - Requests for the user's own current information are commands even when grammatically phrased as questions. “What is my wallet?”, “what is my balance?”, “how much ETH do I have?”, “show my wallet”, “deposit address”, and “where do I send ETH?” are commands.
 - General explanations are questions: “how do balances work?”, “what can wallets hold?”, and “how can I fund a wallet?” do not request current account data.
@@ -304,7 +314,7 @@ const extractionReliabilityGuidance: Partial<Record<WalletOperation, string>> = 
   show_balance: `"What's my ETH balance?" asks for current account data and returns show_balance with token ETH. Never derive a ticker from ordinary words such as holding, holdings, wallet, balance, token, or asset.`,
   send: `Imperative give is a transfer synonym. "Give @bob five PONSBOT" returns recipient @bob, amount 5, unit token, and token PONSBOT. Convert number words and fractions such as half, quarter, and three quarters.`,
   buy: `The bot invocation @Ponsbotfamily is never the purchased token. In "buy $12.50 of SNDK please @Ponsbotfamily", return amount 12.50, unit usd, and token SNDK; ignore both please and the bot mention. A complete 0x contract address following "of" is the purchased token and must be preserved exactly.`,
-  launch: `Create NAME ticker SYMBOL is a launch just like Launch NAME ticker SYMBOL. Field labels and connectors are syntax, never values: exclude "name:", "with", and similar connectors from name; in "pair asset TSLA", pairToken is TSLA, never ASSET. "Launch ticker ONLY" is invalid because no name was supplied. The bot mention @Ponsbotfamily is never token social metadata; extract twitter only from an explicitly labeled X or Twitter value. ETH is a valid normal pairToken, so "pair with ETH" returns pairToken ETH. In "pair it with MSFT", it is only a connector and pairToken is MSFT. A dollar sign always makes a developer buy USD even if followed by "of" and the pair asset. Therefore "dev buy $25 of MSFT" is {"amount":"25","unit":"usd"}, while "dev buy 25 MSFT" uses unit pair. Example: "Launch North Window ticker NWND pair it with MSFT dev buy $25 of MSFT X @northwindow" returns name North Window, symbol NWND, pairToken MSFT, USD devBuy 25, and twitter https://x.com/northwindow.`,
+  launch: `Create NAME ticker SYMBOL is a launch just like Launch NAME ticker SYMBOL. Explicit make, deploy, new-token, token-request, need-a-launch, and need-token-deployed formats use the same fields when both name and ticker are present. The name can precede the ticker, follow a labeled "name", "token name", or "full name", or be a quoted value beside the ticker. Field labels and connectors are syntax, never values: exclude "name:", "for", "with", and similar connectors from name; in "pair asset TSLA", pairToken is TSLA, never ASSET. "Launch ticker ONLY" is invalid because no name was supplied. Never combine fields from two separate launch specifications. The bot mention @Ponsbotfamily is never token social metadata; extract twitter only from an explicitly labeled X or Twitter value. ETH is a valid normal pairToken, so "pair with ETH" returns pairToken ETH. In "pair it with MSFT", it is only a connector and pairToken is MSFT. A dollar sign always makes a developer buy USD even if followed by "of" and the pair asset. Therefore "dev buy $25 of MSFT" is {"amount":"25","unit":"usd"}, while "dev buy 25 MSFT" uses unit pair. Example: "Launch North Window ticker NWND pair it with MSFT dev buy $25 of MSFT X @northwindow" returns name North Window, symbol NWND, pairToken MSFT, USD devBuy 25, and twitter https://x.com/northwindow.`,
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
@@ -320,6 +330,7 @@ Ignore conversational framing and politeness outside the operative request. A tr
 
 function validateExtractedCommand(value: unknown, operation: WalletOperation, text: string): WalletCommand | null {
   if (operation === "buy" && /\bbuy\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) return null;
+  if (operation === "launch" && hasMultipleLaunchSpecifications(text)) return null;
   let normalizedValue = value;
   if (operation === "launch" && value && typeof value === "object") {
     const item = { ...(value as Record<string, unknown>) };
@@ -341,7 +352,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const launchQuotedName = text.match(/\b(?:launch|deploy|create|make)(?:\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin))?(?:\s+(?:called|named))?\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const nameBeforeTicker = text.match(/\b(?:launch|deploy|create|make)\s+(?:(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin)\s+)?(?:(?:called|named)\s+)?(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[A-Za-z0-9]{1,12}\b/i)?.[1];
     const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || extractGroundedLaunchName(text);
-    if (exactName) item.name = exactName.trim();
+    if (exactName) item.name = exactName.trim().replace(/[.,;:]+$/, "");
     const quotedDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const plainDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*([^\n,;|]+?)(?=\s+(?:pair(?:ing)?(?:\s+asset)?|website|site|x|twitter|telegram|tg|dev(?:eloper)?\s*buy|initial\s+buy)\s*(?:is|=|:)?\b|$)/i);
     const exactDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2] || plainDescriptionMatch?.[1];
@@ -398,6 +409,29 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
 export function groundedCanonicalCommand(text: string): WalletCommand | null {
   const command = parseWalletCommand(canonicalCommandText(text));
   return command.kind === "unknown" ? null : validateExtractedCommand(command, command.kind, text);
+}
+
+export function straightforwardCommandOperation(text: string): WalletOperation | null {
+  if (hasPromptInjection(text) || hasNonExecutableFraming(text) || requestedOperations(text).length > 1) return null;
+  const unquoted = withoutQuotedContent(text);
+  if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(unquoted)) return null;
+  if (explicitSelfWalletRequest(text)) return "show_wallet";
+  const command = groundedCanonicalCommand(text);
+  if (!command || command.kind === "unknown") return null;
+  const patterns: Partial<Record<WalletOperation, RegExp>> = {
+    show_wallet: /\b(?:show|give|tell|what(?:'s|\s+is)|where)\b[\s\S]{0,35}\b(?:my\s+)?(?:wallet|deposit\s+address|receiving\s+address)\b/i,
+    show_balance: /\b(?:show|check|view|what(?:'s|\s+is)|how\s+much)\b[\s\S]{0,40}\b(?:my\s+)?(?:balance|holdings?|portfolio)\b/i,
+    buy: /\b(?:buy|purchase)\b[\s\S]{0,55}(?:\$[0-9]|[0-9][0-9,.]*\s+(?:ETH|WETH|[A-Z][A-Z0-9]{0,11})\b)/i,
+    sell: /\bsell\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
+    send: /\b(?:send|transfer|give)\b[\s\S]{0,80}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
+    burn: /\bburn\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
+    buy_and_send: /\bbuy\b[\s\S]{0,80}\b(?:send|transfer|give)\b[\s\S]{0,60}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
+    buy_and_burn: /\b(?=[\s\S]*\bbuy\b)(?=[\s\S]*\bburn\b)[\s\S]*$/i,
+    swap_token_for_token: /\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+for\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i,
+    claim_fees: /\b(?:claim|collect|withdraw)\b[\s\S]{0,45}\b(?:fees?|revenue|rewards?)\b/i,
+    launch: /\b(?:launch|deploy|create|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b[\s\S]{0,120}(?:\bticker\b|\bsymbol\b|\$[A-Za-z][A-Za-z0-9]{0,11}\b)/i,
+  };
+  return patterns[command.kind]?.test(unquoted) ? command.kind : null;
 }
 
 function deterministicFallback(text: string): XWalletIntent {
@@ -460,6 +494,15 @@ function asksWhatIsInMyWallet(text: string) {
   return /\b(?:sitting|held|inside)\b[\s\S]{0,24}\bwallet\b/i.test(normalized);
 }
 
+function explicitSelfWalletRequest(text: string) {
+  const unquoted = withoutQuotedContent(text);
+  return /\b(?:show|give|send|tell)\s+(?:me\s+)?my\s+(?:wallet(?:\s+address)?|deposit\s+address|receiving\s+address)\b/i.test(unquoted)
+    || /\bwhat(?:'s|\s+is)\s+my\s+(?:wallet(?:\s+address)?|deposit\s+address|receiving\s+address)\b/i.test(unquoted)
+    || /\bwhere\s+do\s+i\s+(?:send|deposit)\s+(?:funds?|tokens?|eth)\b/i.test(unquoted)
+    || /\bcan\s+i\s+get\s+my\s+(?:wallet(?:\s+address)?|deposit\s+address|receiving\s+address)\b/i.test(unquoted)
+    || /\bneed\s+(?:my\s+|a\s+)?(?:wallet(?:\s+address)?|deposit\s+address|receiving\s+address)\b/i.test(unquoted);
+}
+
 function explicitInformationalTopic(text: string): WalletHelpTopic | null {
   const explicitExplanation = /\b(?:could|can|would)\s+you\s+explain\b|\bwhat(?:'s|\s+is)\s+the\s+difference\b|\bdoes\s+asking\b|\bno\s+action\s+(?:yet|required|please)\b/i.test(text);
   if (explicitExplanation) {
@@ -515,7 +558,7 @@ export function requestedOperations(text: string): WalletOperation[] {
   const operationText = withoutQuotedContent(text)
     .replace(/\b(?:developer|dev)\s+(?:buy|purchase)\b/gi, "developer allocation")
     .replace(/\binitial\s+buy\b/gi, "initial allocation")
-    .replace(/\bbuy\s+at\s+launch\b|\bat\s+launch[^.!?\n]{0,30}\bbuy\b/gi, "launch allocation")
+    .replace(/\bbuy\s+at\s+launch\b|\bbuy\b[^.!?\n]{0,40}\b(?:at\s+launch|for\s+dev)\b|\bat\s+launch[^.!?\n]{0,30}\bbuy\b/gi, "launch allocation")
     .replace(/\blaunch\s+(fees?|revenue|rewards?)\b/gi, "creator $1")
     .replace(/\bgive\s+me\s+my\s+wallet\s+address\b/gi, "show my wallet address");
   const strictSwap = strictSwapRoles(operationText);
@@ -538,7 +581,7 @@ export function requestedOperations(text: string): WalletOperation[] {
     ["send", send], ["burn", burn], ["buy", buy],
     ["sell", /\b(?:sell|dump|cash\s+out|get\s+rid\s+of|unload|liquidate|trim|close\s+(?:my|the)|take[^.!?\n]{0,30}\bposition\s+off)\b/i],
     ["claim_fees", /\b(?:claim|collect|withdraw|get)\b[\s\S]{0,35}\b(?:fees?|revenue|rewards?)\b/i],
-    ["launch", /\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,20}\b(?:token|coin)\b|\bnew\s+token\b/i],
+    ["launch", /\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i],
   ];
   return patterns.filter(([, pattern]) => typeof pattern === "boolean" ? pattern : pattern.test(operationText))
     .map(([operation]) => operation).filter((operation, index, all) => all.indexOf(operation) === index);
@@ -586,11 +629,15 @@ export function canonicalCommandText(text: string) {
 
 function validateIntentDecision(text: string, classification: ClassifiedIntent): ClassifiedIntent {
   if (hasPromptInjection(text)) return { kind: "unknown_wallet" };
+  if (hasNonExecutableFraming(text)) return { kind: "unknown_wallet" };
   if (isDirectFeeClaim(text)) return { kind: "command", operation: "claim_fees" };
-  const earlyInformationalTopic = explicitInformationalTopic(text);
-  if (earlyInformationalTopic) return { kind: "question", topic: earlyInformationalTopic };
   const earlyOperations = requestedOperations(text);
   if (earlyOperations.length > 1) return { kind: "unknown_wallet" };
+  if (explicitSelfWalletRequest(text)) return { kind: "command", operation: "show_wallet" };
+  const straightforwardOperation = straightforwardCommandOperation(text);
+  if (straightforwardOperation) return { kind: "command", operation: straightforwardOperation };
+  const earlyInformationalTopic = explicitInformationalTopic(text);
+  if (earlyInformationalTopic) return { kind: "question", topic: earlyInformationalTopic };
   if (/\b(?:show|give|send|tell|what(?:'s|\s+is)|where(?:'s|\s+is)|find)\b[\s\S]{0,35}\bmy\s+(?:wallet|wallet\s+address|deposit\s+address|receiving\s+address)\b/i.test(text)) {
     return { kind: "command", operation: "show_wallet" };
   }
