@@ -203,12 +203,17 @@ export function extractGroundedLaunchName(text: string) {
   const quoted = text.match(/\b(?:name|called|named)\s*(?:is|=|:)?\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
     || text.match(/\b(?:name|called|named)\s*(?:is|=|:)?\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1]
     || text.match(/\b(?:launch|create|deploy)\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
-    || text.match(/\b(?:launch|create|deploy)\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1];
-  const labeled = text.match(/\bname\s*(?:is|=|:)?\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|$))/i)?.[1];
+    || text.match(/\b(?:launch|create|deploy)\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1]
+    || text.match(/\$[A-Z][A-Z0-9]{0,11}\s*(?:[-—|/]\s*)?["\u201c]([^"\u201d]{1,48})["\u201d]/)?.[1]
+    || text.match(/\$[A-Z][A-Z0-9]{0,11}\s*(?:[-—|/]\s*)?['\u2018]([^'\u2019]{1,48})['\u2019]/)?.[1];
+  const labeled = text.match(/\bname\s*(?:is|=|:)?\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:and\s+the\s+)?(?:with\s+)?(?:ticker|symbol)\b|$))/i)?.[1];
   const named = text.match(/\b(?:called|named|call\s+it)\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|using\b|dev\s*buy\b|website\b|site\b|description\b|desc\b|$))/i)?.[1];
   const prefixed = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:new\s+)?(?:(?:token|coin)\s*:?)?\s*([^,;|]{1,48}?)(?=\s+(?:with\s+)?(?:ticker|symbol)\b|\s+with\s+\$?[A-Z][A-Z0-9]{0,11}\s+as\s+(?:the\s+)?(?:ticker|symbol)\b|\s*\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)|\s*[,;|]|$)/i)?.[1];
   const candidate = stripWrappingQuotes(quoted || labeled || named || prefixed || "")
-    .replace(/^name\s*(?:is|=|:)?\s*/i, "").replace(/\s+with$/i, "").trim();
+    .replace(/^name\s*(?:is|=|:)?\s*/i, "")
+    .replace(/\s+(?:and\s+the\s+)?(?:ticker|symbol)\b[\s\S]*$/i, "")
+    .replace(/\s+\$[A-Z][A-Z0-9]{0,11}\b[\s\S]*$/i, "")
+    .replace(/[,:;\s]+$/, "").replace(/\s+with$/i, "").trim();
   return candidate && !/^(?:name|ticker|symbol|token|coin)$/i.test(candidate) ? candidate.slice(0, 48) : undefined;
 }
 

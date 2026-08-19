@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, requestedOperations, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
@@ -12,6 +12,15 @@ describe("deterministic X wallet replies", () => {
     expect(groundedCanonicalCommand("buy $20 of PONSBOT and burn it")).toMatchObject({ kind: "buy_and_burn", amount: "20", token: "PONSBOT" });
     expect(groundedCanonicalCommand("burn the PONSBOT I buy with 0.01 ETH")).toMatchObject({ kind: "buy_and_burn", amount: "0.01", token: "PONSBOT" });
   });
+  it("detects unsupported multiple operations before execution", () => {
+    expect(requestedOperations("send 2 ETH to @alice and burn 5 ROOT")).toEqual(["send", "burn"]);
+    expect(requestedOperations("show my wallet and my balance")).toEqual(["show_wallet", "show_balance"]);
+    expect(requestedOperations("launch Test ticker TEST and buy $10 of AMD")).toEqual(["buy", "launch"]);
+    expect(requestedOperations("swap $25 into MSFT and launch Pons Bot ticker PONSBOT")).toEqual(["buy", "launch"]);
+    expect(requestedOperations("buy $10 of PONSBOT and send it to @alice")).toEqual(["buy_and_send"]);
+    expect(requestedOperations("buy $10 of PONSBOT and burn it")).toEqual(["buy_and_burn"]);
+    expect(requestedOperations('launch Pons Bot ticker PONSBOT description "buy, send, burn" dev buy $10')).toEqual(["launch"]);
+  });
   it("grounds flexible launch names and pair-asset syntax", () => {
     expect(parseWalletCommand("Launch a token named Aurora Signal with ticker AURA")).toMatchObject({ kind: "launch", name: "Aurora Signal", symbol: "AURA" });
     expect(parseWalletCommand("launch name: Green Candle; ticker: GC")).toMatchObject({ kind: "launch", name: "Green Candle", symbol: "GC" });
@@ -20,12 +29,29 @@ describe("deterministic X wallet replies", () => {
     expect(parseWalletCommand("launch ticker ONLY")).toMatchObject({ kind: "unknown" });
     expect(parseWalletCommand("launch Market Dog ticker MDOG pair asset 0x1111111111111111111111111111111111111111")).toMatchObject({ kind: "launch", pairToken: "0x1111111111111111111111111111111111111111" });
     expect(parseWalletCommand("Launch Pons Bot ticker PONSBOT, pair asset TSLA")).toMatchObject({ kind: "launch", pairToken: "TSLA" });
+    expect(groundedCanonicalCommand("Launch token, name is Velvet Rope and the symbol is VELVET")).toMatchObject({ kind: "launch", name: "Velvet Rope", symbol: "VELVET" });
+    expect(groundedCanonicalCommand("Launch Pons Bot $PONSBOT pair ETH")).toMatchObject({ kind: "launch", name: "Pons Bot", symbol: "PONSBOT" });
+    expect(groundedCanonicalCommand("Launch $RAIN — ‘Rain Check’ pair AAPL")).toMatchObject({ kind: "launch", name: "Rain Check", symbol: "RAIN" });
+    expect(groundedCanonicalCommand("launch Plain Token ticker PLAIN no description needed")).toMatchObject({ kind: "launch", name: "Plain Token", symbol: "PLAIN" });
+    expect(groundedCanonicalCommand("launch Plain Token ticker PLAIN no description needed")).not.toHaveProperty("description");
   });
 
   it("accepts a direct contract address as the buy target", () => {
     expect(parseWalletCommand("@Ponsbotfamily buy $20 of 0x1111111111111111111111111111111111111111")).toMatchObject({
       kind: "buy", amount: "20", unit: "usd", token: "0x1111111111111111111111111111111111111111",
     });
+  });
+
+  it("keeps amounts, assets, and recipients in their stated roles", () => {
+    expect(groundedCanonicalCommand("buy $5 of ETH")).toMatchObject({ kind: "buy", amount: "5", unit: "usd", token: "ETH" });
+    expect(groundedCanonicalCommand("buy and burn 3 MSFT of PONSBOT")).toMatchObject({ kind: "buy_and_burn", amount: "3", unit: "pair", pairAsset: "MSFT", token: "PONSBOT" });
+    expect(groundedCanonicalCommand("transfer 1.25 SNDK -> @leo")).toMatchObject({ kind: "send", amount: "1.25", unit: "token", token: "SNDK", recipient: "@leo" });
+    expect(groundedCanonicalCommand("move a quarter of my META to @orbit")).toMatchObject({ kind: "send", amount: "25", unit: "percent", token: "META", recipient: "@orbit" });
+  });
+
+  it("normalizes explicit creator-fee commands without inventing assets", () => {
+    expect(groundedCanonicalCommand("collect creator revenue for PONSBOT")).toMatchObject({ kind: "claim_fees", token: "PONSBOT" });
+    expect(groundedCanonicalCommand("withdraw my fees")).toEqual({ kind: "claim_fees" });
   });
 
   it("keeps every help and ambiguity response within X's limit", () => {
@@ -121,6 +147,10 @@ describe("deterministic X wallet replies", () => {
       ["send it: $200 into SNDK @Ponsbotfamily", "buy"],
       ["dump all my SNDK @Ponsbotfamily", "sell"],
       ["@Ponsbotfamily get rid of 5.5 SNDK", "sell"],
+      ["Buy me 50 bucks of SNDK @Ponsbotfamily", "buy"],
+      ["market buy $75 SNDK @Ponsbotfamily", "buy"],
+      ["@Ponsbotfamily swap $35 for SNDK", "buy"],
+      ["swap .025 ETH for SNDK @Ponsbotfamily", "buy"],
     ] as const;
     for (const [text, kind] of examples) {
       expect(parseWalletCommand(canonicalCommandText(text)).kind, text).toBe(kind);
