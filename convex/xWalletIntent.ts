@@ -46,7 +46,8 @@ function explicitAuthority(text: string, command: WalletCommand) {
   if (command.kind === "burn") return /\bburn\b/i.test(text);
   if (command.kind === "buy") return /\b(?:buy|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\b(?:put|get\s+me)\s+\$?[0-9a-z][0-9a-z,.]*\b|\bsend\s+it\s*:|\bi\s+want\b[\s\S]{0,30}\bworth\s+of\b/i.test(text);
   if (command.kind === "sell") return /\b(?:sell|trim|dump|cash\s+out|get\s+rid\s+of|unload|liquidate)\b/i.test(text);
-  if (command.kind === "claim_fees") return /\b(?:claim|collect|withdraw)\b/i.test(text) && /\b(?:fees?|revenue|rewards?)\b/i.test(text);
+  if (command.kind === "claim_fees") return (/\b(?:claim|collect|withdraw)\b/i.test(text) && /\b(?:fees?|revenue|rewards?)\b/i.test(text))
+    || /\bclaim\s+(?:everything|all)\s+available(?:\s+for\s+me)?\b/i.test(text);
   if (command.kind === "launch") return /\b(?:launch|deploy|create|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b/i.test(text);
   return true;
 }
@@ -172,6 +173,7 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
     const amountGrounded = amountIsGrounded(text, command.amount)
       || (command.unit === "percent" && command.amount === "100" && /\ball(?:\s+of)?\b/i.test(text))
       || (command.unit === "percent" && command.amount === "100" && /\b(?:everything|every\s+last|entire\s+(?:balance|[a-z0-9$]+\s+bag))\b/i.test(text))
+      || (command.unit === "percent" && command.amount === "100" && /\b(?:entire|whole)\s+\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/i.test(text))
       || (command.unit === "percent" && command.amount === "25" && /\b(?:a\s+quarter|quarter)\b/i.test(text))
       || (command.unit === "percent" && command.amount === "50" && /\bhalf(?:\s+of)?\b/i.test(text));
     return amountGrounded && identifierIsGrounded(text, command.token)
@@ -299,13 +301,13 @@ const extractionInstructions: Record<WalletOperation, string> = {
   show_wallet: `Return {"kind":"show_wallet"}. Requests for the user's wallet, deposit address, receiving address, or where to send ETH qualify.`,
   show_balance: `Return {"kind":"show_balance"} with optional "token". Include token when the post explicitly names a ticker or contract, including forms such as "my ETH balance" and "show SNDK balance". Never invent a ticker or address.`,
   send: `Return {"kind":"send","amount":"decimal","unit":"eth|usd|token|percent","recipient":"@handle or 0x address"} with "token" when required. Transfer synonyms include send, transfer, give, pay, and move. The recipient may appear before the amount, after "to", after an arrow, or directly after the asset when it is an unambiguous 0x destination. Convert all to 100 percent and half to 50 percent. Preserve addresses exactly. A token unit or percent requires a token.`,
-  burn: `Return {"kind":"burn","amount":"decimal","unit":"usd|token|percent","token":"ticker or address"}. The exact word burn must appear. Convert all/half to 100/50 percent.`,
+  burn: `Return {"kind":"burn","amount":"decimal","unit":"usd|token|percent","token":"ticker or address"}. The exact word burn must appear. Convert all, the entire balance, or the whole balance to 100 percent; convert half to 50 percent. "Burn my entire PONSBOT balance" means 100 percent of PONSBOT.`,
   buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"ticker or address","slippageBps":250}. Buy synonyms include buy, purchase, use an asset to purchase, grab, get me, gimme, ape into, swap into, put an asset into, spend on, compra, and achète. Use unit pair only when the user states an amount of the launch's paired asset. Examples: "buy 5 MSFT of PONSBOT", "use 2.75 SNDK to purchase PONSBOT", and "put ten MSFT into PONSBOT" all set the first asset as pairAsset and PONSBOT as token. pairAsset is required for unit pair and must be omitted for USD or ETH. The token may be a ticker or an explicitly supplied 0x contract address labeled CA, contract, token address, or used directly. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   buy_and_send: `Return {"kind":"buy_and_send","amount":"decimal","unit":"eth|usd","token":"ticker or address","recipient":"@handle or 0x address","slippageBps":250}. Use this only for an explicit request to buy one token and immediately send the purchased tokens to one recipient. The amount is the buy spend, not a token quantity. Preserve the recipient exactly. Never infer a missing amount, token, or recipient. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   buy_and_burn: `Return {"kind":"buy_and_burn","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"optional ticker or address","slippageBps":250}. Use this only when the original request contains both literal words "buy" and "burn" outside quoted content. The amount is the buy spend. The workflow burns exactly the tokens received by this purchase; never extract a separate burn amount. Never infer a missing amount or token. For unit pair, pairAsset is required.`,
   swap_token_for_token: `Return {"kind":"swap_token_for_token","amount":"decimal","unit":"usd","fromToken":"ticker or address","toToken":"ticker or address","slippageBps":250}. Use this only for wording closely matching "swap $25 of SOURCE for DESTINATION". The literal words swap and for, a dollar amount, and two different explicit token tickers or complete contract addresses are required. SOURCE is the asset after "of" and before "for"; DESTINATION is after "for". Never reverse them or infer either asset.`,
   sell: `Return {"kind":"sell","amount":"decimal","unit":"token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. Convert all, everything, every last token, the entire position, bag, or balance to 100 percent; half and 1/2 to 50 percent; a quarter to 25 percent; and three quarters to 75 percent. Convert number words to decimals and explicit slippage percent to basis points.`,
-  claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names a specific Pons launch ticker or contract. Direct requests to claim, collect, or withdraw creator fees qualify. "Claim my fees" claims native-pair fees and has no token. "Claim the PONSBOT launch fees" and "withdraw creator rewards for PONSBOT" both use token PONSBOT. Never treat words such as fees, creator, launch, ETH, revenue, or rewards as a token.`,
+  claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names a specific Pons launch ticker or contract. Direct requests to claim, collect, or withdraw creator fees qualify. "Claim my fees" and "Claim everything available for me" claim all supported native-pair fees and have no token. "Claim the PONSBOT launch fees" and "withdraw creator rewards for PONSBOT" both use token PONSBOT. Never treat words such as everything, all, available, fees, creator, launch, ETH, revenue, or rewards as a token.`,
   launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd|pair"}. Extract an X @handle, x.com URL, or legacy twitter.com URL into twitter and always normalize it to https://x.com/handle. Telegram accepts only a link in t.me/XXXXX form, with optional http:// or https://; always return it as https://t.me/XXXXX. A Telegram @handle by itself is invalid. Never accept another Telegram host or a multi-segment path. Normalize an explicitly labeled bare, http://, or https:// public website URL to HTTPS while preserving its path. Matching straight or curly quotation marks delimit a literal field value: in “Launch ‘Rain Check’ as $RAIN”, the exact name is Rain Check; neither the quotation marks nor the connector "as" belongs to the name. A value immediately after ticker or symbol is the ticker whether written as PONSBOT, $PONSBOT, "PONSBOT", or "$PONSBOT". Strip surrounding straight or curly quotation marks from every returned field. Strip a leading $ from the ticker and uppercase it, so $PONSBOT is returned only as PONSBOT. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", "pair against MSFT", or "against MSFT" into pairToken. Connector words such as with, against, as, ticker, and symbol are never field values. For a linked-asset pair, "dev buy $100 of MSFT" uses unit usd, while both "dev buy 2 MSFT" and "with a 4 MSFT developer buy" use unit pair. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. An attachment is optional and is handled separately; never invent an image URL.`,
 };
 
@@ -424,11 +426,11 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
     buy: /\b(?:buy|purchase)\b[\s\S]{0,55}(?:\$[0-9]|[0-9][0-9,.]*\s+(?:ETH|WETH|[A-Z][A-Z0-9]{0,11})\b)/i,
     sell: /\bsell\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
     send: /\b(?:send|transfer|give)\b[\s\S]{0,80}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
-    burn: /\bburn\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
+    burn: /\bburn\b[\s\S]{0,45}\b(?:all|half|entire|whole|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
     buy_and_send: /\bbuy\b[\s\S]{0,80}\b(?:send|transfer|give)\b[\s\S]{0,60}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
     buy_and_burn: /\b(?=[\s\S]*\bbuy\b)(?=[\s\S]*\bburn\b)[\s\S]*$/i,
     swap_token_for_token: /\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+for\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i,
-    claim_fees: /\b(?:claim|collect|withdraw)\b[\s\S]{0,45}\b(?:fees?|revenue|rewards?)\b/i,
+    claim_fees: /\b(?:claim|collect|withdraw)\b[\s\S]{0,45}\b(?:fees?|revenue|rewards?)\b|\bclaim\s+(?:everything|all)\s+available(?:\s+for\s+me)?\b/i,
     launch: /\b(?:launch|deploy|create|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b[\s\S]{0,120}(?:\bticker\b|\bsymbol\b|\$[A-Za-z][A-Za-z0-9]{0,11}\b)/i,
   };
   return patterns[command.kind]?.test(unquoted) ? command.kind : null;
@@ -485,7 +487,8 @@ function withoutQuotedContent(text: string) {
 
 function isDirectFeeClaim(text: string) {
   const withoutMention = text.replace(/^\s*@ponsbot(?:family)?\s*/i, "").trim();
-  return /^(?:please\s+)?(?:claim|collect|withdraw)\b[\s\S]{0,80}\b(?:fees?|revenue|rewards?)\b[.!\s]*$/i.test(withoutMention)
+  return (/^(?:please\s+)?(?:claim|collect|withdraw)\b[\s\S]{0,80}\b(?:fees?|revenue|rewards?)\b[.!\s]*$/i.test(withoutMention)
+    || /^(?:please\s+)?claim\s+(?:everything|all)\s+available(?:\s+for\s+me)?[.!\s]*$/i.test(withoutMention))
     && !/\b(?:how|can|could|would|what|explain|if|when|not|don['’]?t)\b/i.test(withoutMention);
 }
 
@@ -589,6 +592,8 @@ export function requestedOperations(text: string): WalletOperation[] {
 
 export function canonicalCommandText(text: string) {
   return text
+    .replace(/\bburn\s+(?:my\s+)?(?:entire|whole)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/gi, "burn all my $1")
+    .replace(/\bclaim\s+(?:everything|all)\s+available(?:\s+for\s+me)?\b/gi, "claim my fees")
     .replace(/\bclaim\s+(?:the\s+)?\$?([a-z][a-z0-9]{1,11})\s+launch\s+fees?\b/gi, "claim my fees for $1")
     .replace(/\bput\s+(\$[0-9][0-9,.]*)\s+into\b/gi, "buy $1 of")
     .replace(/\bgimme\b/gi, "buy")

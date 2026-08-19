@@ -16,6 +16,8 @@ const scenarios: Array<{ post: string; expected: Expected }> = [
   { post: "Quick one: send 10 PONSBOT to @alice please", expected: { kind: "command", operation: "send", fields: { amount: "10", unit: "token", token: "PONSBOT", recipient: "@alice" } } },
   { post: "I was wondering, sell all my MSFT", expected: { kind: "command", operation: "sell", fields: { amount: "100", unit: "percent", token: "MSFT" } } },
   { post: "Hey bot, burn 4 PONSBOT", expected: { kind: "command", operation: "burn", fields: { amount: "4", unit: "token", token: "PONSBOT" } } },
+  { post: "Burn my entire PONSBOT balance", expected: { kind: "command", operation: "burn", fields: { amount: "100", unit: "percent", token: "PONSBOT" } } },
+  { post: "Claim everything available for me", expected: { kind: "command", operation: "claim_fees" } },
   { post: "Please launch Clear Signal ticker CLEAR pair ETH", expected: { kind: "command", operation: "launch", fields: { name: "Clear Signal", symbol: "CLEAR", pairToken: "ETH" } } },
   { post: "Can you explain how buying $5 of PONSBOT works?", expected: { kind: "help", topic: "buy_sell" } },
   { post: "Do not send 10 PONSBOT to @alice", expected: { kind: "unknown_wallet" } },

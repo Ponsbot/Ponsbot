@@ -5,6 +5,14 @@ import { parseWalletCommand } from "../convex/walletCommands";
 describe("deterministic X wallet replies", () => {
   it("routes claim all fees without inventing a token", () => {
     expect(groundedCanonicalCommand("claim all my fees")).toEqual({ kind: "claim_fees" });
+    expect(groundedCanonicalCommand("Claim everything available for me")).toEqual({ kind: "claim_fees" });
+    expect(straightforwardCommandOperation("Claim everything available for me")).toBe("claim_fees");
+  });
+  it("treats an entire named token balance as a 100 percent burn", () => {
+    expect(groundedCanonicalCommand("Burn my entire PONSBOT balance")).toEqual({
+      kind: "burn", amount: "100", unit: "percent", token: "PONSBOT",
+    });
+    expect(straightforwardCommandOperation("Burn my entire PONSBOT balance")).toBe("burn");
   });
   it("requires explicit buy and burn wording for the combined workflow", () => {
     expect(intentClassifierPrompt()).toContain('"buy_and_burn"');
