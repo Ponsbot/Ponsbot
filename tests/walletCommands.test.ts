@@ -83,6 +83,9 @@ describe("X wallet commands", () => {
     expect(parseWalletCommand("buy 0.02 eth of 0x1111111111111111111111111111111111111111 slippage 2.5%")).toEqual({
       kind: "buy", amount: "0.02", unit: "eth", token: "0x1111111111111111111111111111111111111111", slippageBps: 250,
     });
+    expect(parseWalletCommand("buy 2 MSFT worth of PONSBOT")).toEqual({
+      kind: "buy", amount: "2", unit: "pair", pairAsset: "MSFT", token: "PONSBOT", slippageBps: 250,
+    });
   });
 
   it("parses token sells and bounds slippage", () => {
@@ -137,6 +140,10 @@ describe("X wallet commands", () => {
       recipient: "0x1111111111111111111111111111111111111111", slippageBps: 100,
     });
     expect(parseWalletCommand("buy $100 of PONSBOT and send it")).toMatchObject({ kind: "unknown" });
+    expect(parseWalletCommand("buy 2 AAPL of GOBLIN and send the result to @alice")).toEqual({
+      kind: "buy_and_send", amount: "2", unit: "pair", pairAsset: "AAPL", token: "GOBLIN",
+      recipient: "@alice", slippageBps: 250,
+    });
   });
 
   it("parses flexibly arranged launch names and tickers", () => {
@@ -242,6 +249,9 @@ describe("X wallet commands", () => {
       kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "@friend", slippageBps: 250,
     });
     expect(validateStructuredWalletCommand({ kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "friend" })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "buy_and_send", amount: "2", unit: "pair", pairAsset: "AAPL", token: "GOBLIN", recipient: "@friend", slippageBps: 250 })).toEqual({
+      kind: "buy_and_send", amount: "2", unit: "pair", pairAsset: "AAPL", token: "GOBLIN", recipient: "@friend", slippageBps: 250,
+    });
     expect(validateStructuredWalletCommand({ kind: "buy", amount: "1", unit: "pair", token: "PONSBOT", pairAsset: "ETH", slippageBps: 250 })).toBeNull();
     expect(validateStructuredWalletCommand({ kind: "buy_and_burn", amount: "1", unit: "pair", token: "PONSBOT", pairAsset: "ETH", slippageBps: 250 })).toBeNull();
     expect(validateStructuredWalletCommand({ kind: "buy", amount: "1", unit: "eth", token: "PONSBOT", slippageBps: 12.5 })).toBeNull();

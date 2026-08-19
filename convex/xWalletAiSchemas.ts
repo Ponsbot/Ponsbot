@@ -51,8 +51,9 @@ const operationProperties: Record<string, Record<string, unknown>> = {
   },
   buy_and_send: {
     amount: nullableString("Decimal spend amount without commas, or null when missing."),
-    unit: { type: ["string", "null"], enum: [null, "eth", "usd"] },
+    unit: { type: ["string", "null"], enum: [null, "eth", "usd", "pair"] },
     token: nullableString("Token being purchased, or null when missing."),
+    pairAsset: nullableString("Explicit non-ETH paired spend asset for pair-unit buys, otherwise null."),
     recipient: nullableString("X handle or complete wallet address, or null when missing."),
     slippageBps: nullableSlippage("Slippage in integer basis points; normally 250."),
   },

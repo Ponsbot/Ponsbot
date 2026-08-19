@@ -119,7 +119,7 @@ function explicitUsdAmount(text: string, amount: string) {
 }
 
 function pairSpendRoles(text: string) {
-  const match = withoutQuotedContent(text).match(/(?:^|\b)([0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:of|into)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i);
+  const match = withoutQuotedContent(text).match(/(?:^|\b)([0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:worth\s+of|of|into)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i);
   return match ? { amount: match[1].replaceAll(",", "").replace(/^\./, "0."), pairAsset: match[2], token: match[3] } : undefined;
 }
 
@@ -147,7 +147,7 @@ function commandRolesMatchText(text: string, command: WalletCommand) {
     const roles = strictSwapRoles(text);
     return Boolean(roles && roles.amount === command.amount && sameIdentifier(roles.fromToken, command.fromToken) && sameIdentifier(roles.toToken, command.toToken));
   }
-  if (command.kind === "buy" || command.kind === "buy_and_burn") {
+  if (command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "buy_and_burn") {
     const roles = pairSpendRoles(text);
     if (roles && command.unit === "pair") {
       return roles.amount === command.amount && sameIdentifier(roles.pairAsset, command.pairAsset) && sameIdentifier(roles.token, command.token);
@@ -170,7 +170,9 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
   if (command.kind === "buy_and_burn") return amountIsGrounded(text, command.amount) && identifierIsGrounded(text, command.token)
     && (!command.pairAsset || identifierIsGrounded(text, command.pairAsset));
   if (command.kind === "buy_and_send") {
-    return amountIsGrounded(text, command.amount) && identifierIsGrounded(text, command.token) && recipientIsExplicitlyGrounded(text, command.recipient);
+    return amountIsGrounded(text, command.amount) && identifierIsGrounded(text, command.token)
+      && (!command.pairAsset || identifierIsGrounded(text, command.pairAsset))
+      && recipientIsExplicitlyGrounded(text, command.recipient);
   }
   if (command.kind === "send") {
     const amountGrounded = amountIsGrounded(text, command.amount)
@@ -324,7 +326,7 @@ const extractionInstructions: Record<WalletOperation, string> = {
   send: `Return {"kind":"send","amount":"decimal","unit":"eth|usd|token|percent","recipient":"@handle or 0x address"} with "token" when required. Transfer synonyms include send, transfer, give, pay, and move. The recipient may appear before the amount, after "to", after an arrow, or directly after the asset when it is an unambiguous 0x destination. Convert all to 100 percent and half to 50 percent. Preserve addresses exactly. A token unit or percent requires a token.`,
   burn: `Return {"kind":"burn","amount":"decimal","unit":"usd|token|percent","token":"ticker or address"}. The exact word burn must appear. Convert all, the entire balance, or the whole balance to 100 percent; convert half to 50 percent. "Burn my entire PONSBOT balance" means 100 percent of PONSBOT.`,
   buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"ticker or address","slippageBps":250}. Buy synonyms include buy, purchase, use an asset to purchase, grab, get me, gimme, ape into, swap into, put an asset into, spend on, compra, and achète. Treat "buy $25 worth of TOKEN" and "purchase 0.03 ETH worth of TOKEN" as buys; worth of introduces the token being purchased. An explicit ETH spend always uses unit eth and omits pairAsset, including "swap .025 ETH for SNDK". Use unit pair only when the user states an amount of a non-ETH paired asset. Examples: "buy 5 MSFT of PONSBOT", "use 2.75 SNDK to purchase PONSBOT", and "put ten MSFT into PONSBOT" all set the first asset as pairAsset and PONSBOT as token. pairAsset is required for unit pair and must be omitted for USD or ETH. The token may be a ticker or an explicitly supplied 0x contract address labeled CA, contract, token address, or used directly. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
-  buy_and_send: `Return {"kind":"buy_and_send","amount":"decimal","unit":"eth|usd","token":"ticker or address","recipient":"@handle or 0x address","slippageBps":250}. Use this only for an explicit request to buy one token and immediately send the purchased tokens to one recipient. The amount is the buy spend, not a token quantity. Preserve the recipient exactly. Never infer a missing amount, token, or recipient. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
+  buy_and_send: `Return {"kind":"buy_and_send","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"optional ticker or address","recipient":"@handle or 0x address","slippageBps":250}. Use this only for an explicit request to buy one token and immediately send the purchased tokens to one recipient. The amount is the buy spend, not a token quantity. For "buy 2 AAPL of GOBLIN and send the result to @alice", return amount 2, unit pair, pairAsset AAPL, token GOBLIN, and recipient @alice. pairAsset is required only for a non-ETH pair-unit spend. Preserve an @handle or complete destination wallet address exactly. Never infer a missing amount, token, pair asset, or recipient. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   buy_and_burn: `Return {"kind":"buy_and_burn","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"optional ticker or address","slippageBps":250}. Use this only when the original request contains "burn" and either "buy" or "purchase" outside quoted content. The amount is the buy spend. An explicit ETH spend always uses unit eth and omits pairAsset; unit pair is only for a non-ETH paired asset. The workflow burns exactly the tokens received by this purchase; never extract a separate burn amount. Never infer a missing amount or token. For unit pair, pairAsset is required.`,
   swap_token_for_token: `Return {"kind":"swap_token_for_token","amount":"decimal","unit":"usd","fromToken":"ticker or address","toToken":"ticker or address","slippageBps":250}. Use this only for wording closely matching "swap $25 of SOURCE for DESTINATION". The literal words swap and for, a dollar amount, and two different explicit token tickers or complete contract addresses are required. SOURCE is the asset after "of" and before "for"; DESTINATION is after "for". Never reverse them or infer either asset.`,
   sell: `Return {"kind":"sell","amount":"decimal","unit":"usd|token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. A leading dollar sign means sell that USD value of the token: "sell $25 of PONSBOT" returns amount 25, unit usd, and token PONSBOT. Without a dollar sign, a numeric amount is a token quantity. Convert all or entire to 100 percent and half or 1/2 to 50 percent; a quarter means 25 percent and three quarters means 75 percent. Do not interpret every, rest, remaining, or full as an amount. Convert number words to decimals and explicit slippage percent to integer basis points.`,
@@ -420,8 +422,13 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const pairRaw = explicitPair || command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
     command = { ...command, ...(quotedName ? { name: quotedName.trim() } : {}), ...(quotedDescription ? { description: quotedDescription.trim() } : {}), ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: pairRaw.replace(/^\$/, "").toUpperCase().startsWith("0X") ? pairRaw : pairRaw.replace(/^\$/, "").toUpperCase() } : {}) };
   }
+  const statedPairRoles = command?.kind === "buy" && command.unit === "pair" ? pairSpendRoles(text) : undefined;
+  const exactPairBuy = Boolean(command?.kind === "buy" && statedPairRoles
+    && statedPairRoles.amount === command.amount
+    && sameIdentifier(statedPairRoles.pairAsset, command.pairAsset)
+    && sameIdentifier(statedPairRoles.token, command.token));
   if (!command || command.kind === "unknown" || command.kind !== operation || !explicitAuthority(text, command)
-    || !fieldsAreGrounded(text, command) || !commandRolesMatchText(text, command)) {
+    || (!exactPairBuy && (!fieldsAreGrounded(text, command) || !commandRolesMatchText(text, command)))) {
     return null;
   }
   if (hasConflictingTradeIdentifiers(text)) return null;
@@ -438,6 +445,7 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
   if (hasPromptInjection(text) || hasNonExecutableFraming(text) || requestedOperations(text).length > 1) return null;
   const unquoted = withoutQuotedContent(text);
   if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(unquoted)) return null;
+  if (asksWhatIsInMyWallet(text)) return "show_balance";
   if (explicitSelfWalletRequest(text)) return "show_wallet";
   const command = groundedCanonicalCommand(text);
   if (!command || command.kind === "unknown") return null;
@@ -624,8 +632,9 @@ export function canonicalCommandText(text: string) {
     .replace(/\b(?:market\s+buy|purchase|grab(?:\s+me)?|pick\s+up|scoop|ape)\b/gi, "buy")
     .replace(/\bbuy\s+me\b/gi, "buy")
     .replace(/\b([0-9][0-9,.]*(?:\.[0-9]+)?)\s+bucks?\b/gi, "$1 dollars")
-    .replace(/\bbuy\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?!(?:of|worth|usd|dollars?|eth|weth)\b)(?=\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b)/gi, "buy $1 of ")
+    .replace(/\bbuy\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?!(?:of|worth|usd|dollars?|eth|weth)\b)(?!\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+(?:worth\s+of|of)\b)(?=\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b)/gi, "buy $1 of ")
     .replace(/\bswap\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)(?:\s+(ETH|WETH))?\s+(?:worth\s+)?(?:for|into)\s+(?:CA\s+|contract\s+|token\s+address\s+)?/gi, (_match, amount: string, asset?: string) => `buy ${amount}${asset ? ` ${asset}` : ""} of `)
+    .replace(/\bspend\s+([0-9][0-9,.]*(?:\.[0-9]+)?)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+on\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b/gi, "buy $1 $2 of $3")
     .replace(/\bspend\s+(\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\s+(?:usd\s+)?(?:on|buying)\b/gi, "buy $1 of")
     .replace(/\bsend\s+it\s*:\s*(\$[0-9][0-9,.]*)\s+into\b/gi, "buy $1 of")
     .replace(/\bdump\b/gi, "sell")
@@ -661,6 +670,23 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
   if (isDirectFeeClaim(text)) return { kind: "command", operation: "claim_fees" };
   const earlyOperations = requestedOperations(text);
   if (earlyOperations.length > 1) return { kind: "unknown_wallet" };
+  const operativeText = withoutQuotedContent(text);
+  // Compound commands require their literal action words. In particular, a
+  // model may not promote an ordinary spend/buy into a destructive burn, or
+  // treat the single bot invocation as a transfer destination.
+  if (classification.kind === "command" && classification.operation === "buy_and_burn"
+    && !(/\b(?:buy|purchase)\b/i.test(operativeText) && /\bburn\b/i.test(operativeText))) {
+    return earlyOperations.length === 1
+      ? { kind: "command", operation: earlyOperations[0] }
+      : { kind: "unknown_wallet" };
+  }
+  if (classification.kind === "command" && classification.operation === "buy_and_send"
+    && !(/\b(?:buy|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\bget\s+me\b|\bput\s+\$?[0-9]/i.test(operativeText)
+      && /\b(?:send|transfer|give|pay|move|envoie)\b/i.test(operativeText))) {
+    return earlyOperations.length === 1
+      ? { kind: "command", operation: earlyOperations[0] }
+      : { kind: "unknown_wallet" };
+  }
   if (explicitSelfWalletRequest(text)) return { kind: "command", operation: "show_wallet" };
   const straightforwardOperation = straightforwardCommandOperation(text);
   if (straightforwardOperation) return { kind: "command", operation: straightforwardOperation };

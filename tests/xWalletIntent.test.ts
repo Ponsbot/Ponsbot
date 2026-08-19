@@ -146,10 +146,11 @@ describe("deterministic X wallet replies", () => {
     expect(parameterExtractorPrompt("buy", false)).toContain("buy 5 MSFT of PONSBOT");
     expect(parameterExtractorPrompt("buy_and_send", false)).toContain('"recipient"');
     expect(parameterExtractorPrompt("buy_and_send", false)).toContain("purchased tokens");
+    expect(parameterExtractorPrompt("buy_and_send", false)).toContain("pairAsset AAPL");
     expect(parameterExtractorPrompt("send", false)).toContain('"recipient"');
     expect(parameterExtractorPrompt("launch", true)).toContain('"symbol"');
     expect(parameterExtractorPrompt("launch", true)).toContain("quotation marks delimit a literal field value");
-    expect(parameterExtractorPrompt("launch", true)).toContain("Connector words");
+    expect(parameterExtractorPrompt("launch", true)).toContain("connector words");
     expect(parameterExtractorPrompt("launch", true)).toContain("Attached image present: yes");
     expect(parameterExtractorPrompt("claim_fees", false)).toContain("native-pair fees");
   });
@@ -176,6 +177,20 @@ describe("deterministic X wallet replies", () => {
     });
     expect(groundedCanonicalCommand("@Ponsbotfamily send @charlie 0.01 ETH please")).toMatchObject({
       kind: "send", amount: "0.01", unit: "eth", recipient: "@charlie",
+    });
+  });
+
+  it("requires explicit compound action words and ignores a lone bot invocation as recipient", () => {
+    expect(requestedOperations("@Ponsbotfamily spend 3 GME on GOBLIN.")).toEqual(["buy"]);
+    expect(groundedCanonicalCommand("@Ponsbotfamily spend 3 GME on GOBLIN.")).toMatchObject({
+      kind: "buy", amount: "3", unit: "pair", pairAsset: "GME", token: "GOBLIN",
+    });
+    expect(requestedOperations("Buy 2 AAPL worth of TCAT @Ponsbotfamily")).toEqual(["buy"]);
+    expect(parseWalletCommand("Buy 2 AAPL worth of TCAT")).toMatchObject({
+      kind: "buy", amount: "2", unit: "pair", pairAsset: "AAPL", token: "TCAT",
+    });
+    expect(groundedCanonicalCommand("Buy 2 AAPL worth of TCAT @Ponsbotfamily")).toMatchObject({
+      kind: "buy", amount: "2", unit: "pair", pairAsset: "AAPL", token: "TCAT",
     });
   });
 

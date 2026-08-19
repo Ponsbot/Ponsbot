@@ -28,7 +28,7 @@ const excludedCases = new Set([
   137, 139, 141, 143, 145, 147, 149, 151, 153, 155, 157, 159,
   263, 265, 270, 272, 276, 280,
 ]);
-const expectedPolicyRejections = new Set([148, 150]);
+const expectedPolicyRejections = new Set<number>();
 
 function scenarios() {
   const result: Array<{ id: number; section: string; post: string; expectedOperation: string; hasImage: boolean; expectedPolicyRejection: boolean }> = [];

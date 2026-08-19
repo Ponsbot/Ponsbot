@@ -122,7 +122,7 @@ function commandSummary(command: WalletCommand) {
     return `Burned ${amount}!`;
   }
   if (command.kind === "buy") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)}!`;
-  if (command.kind === "buy_and_send") return `Bought ${command.unit === "usd" ? `$${command.amount}` : `${command.amount} ETH`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
+  if (command.kind === "buy_and_send") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
   if (command.kind === "buy_and_burn") return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and burned the purchased tokens!`;
   if (command.kind === "swap_token_for_token") return `Swapped $${command.amount} of ${assetLabel(command.fromToken)} for ${assetLabel(command.toToken)}!`;
   if (command.kind === "sell") return `Sold ${command.unit === "percent" ? `${command.amount}% of ` : `${command.amount} `}${assetLabel(command.token)}!`;
@@ -329,8 +329,18 @@ export const reserveWalletRequest = internalMutation({
       }
       return { inserted: false, retried: false, request: duplicate };
     }
+    const related = (!args.source || !args.channel)
+      ? await ctx.db.query("walletRequests").withIndex("by_source_post_id", (q) => q.eq("sourcePostId", args.sourcePostId)).collect()
+      : [];
+    const parent = related.find((item) => item.ownerXUserId === args.ownerXUserId
+      && item.walletId === args.walletId && item.source && item.channel);
     const now = Date.now();
-    const id = await ctx.db.insert("walletRequests", { ...args, status: "accepted", createdAt: now, updatedAt: now });
+    const id = await ctx.db.insert("walletRequests", {
+      ...args,
+      ...(args.source ? {} : parent?.source ? { source: parent.source } : {}),
+      ...(args.channel ? {} : parent?.channel ? { channel: parent.channel } : {}),
+      status: "accepted", createdAt: now, updatedAt: now,
+    });
     return { inserted: true, retried: false, request: await ctx.db.get(id) };
   },
 });
@@ -1123,7 +1133,7 @@ export const executeCommand = internalAction({
           const before = await exactTokenBalance(wallet, args.xUserId, commandToken);
           const buyCommand: WalletCommand = {
             kind: "buy", amount: command.amount, unit: command.unit,
-            token: command.token, slippageBps: command.slippageBps,
+            token: command.token, ...(command.pairAsset ? { pairAsset: command.pairAsset } : {}), slippageBps: command.slippageBps,
           };
           const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, `${requestId}:buy`, buyCommand, commandToken, registry);
           const buyOperation = await operationFor(funded.command, undefined, undefined, undefined, commandToken, registry);
@@ -1437,7 +1447,7 @@ export const executeTerminalCommand = action({
       await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
       return { ok: false, message };
     }
-    const recipientAddress = command.kind === "send"
+    const recipientAddress = command.kind === "send" || command.kind === "buy_and_send"
       ? await ctx.runAction(internal.xReplies.resolveTerminalRecipient, { recipient: command.recipient })
       : undefined;
     const requestId = `terminal:${args.sessionId}:${args.eventId}:${command.kind}`;
