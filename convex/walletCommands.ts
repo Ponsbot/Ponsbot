@@ -417,6 +417,12 @@ function tokenIdentifier(value: unknown) {
   return /^0x[a-fA-F0-9]{40}$/.test(cleaned) || /^[A-Z0-9]{1,32}$/.test(cleaned) ? cleaned : undefined;
 }
 
+function structuredSlippageBps(value: unknown) {
+  if (value === undefined) return DEFAULT_SWAP_SLIPPAGE_BPS;
+  const numeric = Number(value);
+  return Number.isInteger(value) && numeric >= 10 && numeric <= 2_000 ? numeric : undefined;
+}
+
 /** Strictly validates untrusted structured output before it can reach execution. */
 export function validateStructuredWalletCommand(value: unknown): WalletCommand | null {
   if (!value || typeof value !== "object") return null;
@@ -442,25 +448,26 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     const amount = finitePositiveString(item.amount);
     const token = tokenIdentifier(item.token);
     const recipient = typeof item.recipient === "string" && (/^@[a-zA-Z0-9_]{1,15}$/.test(item.recipient) || /^0x[a-fA-F0-9]{40}$/.test(item.recipient)) ? item.recipient : undefined;
-    const slippageBps = Number.isInteger(item.slippageBps) ? Number(item.slippageBps) : DEFAULT_SWAP_SLIPPAGE_BPS;
-    if (!amount || !token || !recipient || !["eth", "usd"].includes(String(item.unit)) || slippageBps < 10 || slippageBps > 2_000) return null;
+    const slippageBps = structuredSlippageBps(item.slippageBps);
+    if (!amount || !token || !recipient || !["eth", "usd"].includes(String(item.unit)) || slippageBps === undefined) return null;
     return { kind, amount, unit: item.unit as "eth" | "usd", token, recipient, slippageBps };
   }
   if (kind === "buy_and_burn") {
     const amount = finitePositiveString(item.amount);
     const token = tokenIdentifier(item.token);
     const pairAsset = item.pairAsset === undefined ? undefined : tokenIdentifier(item.pairAsset);
-    const slippageBps = Number.isInteger(item.slippageBps) ? Number(item.slippageBps) : DEFAULT_SWAP_SLIPPAGE_BPS;
-    if (!amount || !token || !["eth", "usd", "pair"].includes(String(item.unit)) || slippageBps < 10 || slippageBps > 2_000) return null;
+    const slippageBps = structuredSlippageBps(item.slippageBps);
+    if (!amount || !token || !["eth", "usd", "pair"].includes(String(item.unit)) || slippageBps === undefined) return null;
     if (item.unit === "pair" && !pairAsset) return null;
+    if (item.unit === "pair" && /^eth$/i.test(pairAsset || "")) return null;
     return { kind, amount, unit: item.unit as "eth" | "usd" | "pair", token, ...(pairAsset ? { pairAsset } : {}), slippageBps };
   }
   if (kind === "swap_token_for_token") {
     const amount = finitePositiveString(item.amount);
     const fromToken = tokenIdentifier(item.fromToken);
     const toToken = tokenIdentifier(item.toToken);
-    const slippageBps = Number.isInteger(item.slippageBps) ? Number(item.slippageBps) : DEFAULT_SWAP_SLIPPAGE_BPS;
-    if (!amount || item.unit !== "usd" || !fromToken || !toToken || fromToken.toLowerCase() === toToken.toLowerCase() || slippageBps < 10 || slippageBps > 2_000) return null;
+    const slippageBps = structuredSlippageBps(item.slippageBps);
+    if (!amount || item.unit !== "usd" || !fromToken || !toToken || fromToken.toLowerCase() === toToken.toLowerCase() || slippageBps === undefined) return null;
     return { kind, amount, unit: "usd", fromToken, toToken, slippageBps };
   }
   if (kind === "burn") {
@@ -474,11 +481,12 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
   if (kind === "buy" || kind === "sell") {
     const amount = finitePositiveString(item.amount);
     const token = tokenIdentifier(item.token);
-    const slippageBps = Number.isInteger(item.slippageBps) ? Number(item.slippageBps) : DEFAULT_SWAP_SLIPPAGE_BPS;
-    if (!amount || !token || slippageBps < 10 || slippageBps > 2_000) return null;
+    const slippageBps = structuredSlippageBps(item.slippageBps);
+    if (!amount || !token || slippageBps === undefined) return null;
     if (kind === "buy" && (item.unit === "eth" || item.unit === "usd" || item.unit === "pair")) {
       const pairAsset = item.pairAsset === undefined ? undefined : tokenIdentifier(item.pairAsset);
       if (item.unit === "pair" && !pairAsset) return null;
+      if (item.unit === "pair" && /^eth$/i.test(pairAsset || "")) return null;
       if (item.pairAsset !== undefined && !pairAsset) return null;
       return { kind, amount, unit: item.unit, token, ...(pairAsset ? { pairAsset } : {}), slippageBps };
     }

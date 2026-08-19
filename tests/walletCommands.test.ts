@@ -241,6 +241,12 @@ describe("X wallet commands", () => {
       kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "@friend", slippageBps: 250,
     });
     expect(validateStructuredWalletCommand({ kind: "buy_and_send", amount: "100", unit: "usd", token: "PONSBOT", recipient: "friend" })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "buy", amount: "1", unit: "pair", token: "PONSBOT", pairAsset: "ETH", slippageBps: 250 })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "buy_and_burn", amount: "1", unit: "pair", token: "PONSBOT", pairAsset: "ETH", slippageBps: 250 })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "buy", amount: "1", unit: "eth", token: "PONSBOT", slippageBps: 12.5 })).toBeNull();
+    expect(validateStructuredWalletCommand({ kind: "sell", amount: "25", unit: "usd", token: "PONSBOT" })).toEqual({
+      kind: "sell", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250,
+    });
     expect(validateStructuredWalletCommand({ kind: "launch", name: "Root", symbol: "ROOT", launchMode: "other" })).toMatchObject({
       kind: "launch", launchMode: "pons", name: "Root", symbol: "ROOT",
     });

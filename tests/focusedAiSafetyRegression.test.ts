@@ -14,7 +14,9 @@ type Expected = {
 const scenarios: Array<{ post: string; expected: Expected }> = [
   { post: "Before I log off, buy $5 of PONSBOT please", expected: { kind: "command", operation: "buy", fields: { amount: "5", unit: "usd", token: "PONSBOT" } } },
   { post: "Quick one: send 10 PONSBOT to @alice please", expected: { kind: "command", operation: "send", fields: { amount: "10", unit: "token", token: "PONSBOT", recipient: "@alice" } } },
+  { post: "send $10 of SNDK to @alice", expected: { kind: "command", operation: "send", fields: { amount: "10", unit: "usd", token: "SNDK", recipient: "@alice" } } },
   { post: "I was wondering, sell all my MSFT", expected: { kind: "command", operation: "sell", fields: { amount: "100", unit: "percent", token: "MSFT" } } },
+  { post: "sell $25 of PONSBOT", expected: { kind: "command", operation: "sell", fields: { amount: "25", unit: "usd", token: "PONSBOT" } } },
   { post: "Hey bot, burn 4 PONSBOT", expected: { kind: "command", operation: "burn", fields: { amount: "4", unit: "token", token: "PONSBOT" } } },
   { post: "Burn my entire PONSBOT balance", expected: { kind: "command", operation: "burn", fields: { amount: "100", unit: "percent", token: "PONSBOT" } } },
   { post: "Claim everything available for me", expected: { kind: "command", operation: "claim_fees" } },

@@ -1,5 +1,6 @@
-import { openRouter } from "./llm";
+import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
 import { extractGroundedLaunchName, extractGroundedPairToken, parseWalletCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
 
 export type WalletHelpTopic = "capabilities" | "wallet" | "fund" | "balance" | "send" | "buy_sell" | "burn" | "launch" | "pairs" | "fees";
 export type XWalletIntent =
@@ -10,7 +11,7 @@ export type XWalletIntent =
 
 export type AiWorkflowDiagnostics = {
   source?: "ai_attempt_1" | "ai_attempt_2" | "deterministic_fallback" | "deterministic_guard";
-  classificationAttempts: Array<{ attempt: number; raw?: string; accepted: boolean; error?: string }>;
+  classificationAttempts: Array<{ attempt: number; raw?: string; accepted: boolean; error?: string; normalized?: { kind: string; operation?: string; topic?: string } }>;
   extractionAttempts: Array<{ attempt: number; operation: WalletOperation; raw?: string; accepted: boolean; error?: string }>;
   finalIntent?: XWalletIntent;
 };
@@ -131,9 +132,17 @@ function sameIdentifier(left: string | undefined, right: string | undefined) {
   return Boolean(left && right && left.replace(/^\$/, "").toLowerCase() === right.replace(/^\$/, "").toLowerCase());
 }
 
+function explicitUsdSendToken(text: string) {
+  return withoutQuotedContent(text).match(/\b(?:send|transfer|give|pay|move)\b[\s\S]{0,80}?\$[0-9][0-9,.]*(?:\.[0-9]+)?\s+(?:worth\s+)?of\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i)?.[1];
+}
+
 function commandRolesMatchText(text: string, command: WalletCommand) {
   if ((command.kind === "send" || command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "buy_and_burn")
     && explicitUsdAmount(text, command.amount) && command.unit !== "usd") return false;
+  if (command.kind === "send") {
+    const explicitToken = explicitUsdSendToken(text);
+    if (explicitToken && !/^eth$/i.test(explicitToken) && !sameIdentifier(explicitToken, command.token)) return false;
+  }
   if (command.kind === "swap_token_for_token") {
     const roles = strictSwapRoles(text);
     return Boolean(roles && roles.amount === command.amount && sameIdentifier(roles.fromToken, command.fromToken) && sameIdentifier(roles.toToken, command.toToken));
@@ -212,6 +221,18 @@ type ClassifiedIntent =
 const HELP_TOPICS: WalletHelpTopic[] = ["capabilities", "wallet", "fund", "balance", "send", "buy_sell", "burn", "launch", "pairs", "fees"];
 const OPERATIONS: WalletOperation[] = ["create_wallet", "show_wallet", "show_balance", "send", "burn", "buy", "buy_and_send", "buy_and_burn", "swap_token_for_token", "sell", "claim_fees", "launch"];
 const AI_COMPLETION_TOKEN_BUDGET = 4_096;
+
+function structuredAiEnabled() {
+  return process.env.OPENROUTER_STRUCTURED_OUTPUTS_ENABLED === "true";
+}
+
+function withoutNullFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutNullFields);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== null)
+    .map(([key, field]) => [key, withoutNullFields(field)]));
+}
 
 function validateClassification(value: unknown): ClassifiedIntent | null {
   if (!value || typeof value !== "object") return null;
@@ -302,11 +323,11 @@ const extractionInstructions: Record<WalletOperation, string> = {
   show_balance: `Return {"kind":"show_balance"} with optional "token". Include token when the post explicitly names a ticker or contract, including forms such as "my ETH balance" and "show SNDK balance". Never invent a ticker or address.`,
   send: `Return {"kind":"send","amount":"decimal","unit":"eth|usd|token|percent","recipient":"@handle or 0x address"} with "token" when required. Transfer synonyms include send, transfer, give, pay, and move. The recipient may appear before the amount, after "to", after an arrow, or directly after the asset when it is an unambiguous 0x destination. Convert all to 100 percent and half to 50 percent. Preserve addresses exactly. A token unit or percent requires a token.`,
   burn: `Return {"kind":"burn","amount":"decimal","unit":"usd|token|percent","token":"ticker or address"}. The exact word burn must appear. Convert all, the entire balance, or the whole balance to 100 percent; convert half to 50 percent. "Burn my entire PONSBOT balance" means 100 percent of PONSBOT.`,
-  buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"ticker or address","slippageBps":250}. Buy synonyms include buy, purchase, use an asset to purchase, grab, get me, gimme, ape into, swap into, put an asset into, spend on, compra, and achète. Use unit pair only when the user states an amount of the launch's paired asset. Examples: "buy 5 MSFT of PONSBOT", "use 2.75 SNDK to purchase PONSBOT", and "put ten MSFT into PONSBOT" all set the first asset as pairAsset and PONSBOT as token. pairAsset is required for unit pair and must be omitted for USD or ETH. The token may be a ticker or an explicitly supplied 0x contract address labeled CA, contract, token address, or used directly. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
+  buy: `Return {"kind":"buy","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"ticker or address","slippageBps":250}. Buy synonyms include buy, purchase, use an asset to purchase, grab, get me, gimme, ape into, swap into, put an asset into, spend on, compra, and achète. An explicit ETH spend always uses unit eth and omits pairAsset, including "swap .025 ETH for SNDK". Use unit pair only when the user states an amount of a non-ETH paired asset. Examples: "buy 5 MSFT of PONSBOT", "use 2.75 SNDK to purchase PONSBOT", and "put ten MSFT into PONSBOT" all set the first asset as pairAsset and PONSBOT as token. pairAsset is required for unit pair and must be omitted for USD or ETH. The token may be a ticker or an explicitly supplied 0x contract address labeled CA, contract, token address, or used directly. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
   buy_and_send: `Return {"kind":"buy_and_send","amount":"decimal","unit":"eth|usd","token":"ticker or address","recipient":"@handle or 0x address","slippageBps":250}. Use this only for an explicit request to buy one token and immediately send the purchased tokens to one recipient. The amount is the buy spend, not a token quantity. Preserve the recipient exactly. Never infer a missing amount, token, or recipient. Convert number words to decimals and an explicit slippage percent to basis points; allowed range is 10 through 2000.`,
-  buy_and_burn: `Return {"kind":"buy_and_burn","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"optional ticker or address","slippageBps":250}. Use this only when the original request contains both literal words "buy" and "burn" outside quoted content. The amount is the buy spend. The workflow burns exactly the tokens received by this purchase; never extract a separate burn amount. Never infer a missing amount or token. For unit pair, pairAsset is required.`,
+  buy_and_burn: `Return {"kind":"buy_and_burn","amount":"decimal","unit":"eth|usd|pair","token":"ticker or address","pairAsset":"optional ticker or address","slippageBps":250}. Use this only when the original request contains both literal words "buy" and "burn" outside quoted content. The amount is the buy spend. An explicit ETH spend always uses unit eth and omits pairAsset; unit pair is only for a non-ETH paired asset. The workflow burns exactly the tokens received by this purchase; never extract a separate burn amount. Never infer a missing amount or token. For unit pair, pairAsset is required.`,
   swap_token_for_token: `Return {"kind":"swap_token_for_token","amount":"decimal","unit":"usd","fromToken":"ticker or address","toToken":"ticker or address","slippageBps":250}. Use this only for wording closely matching "swap $25 of SOURCE for DESTINATION". The literal words swap and for, a dollar amount, and two different explicit token tickers or complete contract addresses are required. SOURCE is the asset after "of" and before "for"; DESTINATION is after "for". Never reverse them or infer either asset.`,
-  sell: `Return {"kind":"sell","amount":"decimal","unit":"token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. Convert all, everything, every last token, the entire position, bag, or balance to 100 percent; half and 1/2 to 50 percent; a quarter to 25 percent; and three quarters to 75 percent. Convert number words to decimals and explicit slippage percent to basis points.`,
+  sell: `Return {"kind":"sell","amount":"decimal","unit":"usd|token|percent","token":"ticker or address","slippageBps":250}. Sell synonyms include dump, cash out, get rid of, unload, and liquidate. A leading dollar sign means sell that USD value of the token: "sell $25 of PONSBOT" returns amount 25, unit usd, and token PONSBOT. Without a dollar sign, a numeric amount is a token quantity. Convert all, everything, every last token, the entire position, bag, or balance to 100 percent; half and 1/2 to 50 percent; a quarter to 25 percent; and three quarters to 75 percent. Convert number words to decimals and explicit slippage percent to integer basis points.`,
   claim_fees: `Return {"kind":"claim_fees"} with optional "token" only when the user names a specific Pons launch ticker or contract. Direct requests to claim, collect, or withdraw creator fees qualify. "Claim my fees" and "Claim everything available for me" claim all supported native-pair fees and have no token. "Claim the PONSBOT launch fees" and "withdraw creator rewards for PONSBOT" both use token PONSBOT. Never treat words such as everything, all, available, fees, creator, launch, ETH, revenue, or rewards as a token.`,
   launch: `Return {"kind":"launch","launchMode":"pons","name":"token name","symbol":"TICKER"} plus only explicitly supplied and complete optional description, website, twitter, telegram, pairToken, and devBuy {"amount":"decimal","unit":"eth|usd|pair"}. Extract an X @handle, x.com URL, or legacy twitter.com URL into twitter and always normalize it to https://x.com/handle. Telegram accepts only a link in t.me/XXXXX form, with optional http:// or https://; always return it as https://t.me/XXXXX. A Telegram @handle by itself is invalid. Never accept another Telegram host or a multi-segment path. Normalize an explicitly labeled bare, http://, or https:// public website URL to HTTPS while preserving its path. Matching straight or curly quotation marks delimit a literal field value: in “Launch ‘Rain Check’ as $RAIN”, the exact name is Rain Check; neither the quotation marks nor the connector "as" belongs to the name. A value immediately after ticker or symbol is the ticker whether written as PONSBOT, $PONSBOT, "PONSBOT", or "$PONSBOT". Strip surrounding straight or curly quotation marks from every returned field. Strip a leading $ from the ticker and uppercase it, so $PONSBOT is returned only as PONSBOT. Extract "paired with MSFT", "pair with MSFT", "pair it with MSFT", "pair asset MSFT", "pair against MSFT", or "against MSFT" into pairToken. Connector words such as with, against, as, ticker, and symbol are never field values. For a linked-asset pair, "dev buy $100 of MSFT" uses unit usd, while both "dev buy 2 MSFT" and "with a 4 MSFT developer buy" use unit pair. Name and symbol must be separately grounded. An incomplete optional label such as a bare word "website" does not invalidate an otherwise complete launch; omit that optional field. An attachment is optional and is handled separately; never invent an image URL.`,
 };
@@ -320,7 +341,7 @@ const extractionReliabilityGuidance: Partial<Record<WalletOperation, string>> = 
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
-  return `Extract parameters for exactly one ${operation} command. The intent classifier has already selected this operation. Do not change the operation, answer the user, or infer missing values. Return one JSON object only. If any required parameter is missing or ambiguous, return {"kind":"invalid"}.
+  return `Extract parameters for exactly one ${operation} command. The intent classifier has already selected this operation. Do not change the operation, answer the user, or infer missing values. Return one JSON object only. If any required parameter is missing or ambiguous, set kind to "invalid". When the response format requires other properties, set every unavailable property to null.
 
 ${extractionInstructions[operation]}
 ${extractionReliabilityGuidance[operation] || ""}
@@ -701,16 +722,20 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   };
   let classification: ClassifiedIntent | null = null;
   let classificationAttempt = 1;
+  let classificationStructuredUnavailable = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      const useStructured = structuredAiEnabled() && !classificationStructuredUnavailable;
       const raw = await openRouter([{ role: "system", content: intentClassifierPrompt() }, { role: "user", content: text }], 80, {
         reasoningEffort: "medium", minimumCompletionTokens: AI_COMPLETION_TOKEN_BUDGET, timeoutMs: 30_000, providerSort: "latency", temperature: 0,
+        ...(useStructured ? { jsonSchema: walletIntentSchema } : {}),
       });
-      const candidate = validateClassification(extractJson(raw));
+      const candidate = validateClassification(withoutNullFields(extractJson(raw)));
       classification = candidate ? validateIntentDecision(text, candidate) : null;
-      diagnostics?.classificationAttempts.push({ attempt: attempt + 1, raw, accepted: Boolean(classification) });
+      diagnostics?.classificationAttempts.push({ attempt: attempt + 1, raw, accepted: Boolean(classification), ...(classification ? { normalized: classification } : {}) });
       if (classification) { classificationAttempt = attempt + 1; break; }
     } catch (error) {
+      if (attempt === 0 && structuredAiEnabled() && isStructuredOutputAvailabilityError(error)) classificationStructuredUnavailable = true;
       diagnostics?.classificationAttempts.push({ attempt: attempt + 1, accepted: false, error: error instanceof Error ? error.message : "unknown" });
       console.error("x_intent_classification_failed", { attempt: attempt + 1, message: error instanceof Error ? error.message : "unknown" });
     }
@@ -721,16 +746,19 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   if (classification.kind === "irrelevant" || classification.kind === "unknown_wallet") return finish(classification, classificationAttempt === 1 ? "ai_attempt_1" : "ai_attempt_2");
   if (classification.kind === "question") return finish({ kind: "help", topic: classification.topic }, classificationAttempt === 1 ? "ai_attempt_1" : "ai_attempt_2");
 
+  let extractionStructuredUnavailable = false;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      const useStructured = structuredAiEnabled() && !extractionStructuredUnavailable;
       const raw = await openRouter([{ role: "system", content: parameterExtractorPrompt(classification.operation, hasImage) }, { role: "user", content: text }], 240, {
         reasoningEffort: "medium",
         // Reasoning tokens share the completion budget. Reserve enough for the
         // reasoning pass and the final JSON for every specialized operation.
         minimumCompletionTokens: AI_COMPLETION_TOKEN_BUDGET,
         timeoutMs: 40_000, providerSort: "latency", temperature: 0,
+        ...(useStructured ? { jsonSchema: walletExtractionSchema(classification.operation) } : {}),
       });
-      const parsed = extractJson(raw);
+      const parsed = withoutNullFields(extractJson(raw));
       const command = parsed ? validateExtractedCommand(parsed, classification.operation, text) : null;
       const operations = requestedOperations(text);
       const accepted = Boolean(command && operations.length <= 1 && (!operations.length || operations[0] === command.kind));
@@ -738,6 +766,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
       if (command && accepted) return finish({ kind: "command", command }, attempt === 0 ? "ai_attempt_1" : "ai_attempt_2");
       console.error("x_command_parameter_validation_failed", { operation: classification.operation, attempt: attempt + 1 });
     } catch (error) {
+      if (attempt === 0 && structuredAiEnabled() && isStructuredOutputAvailabilityError(error)) extractionStructuredUnavailable = true;
       diagnostics?.extractionAttempts.push({ attempt: attempt + 1, operation: classification.operation, accepted: false, error: error instanceof Error ? error.message : "unknown" });
       console.error("x_command_parameter_extraction_failed", { operation: classification.operation, attempt: attempt + 1, message: error instanceof Error ? error.message : "unknown" });
     }
