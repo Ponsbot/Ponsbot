@@ -18,6 +18,7 @@ import type * as wallets from "../wallets.js";
 import type * as xReplies from "../xReplies.js";
 import type * as xReplyPolicy from "../xReplyPolicy.js";
 import type * as xText from "../xText.js";
+import type * as xWalletAiSchemas from "../xWalletAiSchemas.js";
 import type * as xWalletIntent from "../xWalletIntent.js";
 
 import type {
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   xReplies: typeof xReplies;
   xReplyPolicy: typeof xReplyPolicy;
   xText: typeof xText;
+  xWalletAiSchemas: typeof xWalletAiSchemas;
   xWalletIntent: typeof xWalletIntent;
 }>;
 

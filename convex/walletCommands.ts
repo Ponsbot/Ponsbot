@@ -55,9 +55,9 @@ function tradeToken(text: string, verb: "buy" | "sell") {
 
 function percentageAsset(text: string, verb: "send" | "sell" | "burn") {
   const verbPattern = verb === "send" ? "(?:send|transfer|give)" : verb;
-  const match = text.match(new RegExp(`\\b${verbPattern}\\s+(all|half|[0-9]+(?:\\.[0-9]{1,4})?\\s*%)\\s+(?:of\\s+)?(?:my\\s+)?\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\\b`, "i"));
+  const match = text.match(new RegExp(`\\b${verbPattern}\\s+(all|half|entire|[0-9]+(?:\\.[0-9]{1,4})?\\s*%)\\s+(?:of\\s+)?(?:my\\s+)?\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})(?:\\s+balance)?\\b`, "i"));
   if (!match) return undefined;
-  const amount = /^all$/i.test(match[1]) ? "100" : /^half$/i.test(match[1]) ? "50" : match[1].replace(/\s*%$/, "");
+  const amount = /^(?:all|entire)$/i.test(match[1]) ? "100" : /^half$/i.test(match[1]) ? "50" : match[1].replace(/\s*%$/, "");
   const numeric = Number(amount);
   return Number.isFinite(numeric) && numeric > 0 && numeric <= 100 ? { amount, token: match[2] } : null;
 }
@@ -220,12 +220,21 @@ export function extractGroundedLaunchName(text: string) {
 }
 
 export function extractGroundedPairToken(text: string) {
-  return text.match(/\bpair(?:ing)?\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
+  const candidate = text.match(/\bpair(?:ing)?\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
     || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
     || text.match(/\bpair\s+\$?(?!(?:with|it|against|asset)\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
     || text.match(/\b(?:paired?\s+with|pair\s+(?:it\s+)?with|pair\s+against|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
+    || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+as\s+the\s+pair\b/i)?.[1]
+    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+as\s+the\s+pair\b/i)?.[1]
+    || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:as\s+the\s+)?pair(?:ing)?\b/i)?.[1]
     || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
+  return candidate && !/^(?:the|and|with|to|as|it|asset|pair|paired|pairing|against)$/i.test(candidate) ? candidate : undefined;
+}
+
+function hasInvalidExplicitPairToken(text: string) {
+  const stopWord = "(?:the|and|with|to|as|it|asset|pair|paired|pairing|against)";
+  return new RegExp(`\\b(?:pair(?:ing)?\\s+asset\\s*(?:is|=|:)?|pair\\s*(?:is|=|:)?|paired?\\s+with|pair\\s+(?:it\\s+)?with|pair\\s+against|against)\\s*\\$?${stopWord}\\b`, "i").test(text)
+    || new RegExp(`\\bwith\\s+\\$?${stopWord}\\s+(?:as\\s+the\\s+)?pair(?:ing)?\\b`, "i").test(text);
 }
 
 function parseLaunch(text: string): WalletCommand | null {
@@ -233,6 +242,9 @@ function parseLaunch(text: string): WalletCommand | null {
     || !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b|\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)/i.test(text)) return null;
   if (/\b(?:launch|create|deploy)\s+(?:ticker|symbol)\b/i.test(text)) {
     return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
+  }
+  if (hasInvalidExplicitPairToken(text)) {
+    return { kind: "unknown", reason: "A launch pair must be an explicit ticker or contract address." };
   }
   const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,12})\s*["'\u2018\u2019\u201c\u201d]?/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
@@ -301,11 +313,12 @@ export function parseWalletCommand(raw: string): WalletCommand {
     if (fromToken.toLowerCase() === toToken.toLowerCase()) return { kind: "unknown", reason: "A swap needs two different assets." };
     return { kind: "swap_token_for_token", amount: cleanAmount(swapMatch[1]), unit: "usd", fromToken, toToken, slippageBps: slippage };
   }
-  if (/\bbuy\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) {
-    return { kind: "unknown", reason: "Buy and burn requires both explicit words: buy and burn." };
+  if (/\b(?:buy|purchase)\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) {
+    return { kind: "unknown", reason: "Buy and burn requires burn plus buy or purchase." };
   }
-  if (/\bbuy\b/i.test(text) && /\bburn\b/i.test(text)) {
-    const token = tradeToken(text, "buy")
+  if (/\b(?:buy|purchase)\b/i.test(text) && /\bburn\b/i.test(text)) {
+    const buyText = text.replace(/\bpurchase\b/gi, "buy");
+    const token = tradeToken(buyText, "buy")
       || text.match(/\bburn\s+(?:all\s+(?:of\s+)?|the\s+)?\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\b/i)?.[1]
       || text.match(/\$(?![0-9])([a-zA-Z][a-zA-Z0-9]{0,31})\b/)?.[1];
     const usd = text.match(new RegExp(`\\$${NUMBER}|${NUMBER}\\s*(?:usd|dollars?)\\b`, "i"));
@@ -381,7 +394,8 @@ export function parseWalletCommand(raw: string): WalletCommand {
     }
     return { kind: "unknown", reason: "A send needs a recipient, an amount, and ETH or a token ticker/contract." };
   }
-  if (/\bclaim\b.*\b(?:fee|fees|revenue|rewards)\b/i.test(text)) {
+  if (/\b(?:claim|collect)\b.*\b(?:fee|fees|revenue|rewards)\b/i.test(text)
+    || /\b(?:claim|collect)\s+everything(?:\s+(?:available|i\s+can\s+claim))?\b/i.test(text)) {
     const address = text.match(ADDRESS)?.[0];
     const symbol = text.match(/\$([a-zA-Z][a-zA-Z0-9]{0,11})/)?.[1]
       || text.match(/\b(?:fees?|revenue|rewards)\s+for\s+([a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
@@ -415,6 +429,11 @@ function tokenIdentifier(value: unknown) {
   if (typeof value !== "string") return undefined;
   const cleaned = cleanToken(value.trim());
   return /^0x[a-fA-F0-9]{40}$/.test(cleaned) || /^[A-Z0-9]{1,32}$/.test(cleaned) ? cleaned : undefined;
+}
+
+function launchPairIdentifier(value: unknown) {
+  const token = tokenIdentifier(value);
+  return token && !/^(?:THE|AND|WITH|TO|AS|IT|ASSET|PAIR|PAIRED|PAIRING|AGAINST)$/.test(token) ? token : undefined;
 }
 
 function structuredSlippageBps(value: unknown) {
@@ -507,7 +526,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     const website = optionalText("website", 300);
     const twitter = optionalText("twitter", 300);
     let devBuy: { amount: string; unit: "eth" | "usd" | "pair" } | undefined;
-    const pairToken = item.pairToken === undefined ? undefined : tokenIdentifier(item.pairToken);
+    const pairToken = item.pairToken === undefined ? undefined : launchPairIdentifier(item.pairToken);
     if (item.pairToken !== undefined && !pairToken) return null;
     if (item.devBuy && typeof item.devBuy === "object") {
       const raw = item.devBuy as Record<string, unknown>;

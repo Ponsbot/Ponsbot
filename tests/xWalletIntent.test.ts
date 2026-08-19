@@ -14,11 +14,12 @@ describe("deterministic X wallet replies", () => {
     });
     expect(straightforwardCommandOperation("Burn my entire PONSBOT balance")).toBe("burn");
   });
-  it("requires explicit buy and burn wording for the combined workflow", () => {
+  it("requires buy or purchase together with burn for the combined workflow", () => {
     expect(intentClassifierPrompt()).toContain('"buy_and_burn"');
-    expect(parameterExtractorPrompt("buy_and_burn", false)).toContain('literal words "buy" and "burn"');
+    expect(parameterExtractorPrompt("buy_and_burn", false)).toContain('either "buy" or "purchase"');
     expect(groundedCanonicalCommand("buy $20 of PONSBOT and burn it")).toMatchObject({ kind: "buy_and_burn", amount: "20", token: "PONSBOT" });
     expect(groundedCanonicalCommand("burn the PONSBOT I buy with 0.01 ETH")).toMatchObject({ kind: "buy_and_burn", amount: "0.01", token: "PONSBOT" });
+    expect(groundedCanonicalCommand("purchase $25 of PONSBOT and burn it")).toMatchObject({ kind: "buy_and_burn", amount: "25", token: "PONSBOT" });
   });
   it("detects unsupported multiple operations before execution", () => {
     expect(requestedOperations("send 2 ETH to @alice and burn 5 ROOT")).toEqual(["send", "burn"]);
@@ -42,6 +43,13 @@ describe("deterministic X wallet replies", () => {
     expect(groundedCanonicalCommand("Launch $RAIN — ‘Rain Check’ pair AAPL")).toMatchObject({ kind: "launch", name: "Rain Check", symbol: "RAIN" });
     expect(groundedCanonicalCommand("launch Plain Token ticker PLAIN no description needed")).toMatchObject({ kind: "launch", name: "Plain Token", symbol: "PLAIN" });
     expect(groundedCanonicalCommand("launch Plain Token ticker PLAIN no description needed")).not.toHaveProperty("description");
+    expect(groundedCanonicalCommand("deploy Moon Potato ticker SPUD with AAPL as the pair")).toMatchObject({ kind: "launch", pairToken: "AAPL" });
+    expect(groundedCanonicalCommand("deploy Moon Potato ticker SPUD AAPL as the pair")).toMatchObject({ kind: "launch", pairToken: "AAPL" });
+    expect(groundedCanonicalCommand("create Green Market ticker GREEN with GOOGL pair")).toMatchObject({ kind: "launch", pairToken: "GOOGL" });
+    expect(groundedCanonicalCommand("deploy Market Test ticker MTEST with ETH pair and 0.02 ETH dev buy")).toMatchObject({ kind: "launch", pairToken: "ETH" });
+    for (const connector of ["THE", "AND", "WITH", "TO"]) {
+      expect(groundedCanonicalCommand(`launch Safe Pair ticker SAFE pair ${connector}`)).toBeNull();
+    }
   });
 
   it("accepts a direct contract address as the buy target", () => {
@@ -77,6 +85,18 @@ describe("deterministic X wallet replies", () => {
   it("normalizes explicit creator-fee commands without inventing assets", () => {
     expect(groundedCanonicalCommand("collect creator revenue for PONSBOT")).toMatchObject({ kind: "claim_fees", token: "PONSBOT" });
     expect(groundedCanonicalCommand("withdraw my fees")).toEqual({ kind: "claim_fees" });
+    expect(groundedCanonicalCommand("claim everything I can claim")).toEqual({ kind: "claim_fees" });
+    expect(groundedCanonicalCommand("collect everything")).toEqual({ kind: "claim_fees" });
+  });
+
+  it("treats explicit requests for everything in my wallet as holdings", () => {
+    expect(straightforwardCommandOperation("Show everything in my wallet")).toBe("show_balance");
+    expect(straightforwardCommandOperation("List all tokens in my wallet")).toBe("show_balance");
+  });
+
+  it("documents worth-of buy syntax", () => {
+    expect(parameterExtractorPrompt("buy", false)).toContain("buy $25 worth of TOKEN");
+    expect(groundedCanonicalCommand("buy $25 worth of PONSBOT")).toMatchObject({ kind: "buy", amount: "25", token: "PONSBOT" });
   });
 
   it("keeps every help and ambiguity response within X's limit", () => {

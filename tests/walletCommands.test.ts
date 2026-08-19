@@ -21,11 +21,11 @@ describe("X wallet commands", () => {
     expect(validateStructuredWalletCommand({ kind: "swap_token_for_token", amount: "25", unit: "token", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250 })).toBeNull();
   });
 
-  it("parses buy-and-burn only when both literal words are present", () => {
+  it("parses buy-or-purchase-and-burn only when an approved purchase word and burn are present", () => {
     expect(parseWalletCommand("buy $25 of PONSBOT and burn it")).toEqual({ kind: "buy_and_burn", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250 });
     expect(parseWalletCommand("burn the PONSBOT I buy with 0.01 ETH")).toEqual({ kind: "buy_and_burn", amount: "0.01", unit: "eth", token: "PONSBOT", slippageBps: 250 });
     expect(parseWalletCommand("buy 5 MSFT of PONSBOT then burn the purchase")).toEqual({ kind: "buy_and_burn", amount: "5", unit: "pair", token: "PONSBOT", pairAsset: "MSFT", slippageBps: 250 });
-    expect(parseWalletCommand("purchase $25 of PONSBOT and burn it").kind).not.toBe("buy_and_burn");
+    expect(parseWalletCommand("purchase $25 of PONSBOT and burn it")).toEqual({ kind: "buy_and_burn", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250 });
     expect(parseWalletCommand("buy $25 of PONSBOT and destroy it").kind).not.toBe("buy_and_burn");
   });
 
@@ -223,6 +223,7 @@ describe("X wallet commands", () => {
   it("accepts all, half, and percentage balance amounts", () => {
     expect(parseWalletCommand("sell all of my $ROOT")).toEqual({ kind: "sell", amount: "100", unit: "percent", token: "ROOT", slippageBps: 250 });
     expect(parseWalletCommand("burn half of my ROOT")).toEqual({ kind: "burn", amount: "50", unit: "percent", token: "ROOT" });
+    expect(parseWalletCommand("sell my entire ROOT balance")).toEqual({ kind: "sell", amount: "100", unit: "percent", token: "ROOT", slippageBps: 250 });
     expect(parseWalletCommand("@Ponsbot send 12.5% of my ROOT to @recipient")).toEqual({
       kind: "send", amount: "12.5", unit: "percent", token: "ROOT", recipient: "@recipient",
     });
