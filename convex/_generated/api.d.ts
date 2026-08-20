@@ -9,6 +9,7 @@
  */
 
 import type * as crons from "../crons.js";
+import type * as graduationAnnouncements from "../graduationAnnouncements.js";
 import type * as llm from "../llm.js";
 import type * as ponsV2 from "../ponsV2.js";
 import type * as registry from "../registry.js";
@@ -29,6 +30,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   crons: typeof crons;
+  graduationAnnouncements: typeof graduationAnnouncements;
   llm: typeof llm;
   ponsV2: typeof ponsV2;
   registry: typeof registry;

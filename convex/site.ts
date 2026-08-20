@@ -256,6 +256,7 @@ export const seedPreview = internalMutation({
       description: "A preview launch showing how every token launched through Pons Bot gets its own page.",
       website: "https://ponsfamily.com", twitter: "https://x.com/Ponsbotfamily", devBuyWei: "20000000000000000",
       transactionHash: `0x${"1".repeat(64)}`, tokenAddress: PREVIEW_TOKEN, normalizedTokenAddress: PREVIEW_TOKEN.toLowerCase(), devBuySucceeded: true, createdAt: now, updatedAt: now,
+      graduationAnnouncementStatus: "ignored",
     }); else if (existingLaunch.twitter !== "https://x.com/Ponsbotfamily") await ctx.db.patch(existingLaunch._id, { twitter: "https://x.com/Ponsbotfamily", updatedAt: now });
     const existingHoldings = await ctx.db.query("walletHoldingSnapshots").withIndex("by_wallet_address", (q) => q.eq("walletAddress", PREVIEW_WALLET)).collect();
     if (!existingHoldings.length) {

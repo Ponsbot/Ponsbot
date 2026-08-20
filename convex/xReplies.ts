@@ -112,6 +112,33 @@ async function publishReply(text: string, sourcePostId: string) {
   return payload.data.id;
 }
 
+export const publishStandalonePost = internalAction({
+  args: { text: v.string() },
+  handler: async (_ctx, { text }) => {
+    const fitted = fitXReply(text);
+    if (xWeightedLength(fitted) > 280) return { status: "rejected" as const, error: "X post exceeded 280 characters" };
+    const url = `${X_API}/tweets`;
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { authorization: await xAuthorization("POST", url), "content-type": "application/json" },
+        body: JSON.stringify({ text: fitted }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const payload = await response.json().catch(() => ({})) as { data?: { id?: string }; detail?: string };
+      if (!response.ok || !payload.data?.id) {
+        return { status: "rejected" as const, error: payload.detail || `X post failed (${response.status})` };
+      }
+      return { status: "posted" as const, postId: payload.data.id };
+    } catch (error) {
+      // A network failure after submission has an uncertain publication
+      // outcome. Never retry it automatically, since doing so could duplicate
+      // the graduation announcement.
+      return { status: "uncertain" as const, error: error instanceof Error ? error.message : "X post outcome is unknown" };
+    }
+  },
+});
+
 class ReplyPublicationUncertainError extends Error {}
 
 async function publishReplyOnce(ctx: ActionCtx, text: string, sourcePostId: string) {

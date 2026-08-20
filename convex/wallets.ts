@@ -69,8 +69,9 @@ function addressUrl(address: string) {
   return `${ROBINHOOD_EXPLORER_ADDRESS_BASE}/${address}`;
 }
 
-function ponsTokenUrl(address: string) {
-  return `https://www.ponsfamily.com/launchpad/${address}`;
+function ponsBotTokenUrl(address: string) {
+  const site = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/$/, "");
+  return `${site || "https://ponsbot-one.vercel.app"}/launch/${address}`;
 }
 
 function destinationLabel(recipient: string) {
@@ -140,7 +141,7 @@ function transactionMessage(command: WalletCommand, transactionHash: string, tok
   const summary = command.kind === "claim_fees" && claimedDisplay
     ? `Claimed ${claimedDisplay} in creator fees${command.token ? ` for ${assetLabel(command.token)}` : ""}!`
     : commandSummary(command);
-  const tokenLine = command.kind === "launch" && tokenAddress ? `\nView on Pons: ${ponsTokenUrl(tokenAddress)}` : "";
+  const tokenLine = command.kind === "launch" && tokenAddress ? `\nView Token: ${ponsBotTokenUrl(tokenAddress)}` : "";
   const outputLine = (command.kind === "buy" || command.kind === "sell") && tradeOutputDisplay ? `\nReceived: ${tradeOutputDisplay}` : "";
   return `✅ Success! ${summary}${outputLine}${tokenLine}\nYour TXN: ${transactionUrl(transactionHash)}`;
 }
@@ -616,9 +617,15 @@ export const recordConfirmedExecution = internalMutation({
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
       if (!launch) await ctx.db.insert("tokenLaunches", {
         requestId: args.requestId, walletId: args.walletId, transactionHash: args.transactionHash,
-        ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), createdAt: now, updatedAt: now,
+        ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase(), graduationAnnouncementStatus: "monitoring" as const } : {}), createdAt: now, updatedAt: now,
       });
-      if (launch) await ctx.db.patch(launch._id, { ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase() } : {}), updatedAt: now });
+      if (launch) await ctx.db.patch(launch._id, {
+        ...args.launch, ...publicFields,
+        ...(args.launch.tokenAddress ? {
+          normalizedTokenAddress: args.launch.tokenAddress.toLowerCase(),
+          ...(launch.graduationAnnouncementStatus ? {} : { graduationAnnouncementStatus: "monitoring" as const }),
+        } : {}), updatedAt: now,
+      });
     }
     const request = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (request) await ctx.db.patch(request._id, { status: "confirmed", transactionHash: args.transactionHash, nextReconcileAt: undefined, updatedAt: now });

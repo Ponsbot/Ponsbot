@@ -81,6 +81,10 @@ export default defineSchema({
     twitter: v.optional(v.string()), telegram: v.optional(v.string()), pairToken: v.optional(v.string()), devBuyWei: v.string(), transactionHash: v.string(), tokenAddress: v.optional(v.string()), normalizedTokenAddress: v.optional(v.string()),
     poolAddress: v.optional(v.string()), positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
     creatorAddress: v.optional(v.string()), pairSymbol: v.optional(v.string()), publicMarketCapUsd: v.optional(v.number()), publicVolume24hUsd: v.optional(v.number()), publicLastBuyAt: v.optional(v.number()), publicGraduated: v.optional(v.boolean()),
+    graduationAnnouncementStatus: v.optional(v.union(v.literal("monitoring"), v.literal("posting"), v.literal("posted"), v.literal("ignored"), v.literal("uncertain"))),
+    graduationAnnouncementAttemptedAt: v.optional(v.number()), graduationAnnouncementPostedAt: v.optional(v.number()),
+    graduationAnnouncementPostId: v.optional(v.string()), graduationAnnouncementNextAttemptAt: v.optional(v.number()),
+    graduationAnnouncementError: v.optional(v.string()), graduationMonitorCheckedAt: v.optional(v.number()),
     createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
     .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"]),

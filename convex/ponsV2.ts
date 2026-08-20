@@ -82,7 +82,7 @@ export const refreshRegistry = internalAction({
       return [{ address: zeroAddress, symbol: "ETH", name: "Ethereum", decimals: 18, native: true, verifiedAt: Date.now() }];
     }
     const normalized = identifier.replace(/^\$/, "").toLowerCase();
-    const candidate = config.pairs.find((item) => item.active
+    const candidate = config.pairs.find((item: { active: boolean; symbol: string; address: string; normalizedAddress: string; name: string; decimals: number }) => item.active
       && (item.symbol.toLowerCase() === normalized || item.address.toLowerCase() === normalized));
     if (!candidate) throw new Error("requested Pons V2 pair was not found in the registry");
     const assets = await discoverPonsV2PairAssets({

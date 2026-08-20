@@ -442,10 +442,11 @@ export function groundedCanonicalCommand(text: string): WalletCommand | null {
 }
 
 export function straightforwardCommandOperation(text: string): WalletOperation | null {
-  if (hasPromptInjection(text) || hasNonExecutableFraming(text) || requestedOperations(text).length > 1) return null;
+  if (hasPromptInjection(text) || hasNonExecutableFraming(text)) return null;
   const unquoted = withoutQuotedContent(text);
   if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(unquoted)) return null;
   if (asksWhatIsInMyWallet(text)) return "show_balance";
+  if (requestedOperations(text).length > 1) return null;
   if (explicitSelfWalletRequest(text)) return "show_wallet";
   const command = groundedCanonicalCommand(text);
   if (!command || command.kind === "unknown") return null;
@@ -524,6 +525,7 @@ function isDirectFeeClaim(text: string) {
 function asksWhatIsInMyWallet(text: string) {
   const normalized = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ");
   return /\b(?:sitting|held|inside)\b[\s\S]{0,24}\bwallet\b/i.test(normalized)
+    || /\b(?:show|list|display|check|view|see)\b[\s\S]{0,20}\bmy\s+wallet\s+(?:holdings?|balances?|assets?|tokens?)\b/i.test(normalized)
     || /\b(?:show|list|display|check|view|see|what(?:'s|\s+is))\b[\s\S]{0,24}\b(?:everything|all|tokens?|assets?|holdings?)\b[\s\S]{0,20}\b(?:in|inside)\s+my\s+wallet\b/i.test(normalized);
 }
 
@@ -536,7 +538,7 @@ function explicitSelfWalletRequest(text: string) {
     || /\bneed\s+(?:my\s+|a\s+)?(?:wallet(?:\s+address)?|deposit\s+address|receiving\s+address)\b/i.test(unquoted);
 }
 
-function explicitInformationalTopic(text: string): WalletHelpTopic | null {
+export function explicitInformationalTopic(text: string): WalletHelpTopic | null {
   const explicitExplanation = /\b(?:could|can|would)\s+you\s+explain\b|\bwhat(?:'s|\s+is)\s+the\s+difference\b|\bdoes\s+asking\b|\bno\s+action\s+(?:yet|required|please)\b/i.test(text);
   if (explicitExplanation) {
     if (/\b(?:claim|fees?|revenue|rewards?)\b/i.test(text)) return "fees";
@@ -552,11 +554,13 @@ function explicitInformationalTopic(text: string): WalletHelpTopic | null {
   }
   if (/\bcan\s+you\s+sell\b[\s\S]{0,100}\bif\s+i\s+don['’]?t\b|\bdoes\b[\s\S]{0,80}\b(?:dump|cash\s+out)\b[\s\S]{0,50}\b(?:count|work)\b|\bwould\s+a\s+sell\b[\s\S]{0,100}\bwork\b|\bnot\s+asking\s+you\s+to\s+sell\b/i.test(text)) return "buy_sell";
   if (/\bcan\s+i\s+add\b[\s\S]{0,60}\b(?:description|website|x\s+account)\b[\s\S]{0,60}\btoken\b/i.test(text)) return "launch";
+  if (/\b(?:what|which|list)\b[\s\S]{0,60}\b(?:assets?|tokens?|pairs?)\b[\s\S]{0,40}\b(?:launch\s+)?pairs?\b|\b(?:what|which)\b[\s\S]{0,50}\b(?:launch\s+)?pairs?\b/i.test(text)) return "pairs";
   const educational = /\b(?:explain\b|how\s+(?:do|does|would|can)|what(?:'s|\s+is)\s+the\s+(?:right|difference|syntax)|what\s+(?:info|information|happens|ways?|formats?|do\s+i\s+(?:need|actually\s+need))|would\b[\s\S]{0,90}\b(?:work|be\s+understood|be\s+enough|count\s+as)|does\b[\s\S]{0,90}\b(?:work|mean|matter|count)|can\s+i\b|can\s+you\b[\s\S]{0,80}\b(?:or\s+only|instead|using|if)|is\s+there\s+a\s+way|if\s+i\s+(?:ask|forget|change|post)|before\s+i\b|not\s+asking\s+you\s+to|just\s+(?:asking|trying\s+to\s+understand))\b/i.test(text);
   if (!educational) return null;
   if (/\bnot\s+launching\b|\b(?:developer|dev)\s+buy\b|\b(?:launch|launching|ticker)\b[\s\S]{0,100}\b(?:website|description|format|valid)\b/i.test(text)) return "launch";
   if (/\b(?:claim|claiming|collect|withdraw)\b[\s\S]{0,80}\b(?:fees?|revenue|rewards?)\b|\bfees?\b[\s\S]{0,80}\b(?:claim|claiming|collect|withdraw)\b/i.test(text)) return "fees";
   if (/\b(?:fund|funding|deposit|add\s+(?:money|funds?)|money\s+into|gas)\b/i.test(text)) return "fund";
+  if (/\bburn(?:ing|s)?\b/i.test(text)) return "burn";
   if (/\b(?:buys?|buying|sells?|selling|trade|trades|slippage|ape|dump|cash\s+out)\b/i.test(text)) return "buy_sell";
   if (/\b(?:pair|paired|pairing)\b/i.test(text)) return "pairs";
   if (/\b(?:send|sending|transfer|recipient|destination)\b/i.test(text)) return "send";
@@ -588,6 +592,7 @@ function legacyRequestedOperations(text: string) {
 }
 
 export function requestedOperations(text: string): WalletOperation[] {
+  if (asksWhatIsInMyWallet(text)) return ["show_balance"];
   const operationText = withoutQuotedContent(text)
     .replace(/\b(?:developer|dev)\s+(?:buy|purchase)\b/gi, "developer allocation")
     .replace(/\binitial\s+buy\b/gi, "initial allocation")

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalCommandText, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, requestedOperations, straightforwardCommandOperation, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { canonicalCommandText, explicitInformationalTopic, groundedCanonicalCommand, intentClassifierPrompt, parameterExtractorPrompt, requestedOperations, straightforwardCommandOperation, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
@@ -92,6 +92,12 @@ describe("deterministic X wallet replies", () => {
   it("treats explicit requests for everything in my wallet as holdings", () => {
     expect(straightforwardCommandOperation("Show everything in my wallet")).toBe("show_balance");
     expect(straightforwardCommandOperation("List all tokens in my wallet")).toBe("show_balance");
+    expect(straightforwardCommandOperation("Show me my wallet holdings please")).toBe("show_balance");
+  });
+
+  it("routes narrow educational questions to their specific help topics", () => {
+    expect(explicitInformationalTopic("how do I burn tokens?")).toBe("burn");
+    expect(explicitInformationalTopic("Which assets can I use as launch pairs?")).toBe("pairs");
   });
 
   it("documents worth-of buy syntax", () => {
