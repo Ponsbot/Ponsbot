@@ -868,6 +868,18 @@ export async function transactionStatus(request: TransactionStatusRequest) {
       }
       if (!result.tokenAddress || !result.poolAddress) throw new Error("verified Pons launch event was not found");
       if (request.operationType === "pons_v2_launch_and_buy" && !verifiedOpeningBuy) throw new Error("verified opening developer buy event was not found");
+      if (request.expectedCreatorFeeRecipient) {
+        const launched = await client.readContract({
+          address: factory as Address,
+          abi: ponsFactoryAbi,
+          functionName: "getLaunchedToken",
+          args: [result.tokenAddress as Address],
+          blockNumber: receipt.blockNumber,
+        });
+        if (!launched.exists || launched.creatorFeeRecipient.toLowerCase() !== request.expectedCreatorFeeRecipient.toLowerCase()) {
+          throw new Error("launch creator fee recipient mismatch");
+        }
+      }
       result.devBuySucceeded = request.operationType === "pons_v2_launch_and_buy" ? verifiedOpeningBuy : false;
   }
   if (receipt.status === "success" && request.operationType === "pons_v2_claim_fees") {

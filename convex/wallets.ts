@@ -328,7 +328,7 @@ export const reserveWalletRequest = internalMutation({
   handler: async (ctx, args) => {
     const duplicate = await ctx.db.query("walletRequests").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (duplicate) {
-      if (duplicate.status === "failed" && !duplicate.transactionHash && Date.now() - duplicate.updatedAt >= 30_000) {
+      if (duplicate.status === "failed" && !duplicate.transactionHash) {
         await ctx.db.patch(duplicate._id, { status: "accepted", safeError: undefined, updatedAt: Date.now() });
         return { inserted: true, retried: true, request: await ctx.db.get(duplicate._id) };
       }
@@ -786,7 +786,14 @@ export const reconcileTransaction = internalAction({
       const expectedFactory = current.transaction.callKind.startsWith("pons_v2_launch")
         ? (await ctx.runQuery(internal.registry.runtimeConfig, {})).contracts.pons_v2_factory
         : undefined;
-      const verifiedStatusBody = expectedFactory ? { ...statusBody, expectedFactory } : statusBody;
+      const expectedCreatorFeeRecipient = current.transaction.callKind.startsWith("pons_v2_launch")
+        ? current.launch?.creatorFeeRecipient
+        : undefined;
+      const verifiedStatusBody = {
+        ...statusBody,
+        ...(expectedFactory ? { expectedFactory } : {}),
+        ...(expectedCreatorFeeRecipient ? { expectedCreatorFeeRecipient } : {}),
+      };
       const result = current.request.status === "prepared"
         ? await signerRequest<SubmittedTransaction>("/v1/transactions/broadcast", {
           ...verifiedStatusBody, signedTransaction: current.transaction.signedTransaction,

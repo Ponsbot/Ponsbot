@@ -7,7 +7,7 @@ import { listLaunches } from "@/lib/site-data";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const launches = await listLaunches(60);
+  const launches = await listLaunches(40);
   return <main>
     <SiteHeader />
     <section className="home-hero">

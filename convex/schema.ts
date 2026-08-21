@@ -92,7 +92,9 @@ export default defineSchema({
     createdAt: v.number(), updatedAt: v.number(),
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
     .index("by_creator_fee_recipient", ["normalizedCreatorFeeRecipient"])
-    .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"]),
+    .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"])
+    .index("by_created_at", ["createdAt"]).index("by_public_market_cap", ["publicMarketCapUsd"])
+    .index("by_public_volume", ["publicVolume24hUsd"]).index("by_public_last_buy", ["publicLastBuyAt"]),
 
   tokenActivity: defineTable({
     tokenAddress: v.string(), normalizedTokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(),
@@ -116,7 +118,7 @@ export default defineSchema({
     .index("by_last_buy", ["lastBuyAt"]),
 
   marketIndexState: defineTable({
-    key: v.string(), indexedThroughBlock: v.optional(v.string()), leaseUntil: v.number(), lastViewerAt: v.number(), updatedAt: v.number(),
+    key: v.string(), indexedThroughBlock: v.optional(v.string()), leaseUntil: v.number(), leaseId: v.optional(v.string()), lastViewerAt: v.number(), updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
   marketViewerRateLimits: defineTable({

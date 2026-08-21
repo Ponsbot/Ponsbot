@@ -11,8 +11,9 @@ const BOOTSTRAP_CONTRACTS = {
   v4_quoter: process.env.PONS_V4_QUOTER_ADDRESS || "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
   universal_router: process.env.PONS_V4_UNIVERSAL_ROUTER_ADDRESS || "0x8876789976decbfcbbbe364623c63652db8c0904",
   permit2: process.env.PONS_PERMIT2_ADDRESS || "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  v4_state_view: process.env.PONS_V4_STATE_VIEW_ADDRESS || "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
 } as const;
-const ENV_MANAGED_CONTRACTS = new Set(["v4_quoter", "universal_router", "permit2"]);
+const ENV_MANAGED_CONTRACTS = new Set(["v4_quoter", "universal_router", "permit2", "v4_state_view"]);
 
 const BOOTSTRAP_PAIRS = [
   ["0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", "NVDA", "NVIDIA"],

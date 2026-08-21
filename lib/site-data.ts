@@ -2,7 +2,7 @@ import { ConvexHttpClient } from "convex/browser";
 import { createPublicClient, formatEther, formatUnits, http, isAddress, parseAbi, type Address } from "viem";
 import { api } from "@/convex/_generated/api";
 import { addMarketCaps } from "@/lib/token-market-cap";
-import { tokenUnitPriceUsd } from "@/lib/token-market-cap";
+import { tokenUnitPriceUsd, type MarketInfrastructure } from "@/lib/token-market-cap";
 import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
 
 export type PublicLaunch = {
@@ -41,8 +41,10 @@ export async function listLaunches(limit = 24): Promise<PublicLaunch[]> {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) throw new SiteDataUnavailableError("Public site data is not configured");
   try {
-    const launches = await new ConvexHttpClient(url).query(api.site.listLaunches, { limit });
-    return await addMarketCaps(launches.map((launch) => launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }));
+    const client = new ConvexHttpClient(url);
+    const [launches, runtime] = await Promise.all([client.query(api.site.listLaunches, { limit }), client.query(api.site.marketRuntimeConfig, {})]);
+    const infrastructure = runtime.factory && runtime.stateView ? { factory: runtime.factory as Address, stateView: runtime.stateView as Address } : undefined;
+    return await addMarketCaps(launches.map((launch) => launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }), infrastructure);
   } catch (error) {
     console.error("public_launch_list_failed", error instanceof Error ? error.message : "unknown");
     throw new SiteDataUnavailableError("Launch data is temporarily unavailable");
@@ -55,9 +57,11 @@ export async function getLaunch(tokenAddress: string): Promise<PublicLaunch | nu
   const url = process.env.NEXT_PUBLIC_CONVEX_URL;
   if (!url) throw new SiteDataUnavailableError("Public site data is not configured");
   try {
-    const launch = await new ConvexHttpClient(url).query(api.site.getLaunch, { tokenAddress });
+    const client = new ConvexHttpClient(url);
+    const [launch, runtime] = await Promise.all([client.query(api.site.getLaunch, { tokenAddress }), client.query(api.site.marketRuntimeConfig, {})]);
     if (!launch) return null;
-    return (await addMarketCaps([launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }]))[0];
+    const infrastructure = runtime.factory && runtime.stateView ? { factory: runtime.factory as Address, stateView: runtime.stateView as Address } : undefined;
+    return (await addMarketCaps([launch.storedMarketCapUsd === undefined ? launch : { ...launch, marketCapUsd: launch.storedMarketCapUsd, marketCapUpdatedAt: Date.now() }], infrastructure))[0];
   } catch (error) {
     console.error("public_launch_lookup_failed", error instanceof Error ? error.message : "unknown");
     throw new SiteDataUnavailableError("Launch data is temporarily unavailable");
@@ -234,6 +238,12 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
     if (deployment) byAddress.set(deployment.contractAddress.toLowerCase(), asset);
   }
   if (signal.aborted) return enriched;
+  let marketInfrastructure: MarketInfrastructure | undefined;
+  if (enriched.some((holding) => holding.isPonsbotLaunch)) {
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+    const runtime = convexUrl ? await new ConvexHttpClient(convexUrl).query(api.site.marketRuntimeConfig, {}).catch(() => null) : null;
+    if (runtime?.factory && runtime.stateView) marketInfrastructure = { factory: runtime.factory as Address, stateView: runtime.stateView as Address };
+  }
   const ethPrice = enriched.some((holding) => holding.symbol === "ETH") ? await ethUsdPrice(signal).catch(() => undefined) : undefined;
   await Promise.all(enriched.map(async (holding) => {
     if (signal.aborted) return;
@@ -260,7 +270,7 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
     }
     if (holding.isPonsbotLaunch && holding.address) {
       if (signal.aborted) return;
-      const price = await tokenUnitPriceUsd(holding.address as Address, signal).catch(() => undefined);
+      const price = await tokenUnitPriceUsd(holding.address as Address, signal, marketInfrastructure).catch(() => undefined);
       if (price !== undefined) holding.usdValue = balance * price;
     }
   }));

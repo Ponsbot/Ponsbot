@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { ConvexHttpClient } from "convex/browser";
 import { createPublicClient, decodeEventLog, encodeAbiParameters, formatUnits, http, keccak256, parseAbi, type Address, type Hex } from "viem";
 import { api } from "@/convex/_generated/api";
@@ -51,7 +51,8 @@ export async function POST(request: Request) {
   const now = Date.now();
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
   const viewerKey = createHash("sha256").update(`${forwarded}:${process.env.WEB_AUTH_SECRET || secret}`).digest("hex");
-  const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret, viewerKey });
+  const leaseId = randomUUID();
+  const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret, viewerKey, leaseId });
   if (lease.rateLimited) return NextResponse.json({ ok: false, error: "market refresh rate limited" }, { status: 429, headers: { "retry-after": "60" } });
   if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
   try {
@@ -61,10 +62,12 @@ export async function POST(request: Request) {
       rpc.getBlockNumber(),
       convex.query(api.site.marketRuntimeConfig, {}),
     ]);
-    if (!runtimeConfig.factory || !/^0x[a-fA-F0-9]{40}$/.test(runtimeConfig.factory)) throw new Error("Pons factory is not configured");
+    if (!runtimeConfig.factory || !/^0x[a-fA-F0-9]{40}$/.test(runtimeConfig.factory)
+      || !runtimeConfig.stateView || !/^0x[a-fA-F0-9]{40}$/.test(runtimeConfig.stateView)) throw new Error("Pons market infrastructure is not configured");
     const factory = runtimeConfig.factory as Address;
+    const marketInfrastructure = { factory, stateView: runtimeConfig.stateView as Address };
     if (!targets.length) {
-      await convex.mutation(api.site.recordMarketIndex, { secret, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
+      await convex.mutation(api.site.recordMarketIndex, { secret, leaseId, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
       return NextResponse.json({ ok: true, indexed: true });
     }
     const needsInitialCursor = targets.some((target) => !target.indexedThroughBlock);
@@ -158,7 +161,7 @@ export async function POST(request: Request) {
       const blockNumber = BigInt(log.blockNumber);
       const timestamp = await blockTimestamp(blockNumber, log.blockNumber);
       const decimals = await decimalsFor(target.tokenAddress);
-      const marketCapUsd = kind === "burn" ? undefined : await tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined);
+      const marketCapUsd = kind === "burn" ? undefined : await tokenMarketCapUsd(target.tokenAddress as Address, blockNumber, undefined, marketInfrastructure).catch(() => undefined);
       const tokenAmount = formatUnits(amount, decimals);
       const totalSupply = kind !== "burn" && marketCapUsd !== undefined ? await tokenSupply(target.tokenAddress, blockNumber).catch(() => 0n) : 0n;
       const displaySupply = Number(formatUnits(totalSupply, decimals));
@@ -176,7 +179,7 @@ export async function POST(request: Request) {
         const [transaction, decimals, marketCapUsd] = await Promise.all([
           rpc.getTransaction({ hash: log.transactionHash }),
           decimalsFor(target.tokenAddress),
-          tokenMarketCapUsd(target.tokenAddress as Address, blockNumber).catch(() => undefined),
+          tokenMarketCapUsd(target.tokenAddress as Address, blockNumber, undefined, marketInfrastructure).catch(() => undefined),
         ]);
         const tokenAmount = formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, decimals);
         const totalSupply = marketCapUsd === undefined ? 0n : await tokenSupply(target.tokenAddress, blockNumber).catch(() => 0n);
@@ -189,9 +192,10 @@ export async function POST(request: Request) {
       } catch { /* Ignore unrelated or malformed PoolManager logs. */ }
     });
     // Only actively viewed tokens receive current market-cap refreshes.
-    await Promise.all(prioritized.map(async (target) => marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address).catch(() => undefined))));
+    await Promise.all(prioritized.map(async (target) => marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address, undefined, undefined, marketInfrastructure).catch(() => undefined))));
     await convex.mutation(api.site.recordMarketIndex, {
       secret,
+      leaseId,
       indexedThroughBlock: scanTo.toString(),
       marketCaps: prioritized.map((target) => {
         const normalized = target.tokenAddress.toLowerCase(); const metadata = graduationMetadata.get(normalized);
@@ -203,6 +207,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, indexed: true, events: events.length, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
   } catch (error) {
     console.error("market_view_index_failed", error instanceof Error ? error.message : "unknown");
+    await convex.mutation(api.site.releaseMarketIndexLease, { secret, leaseId }).catch(() => undefined);
     return NextResponse.json({ ok: false }, { status: 502 });
   }
 }

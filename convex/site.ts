@@ -50,9 +50,18 @@ export const listLaunches = query({
 });
 
 export const listLaunchesPage = query({
-  args: { paginationOpts: paginationOptsValidator },
-  handler: async (ctx, { paginationOpts }) => {
-    const result = await ctx.db.query("tokenLaunches").order("desc").paginate({ ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 40) });
+  args: { paginationOpts: paginationOptsValidator, sort: v.optional(v.union(v.literal("newest"), v.literal("oldest"), v.literal("mcap"), v.literal("volume"), v.literal("lastBuy"))) },
+  handler: async (ctx, { paginationOpts, sort }) => {
+    const options = { ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 40) };
+    const result = sort === "oldest"
+      ? await ctx.db.query("tokenLaunches").withIndex("by_created_at").order("asc").paginate(options)
+      : sort === "mcap"
+        ? await ctx.db.query("tokenLaunches").withIndex("by_public_market_cap").order("desc").paginate(options)
+        : sort === "volume"
+          ? await ctx.db.query("tokenLaunches").withIndex("by_public_volume").order("desc").paginate(options)
+          : sort === "lastBuy"
+            ? await ctx.db.query("tokenLaunches").withIndex("by_public_last_buy").order("desc").paginate(options)
+            : await ctx.db.query("tokenLaunches").withIndex("by_created_at").order("desc").paginate(options);
     const page = result.page.filter((launch) => launch.tokenAddress).map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
     return { ...result, page };
   },
@@ -102,13 +111,14 @@ export const marketRuntimeConfig = query({
   args: {},
   handler: async (ctx) => {
     const factory = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique();
-    return { factory: factory?.active ? factory.address : null };
+    const stateView = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "v4_state_view")).unique();
+    return { factory: factory?.active ? factory.address : null, stateView: stateView?.active ? stateView.address : null };
   },
 });
 
 export const acquireMarketIndexLease = mutation({
-  args: { now: v.number(), secret: v.string(), viewerKey: v.string() },
-  handler: async (ctx, { now, secret, viewerKey }) => {
+  args: { now: v.number(), secret: v.string(), viewerKey: v.string(), leaseId: v.string() },
+  handler: async (ctx, { now, secret, viewerKey, leaseId }) => {
     if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
     const viewer = await ctx.db.query("marketViewerRateLimits").withIndex("by_key", (q) => q.eq("key", viewerKey)).unique();
     const sameWindow = Boolean(viewer && now - viewer.windowStartedAt < 60_000);
@@ -122,10 +132,10 @@ export const acquireMarketIndexLease = mutation({
       return { acquired: false, indexedThroughBlock: current.indexedThroughBlock };
     }
     if (current) {
-      await ctx.db.patch(current._id, { leaseUntil: now + 30_000, lastViewerAt: now, updatedAt: now });
+      await ctx.db.patch(current._id, { leaseUntil: now + 310_000, leaseId, lastViewerAt: now, updatedAt: now });
       return { acquired: true, indexedThroughBlock: current.indexedThroughBlock };
     }
-    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 30_000, lastViewerAt: now, updatedAt: now });
+    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 310_000, leaseId, lastViewerAt: now, updatedAt: now });
     return { acquired: true };
   },
 });
@@ -141,12 +151,14 @@ export const cleanupMarketViewerRateLimits = internalMutation({
 
 export const recordMarketIndex = mutation({
   args: {
-    secret: v.string(),
+    secret: v.string(), leaseId: v.string(),
     indexedThroughBlock: v.string(), marketCaps: v.array(v.object({ tokenAddress: v.string(), indexedThroughBlock: v.string(), marketCapUsd: v.optional(v.number()), graduated: v.optional(v.boolean()), poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()), graduationCheckedAt: v.optional(v.number()), activityBackfilledAt: v.optional(v.number()) })),
     events: v.array(v.object({ tokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(), kind: v.union(v.literal("buy"), v.literal("sell"), v.literal("burn")), walletAddress: v.string(), tokenAmount: v.string(), marketCapUsd: v.optional(v.number()), usdAmount: v.optional(v.number()), blockNumber: v.string(), timestamp: v.number() })),
   },
-  handler: async (ctx, { secret, indexedThroughBlock, marketCaps, events }) => {
+  handler: async (ctx, { secret, leaseId, indexedThroughBlock, marketCaps, events }) => {
     if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
+    const activeLease = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
+    if (!activeLease || activeLease.leaseId !== leaseId) return false;
     const now = Date.now();
     for (const event of events) {
       const exists = await ctx.db.query("tokenActivity").withIndex("by_transaction_log", (q) => q.eq("transactionHash", event.transactionHash).eq("logIndex", event.logIndex)).unique();
@@ -192,7 +204,17 @@ export const recordMarketIndex = mutation({
       if (launch) await ctx.db.patch(launch._id, { publicLastBuyAt: lastBuyAt, publicMarketCapUsd: item.marketCapUsd, publicVolume24hUsd: volume24hUsd, publicGraduated: item.graduated, updatedAt: now });
     }
     const cursor = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
-    if (cursor) await ctx.db.patch(cursor._id, { indexedThroughBlock, leaseUntil: 0, updatedAt: now });
+    if (cursor) await ctx.db.patch(cursor._id, { indexedThroughBlock, leaseUntil: 0, leaseId: undefined, updatedAt: now });
+    return true;
+  },
+});
+
+export const releaseMarketIndexLease = mutation({
+  args: { secret: v.string(), leaseId: v.string() },
+  handler: async (ctx, { secret, leaseId }) => {
+    if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
+    const current = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
+    if (current?.leaseId === leaseId) await ctx.db.patch(current._id, { leaseUntil: 0, leaseId: undefined, updatedAt: Date.now() });
   },
 });
 

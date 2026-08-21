@@ -3,8 +3,8 @@ import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
 import { rememberSharedPrice, sharedPrice } from "./shared-price-cache";
 import type { PublicLaunch } from "@/lib/site-data";
 
-const FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
-const STATE_VIEW = "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b" as Address;
+const DEFAULT_FACTORY = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e" as Address;
+const DEFAULT_STATE_VIEW = "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b" as Address;
 const CACHE_MS = 60_000;
 const PREVIEW_TOKEN = "0x0000000000000000000000000000000000000a11";
 const factoryAbi = parseAbi([
@@ -20,13 +20,22 @@ function rpcClient(signal?: AbortSignal) {
   return createPublicClient({ batch: { multicall: true }, transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000, ...(signal ? { fetchOptions: { signal } } : {}) }) });
 }
 
-export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Promise<T[]> {
+export type MarketInfrastructure = { factory: Address; stateView: Address };
+
+function marketInfrastructure(input?: MarketInfrastructure): MarketInfrastructure {
+  return input || {
+    factory: (process.env.PONS_V2_FACTORY_ADDRESS || DEFAULT_FACTORY) as Address,
+    stateView: (process.env.PONS_V4_STATE_VIEW_ADDRESS || DEFAULT_STATE_VIEW) as Address,
+  };
+}
+
+export async function addMarketCaps<T extends PublicLaunch>(launches: T[], infrastructure?: MarketInfrastructure): Promise<T[]> {
   return await Promise.all(launches.map(async (launch) => {
     if (!launch.tokenAddress || !/^0x[a-fA-F0-9]{40}$/.test(launch.tokenAddress)) return launch;
     if (launch.tokenAddress.toLowerCase() === PREVIEW_TOKEN) return { ...launch, marketCapUsd: 125_000, marketCapUpdatedAt: Date.now() };
     if (launch.marketCapUsd !== undefined && launch.marketCapUpdatedAt !== undefined && Date.now() - launch.marketCapUpdatedAt < CACHE_MS) return launch;
     try {
-      const marketCapUsd = await tokenMarketCapUsd(launch.tokenAddress as Address);
+      const marketCapUsd = await tokenMarketCapUsd(launch.tokenAddress as Address, undefined, undefined, infrastructure);
       return marketCapUsd === undefined ? launch : { ...launch, marketCapUsd, marketCapUpdatedAt: Date.now() };
     } catch (error) {
       console.error("token_market_cap_failed", launch.tokenAddress, error instanceof Error ? error.message : "unknown");
@@ -35,13 +44,14 @@ export async function addMarketCaps<T extends PublicLaunch>(launches: T[]): Prom
   }));
 }
 
-export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, signal?: AbortSignal) {
+export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, signal?: AbortSignal, configured?: MarketInfrastructure) {
   signal?.throwIfAborted();
   const key = token.toLowerCase();
   const existing = marketCapCache.get(key);
   if (blockNumber === undefined && existing && existing.expiresAt > Date.now()) return existing.value;
   const rpc = rpcClient(signal);
-  const launched = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "getLaunchedToken", args: [token], blockNumber });
+  const infrastructure = marketInfrastructure(configured);
+  const launched = await rpc.readContract({ address: infrastructure.factory, abi: factoryAbi, functionName: "getLaunchedToken", args: [token], blockNumber });
   if (!launched.exists || launched.phase === 1 || launched.phase === 3) return remember(key, undefined);
   const [supplyRaw, tokenDecimals, quote] = await Promise.all([
     rpc.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply", blockNumber }),
@@ -54,13 +64,13 @@ export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, si
     const [quoteReserve, tokenReserve] = await rpc.readContract({ address: launched.curve, abi: curveAbi, functionName: "getReserves", blockNumber });
     tokenPriceInQuote = Number(formatUnits(quoteReserve, quote.decimals)) / Number(formatUnits(tokenReserve, tokenDecimals));
   } else {
-    const hook = await rpc.readContract({ address: FACTORY, abi: factoryAbi, functionName: "memeHook", blockNumber });
+    const hook = await rpc.readContract({ address: infrastructure.factory, abi: factoryAbi, functionName: "memeHook", blockNumber });
     const [currency0, currency1] = launched.pairToken.toLowerCase() < token.toLowerCase() ? [launched.pairToken, token] : [token, launched.pairToken];
     const poolId = keccak256(encodeAbiParameters(
       [{ type: "address" }, { type: "address" }, { type: "uint24" }, { type: "int24" }, { type: "address" }],
       [currency0, currency1, launched.poolFee, launched.tickSpacing, hook],
     ));
-    const [sqrtPriceX96] = await rpc.readContract({ address: STATE_VIEW, abi: stateViewAbi, functionName: "getSlot0", args: [poolId], blockNumber });
+    const [sqrtPriceX96] = await rpc.readContract({ address: infrastructure.stateView, abi: stateViewAbi, functionName: "getSlot0", args: [poolId], blockNumber });
     const rawCurrency1Per0 = (Number(sqrtPriceX96) / 2 ** 96) ** 2;
     const tokenIsCurrency0 = token.toLowerCase() === currency0.toLowerCase();
     tokenPriceInQuote = tokenIsCurrency0
@@ -72,10 +82,10 @@ export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, si
   return blockNumber === undefined ? remember(key, valid) : valid;
 }
 
-export async function tokenUnitPriceUsd(token: Address, signal?: AbortSignal) {
+export async function tokenUnitPriceUsd(token: Address, signal?: AbortSignal, infrastructure?: MarketInfrastructure) {
   signal?.throwIfAborted();
   const [marketCap, supplyRaw, decimals] = await Promise.all([
-    tokenMarketCapUsd(token, undefined, signal),
+    tokenMarketCapUsd(token, undefined, signal, infrastructure),
     rpcClient(signal).readContract({ address: token, abi: erc20Abi, functionName: "totalSupply" }),
     rpcClient(signal).readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
   ]);

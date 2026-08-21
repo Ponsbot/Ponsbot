@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { executionRequestSchema } from "../lib/wallet-signer/policy";
+import { executionRequestSchema, transactionStatusRequestSchema } from "../lib/wallet-signer/policy";
 
 const base = {
   idempotencyKey: "x:123456789:buy", chainId: 4663, ownerReference: "x:123456789",
@@ -64,5 +64,17 @@ describe("wallet signer operation policy", () => {
       type: "uniswap_v3_sell", token: "0x7777777777777777777777777777777777777777",
       amount: "101", unit: "percent", slippageBps: 100, ...contracts,
     } })).toThrow();
+  });
+
+  it("binds launch receipt verification to the expected creator fee recipient", () => {
+    const status = {
+      chainId: 4663, ownerReference: base.ownerReference, walletRef: base.walletRef,
+      expectedFrom: base.expectedFrom, expectedTo: "0x2222222222222222222222222222222222222222",
+      expectedFactory: "0x3333333333333333333333333333333333333333",
+      expectedCreatorFeeRecipient: "0x4444444444444444444444444444444444444444",
+      transactionHash: `0x${"1".repeat(64)}`, operationType: "pons_v2_launch", expectedValueWei: "0",
+    };
+    expect(transactionStatusRequestSchema.parse(status).expectedCreatorFeeRecipient).toBe(status.expectedCreatorFeeRecipient);
+    expect(() => transactionStatusRequestSchema.parse({ ...status, expectedCreatorFeeRecipient: "not-an-address" })).toThrow();
   });
 });

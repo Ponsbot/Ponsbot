@@ -110,6 +110,7 @@ const transactionRequest = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID), ownerReference, walletRef: address, expectedFrom: address,
   expectedTo: address,
   expectedFactory: address.optional(),
+  expectedCreatorFeeRecipient: address.optional(),
   transactionHash: z.string().regex(/^0x[a-fA-F0-9]{64}$/), operationType: z.string().min(1).max(80),
   expectedValueWei: z.string().regex(/^\d+$/),
   tradeOutputTokenAddress: address.optional(), tradeOutputBalanceBefore: z.string().regex(/^\d+$/).optional(),
