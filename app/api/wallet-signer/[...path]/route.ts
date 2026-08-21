@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, launchPreparationRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, usdTokenAmountRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
-import { authorizeSigner, broadcastTransaction, executeTransaction, ponsPairInfo, prepareLaunchAddresses, provisionWallet, transactionStatus, usdTokenAmount, walletBalance } from "@/lib/wallet-signer/service";
+import { balanceRequestSchema, broadcastRequestSchema, executionRequestSchema, holderDistributorRequestSchema, launchPreparationRequestSchema, ponsPairRequestSchema, transactionStatusRequestSchema, usdTokenAmountRequestSchema, walletRequestSchema } from "@/lib/wallet-signer/policy";
+import { authorizeSigner, broadcastTransaction, executeTransaction, holderDistributorInfo, ponsPairInfo, prepareLaunchAddresses, provisionWallet, transactionStatus, usdTokenAmount, walletBalance } from "@/lib/wallet-signer/service";
 import { boundedJson, RequestBodyError } from "@/lib/bounded-json";
 
 export const runtime = "nodejs";
@@ -57,6 +57,10 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     if (path === "v1/tokens/pons-pair") {
       const input = ponsPairRequestSchema.parse(body);
       return NextResponse.json(await ponsPairInfo(input.token as `0x${string}`, input.factoryAddress as `0x${string}`));
+    }
+    if (path === "v1/tokens/holder-distributor") {
+      const input = holderDistributorRequestSchema.parse(body);
+      return NextResponse.json(await holderDistributorInfo(input.token as `0x${string}`, input.distributorFactoryAddress as `0x${string}`, input.ponsFactoryAddress as `0x${string}`));
     }
     if (path === "v1/tokens/usd-amount") {
       const input = usdTokenAmountRequestSchema.parse(body);

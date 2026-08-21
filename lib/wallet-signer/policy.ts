@@ -57,13 +57,21 @@ const launchOperation = z.object({
   devBuy: z.object({ amount, unit: z.enum(["eth", "usd", "pair"]) }).strict().nullable(),
   socials: z.object({ website: z.string().max(2_048), twitter: z.string().max(2_048), telegram: z.string().max(2_048) }).strict(),
   feeWalletSource: z.literal("reply_wallet"), launchConfigId: z.string().regex(/^\d+$/),
+  creatorFeeRecipient: address,
   pairToken: address, quoterAddress: address, wethAddress: address, method: z.enum(["launchAndBuy", "launchToken"]),
   preparedSalt: z.string().regex(/^0x[a-fA-F0-9]{64}$/).optional(),
   predictedTokenAddress: address.optional(), predictedCurveAddress: address.optional(),
 }).strict();
+const holderDistributorOperation = z.object({
+  type: z.literal("pons_v2_create_holder_distributor"), token: address, distributorFactoryAddress: address,
+}).strict();
+const transferFeeRecipientOperation = z.object({
+  type: z.literal("pons_v2_transfer_creator_fee_recipient"), token: address, newRecipient: address, factoryAddress: address,
+}).strict();
 
 export const signerOperationSchema = z.union([
   transferOperation, erc20TransferOperation, burnOperation, buyOperation, sellOperation, claimFeesOperation, sweepFeesOperation, launchOperation,
+  holderDistributorOperation, transferFeeRecipientOperation,
 ]);
 
 export const walletRequestSchema = z.object({
@@ -89,6 +97,9 @@ export const launchPreparationRequestSchema = executionRequestSchema.superRefine
 
 export const ponsPairRequestSchema = z.object({
   token: address, factoryAddress: address,
+}).strict();
+export const holderDistributorRequestSchema = z.object({
+  token: address, distributorFactoryAddress: address, ponsFactoryAddress: address,
 }).strict();
 
 export const usdTokenAmountRequestSchema = z.object({

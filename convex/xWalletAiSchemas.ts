@@ -87,6 +87,8 @@ const operationProperties: Record<string, Record<string, unknown>> = {
     twitter: nullableString("Explicit normalized https://x.com/handle URL, otherwise null."),
     telegram: nullableString("Explicit normalized https://t.me/name URL, otherwise null."),
     pairToken: nullableString("Explicit pair ticker or contract address, otherwise null."),
+    feeRecipient: nullableString("Only the recipient in the exact phrase 'assign fees to @USER' or 'assign fees to WALLETADDRESS'; otherwise null."),
+    holderFeeSharing: { type: ["boolean", "null"], description: "True only when the exact phrase 'holder fee sharing' appears outside quoted content; otherwise false." },
     devBuy: {
       anyOf: [
         { type: "null" },

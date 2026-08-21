@@ -38,6 +38,13 @@ const ponsFactoryAbi = parseAbi([
   "function getLaunchedToken(address token) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists) launched)",
   "function memeHook() view returns (address)",
   "function feeEscrow() view returns (address)",
+  "function transferCreatorFeeRecipient(address token,address newRecipient)",
+  "event CreatorFeeRecipientUpdated(address indexed token,address indexed previousRecipient,address indexed newRecipient)",
+]);
+const holderDistributorFactoryAbi = parseAbi([
+  "function createFor(address token) returns (address distributor)",
+  "function distributorOf(address token) view returns (address)",
+  "event DistributorCreated(address indexed token,address indexed distributor)",
 ]);
 const feeEscrowAbi = parseAbi([
   "function balanceOf(address recipient) view returns (uint256)",
@@ -473,8 +480,9 @@ async function vanityLaunchSalt(
   const policy = await client.readContract({ address: memeHook, abi: ponsMemeHookPolicyAbi, functionName: "currentFeePolicy" });
   const pairEconomics = pairToken === zeroAddress ? undefined : await client.readContract({ address: factory, abi: ponsFactoryAbi, functionName: "pairTokenEconomics", args: [pairToken] });
   const baseSalt = launchSalt(request);
+  const creatorFeeRecipient = operation.creatorFeeRecipient as Address;
   const base = {
-    pairToken, creatorFeeRecipient: owner, originalDeployer: owner, feePolicy: memeHook, policy,
+    pairToken, creatorFeeRecipient, originalDeployer: owner, feePolicy: memeHook, policy,
     feeEscrow, buybackVault,
     phantomQuote: pairEconomics?.phantomQuote || config.phantomQuote,
     curveFeeBps: config.curveFeeBps, creatorTaxBps: 0n, buybackEnabled: false,
@@ -518,6 +526,14 @@ export async function prepareLaunchAddresses(request: ExecutionRequest) {
   return { preparedSalt: prediction.salt, predictedTokenAddress: prediction.tokenAddress, predictedCurveAddress: prediction.curveAddress };
 }
 
+export async function holderDistributorInfo(token: Address, distributorFactoryAddress: Address, ponsFactoryAddress: Address) {
+  const [distributor, launched] = await Promise.all([
+    rpcClient().readContract({ address: distributorFactoryAddress, abi: holderDistributorFactoryAbi, functionName: "distributorOf", args: [token] }),
+    rpcClient().readContract({ address: ponsFactoryAddress, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [token] }),
+  ]);
+  return { distributor: distributor === zeroAddress ? null : distributor, creatorFeeRecipient: launched.exists ? launched.creatorFeeRecipient : null };
+}
+
 async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<ExecutionRequest["operation"], {
   type: "pons_v2_launch" | "pons_v2_launch_and_buy";
 }>) {
@@ -535,7 +551,7 @@ async function preparePonsLaunch(request: ExecutionRequest, operation: Extract<E
   const params = {
     name: operation.name, symbol: operation.symbol, logo: operation.imageUri, description: operation.description,
     socials: { twitter: operation.socials.twitter, telegram: operation.socials.telegram, discord: "", website: operation.socials.website, farcaster: "" },
-    creatorFeeRecipient: owner, creatorTaxBps: 0, buybackEnabled: false,
+    creatorFeeRecipient: operation.creatorFeeRecipient as Address, creatorTaxBps: 0, buybackEnabled: false,
     expectedEconomics, salt: vanity.salt,
   } as const;
   if (operation.type === "pons_v2_launch") {
@@ -724,6 +740,20 @@ export async function executeTransaction(request: ExecutionRequest) {
   }
   if (operation.type === "pons_v2_launch" || operation.type === "pons_v2_launch_and_buy") {
     return preparePonsLaunch(request, operation);
+  }
+  if (operation.type === "pons_v2_create_holder_distributor") {
+    const factory = operation.distributorFactoryAddress as Address;
+    const existing = await rpcClient().readContract({ address: factory, abi: holderDistributorFactoryAbi, functionName: "distributorOf", args: [operation.token as Address] });
+    if (existing !== zeroAddress) throw new Error("holder fee distributor already exists");
+    await rpcClient().simulateContract({ account: owner, address: factory, abi: holderDistributorFactoryAbi, functionName: "createFor", args: [operation.token as Address] });
+    return prepareSigned(request, factory, encodeFunctionData({ abi: holderDistributorFactoryAbi, functionName: "createFor", args: [operation.token as Address] }), 0n);
+  }
+  if (operation.type === "pons_v2_transfer_creator_fee_recipient") {
+    const factory = operation.factoryAddress as Address;
+    const launched = await rpcClient().readContract({ address: factory, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [operation.token as Address] });
+    if (!launched.exists || launched.creatorFeeRecipient.toLowerCase() !== owner.toLowerCase()) throw new Error("wallet is not the current creator fee recipient");
+    await rpcClient().simulateContract({ account: owner, address: factory, abi: ponsFactoryAbi, functionName: "transferCreatorFeeRecipient", args: [operation.token as Address, operation.newRecipient as Address] });
+    return prepareSigned(request, factory, encodeFunctionData({ abi: ponsFactoryAbi, functionName: "transferCreatorFeeRecipient", args: [operation.token as Address, operation.newRecipient as Address] }), 0n);
   }
   if (operation.type === "pons_v2_claim_fees") {
     const client = rpcClient();

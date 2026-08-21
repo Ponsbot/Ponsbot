@@ -484,8 +484,11 @@ export const retryInteraction = internalAction({
           return;
         }
         await ctx.runAction(internal.wallets.ensureWallet, { xUserId: current.user.xUserId });
-        const recipientAddress = intent.command.kind === "send" || intent.command.kind === "buy_and_send"
-          ? current.interaction.recipientAddress || await resolveXRecipient(ctx, postId, intent.command.recipient)
+        const recipient = intent.command.kind === "send" || intent.command.kind === "buy_and_send"
+          ? intent.command.recipient
+          : intent.command.kind === "launch" ? intent.command.feeRecipient : undefined;
+        const recipientAddress = recipient
+          ? current.interaction.recipientAddress || (/^0x[a-fA-F0-9]{40}$/.test(recipient) ? recipient : await resolveXRecipient(ctx, postId, recipient))
           : undefined;
         const result = await ctx.runAction(internal.wallets.executeCommand, {
           sourcePostId: postId, xUserId: current.user.xUserId, text: current.interaction.text,
@@ -659,8 +662,11 @@ export const pollMentions = internalAction({
             processed += 1;
             continue;
           }
-          const recipientAddress = command.kind === "send" || command.kind === "buy_and_send"
-            ? await resolveXRecipient(ctx, mention.id, command.recipient)
+          const recipient = command.kind === "send" || command.kind === "buy_and_send"
+            ? command.recipient
+            : command.kind === "launch" ? command.feeRecipient : undefined;
+          const recipientAddress = recipient
+            ? (/^0x[a-fA-F0-9]{40}$/.test(recipient) ? recipient : await resolveXRecipient(ctx, mention.id, recipient))
             : undefined;
           const result = await ctx.runAction(internal.wallets.executeCommand, {
             sourcePostId: mention.id, xUserId: user.id, text: directText,

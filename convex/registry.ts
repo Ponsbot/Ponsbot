@@ -4,6 +4,7 @@ import { internalMutation, internalQuery } from "./_generated/server";
 const BOOTSTRAP_CONTRACTS = {
   pons_v2_factory: "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
   pons_v2_launch_router: "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948",
+  pons_holder_distributor_factory: "0x70e95CC5f03DB2906081E7a8D16e4C4209291507",
   swap_router: "0xcaf681a66d020601342297493863e78c959e5cb2",
   swap_quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",

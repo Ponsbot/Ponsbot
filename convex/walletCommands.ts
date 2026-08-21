@@ -22,6 +22,8 @@ export type WalletCommand =
       twitter?: string;
       telegram?: string;
       pairToken?: string;
+      feeRecipient?: string;
+      holderFeeSharing?: boolean;
       devBuy?: { amount: string; unit: "eth" | "usd" | "pair" };
     }
   | { kind: "unknown"; reason: string };
@@ -97,6 +99,22 @@ function labeledXValue(text: string) {
 
 function textOutsideQuotedContent(text: string) {
   return text.replace(/"[^"\r\n]*"|“[^”\r\n]*”|'[^'\r\n]*'|‘[^’\r\n]*’/g, (value) => " ".repeat(value.length));
+}
+
+export function launchFeeOptionsFromText(text: string) {
+  const operative = textOutsideQuotedContent(text);
+  const assigned = operative.match(/\bassign fees to\s+(@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i)?.[1];
+  const holderFeeSharing = /\bholder fee sharing\b/i.test(operative);
+  if (assigned && holderFeeSharing) throw new Error("Choose either an assigned fee recipient or holder fee sharing, not both.");
+  return { ...(assigned ? { feeRecipient: assigned } : {}), ...(holderFeeSharing ? { holderFeeSharing: true } : {}) };
+}
+
+export function normalizeLaunchFeeOptions(command: WalletCommand, text: string): WalletCommand {
+  if (command.kind !== "launch") return command;
+  const options = launchFeeOptionsFromText(text);
+  // These security-sensitive fields are always grounded deterministically in
+  // the original post. Structured AI output cannot invent or broaden them.
+  return { ...command, feeRecipient: options.feeRecipient, holderFeeSharing: options.holderFeeSharing };
 }
 
 export function normalizeXUrl(value: string) {
@@ -269,6 +287,10 @@ function parseLaunch(text: string): WalletCommand | null {
   const telegramRaw = text.match(/\b(?:telegram|tg)\s*(?:is|=|:)?\s*([^\s,;]+)/i)?.[1];
   const telegram = telegramRaw ? normalizedTelegramOrRaw(telegramRaw) : undefined;
   const pairToken = extractGroundedPairToken(text);
+  let feeOptions: ReturnType<typeof launchFeeOptionsFromText>;
+  try { feeOptions = launchFeeOptionsFromText(text); } catch (error) {
+    return { kind: "unknown", reason: error instanceof Error ? error.message : "Invalid creator fee options." };
+  }
 
   const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
   const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));
@@ -287,6 +309,7 @@ function parseLaunch(text: string): WalletCommand | null {
     ...(twitter ? { twitter } : {}),
     ...(telegram ? { telegram } : {}),
     ...(pairToken ? { pairToken: tokenIdentifier(pairToken) } : {}),
+    ...feeOptions,
     ...(usdBuy || leadingUsdBuy ? { devBuy: { amount: cleanAmount((usdBuy || leadingUsdBuy)![1]), unit: "usd" as const } }
       : parsedEthBuy ? { devBuy: { amount: cleanAmount(parsedEthBuy[1]), unit: "eth" as const } }
         : pairBuy || leadingPairBuy ? { devBuy: { amount: cleanAmount((pairBuy || leadingPairBuy)![1]), unit: "pair" as const } } : {}),
@@ -294,6 +317,10 @@ function parseLaunch(text: string): WalletCommand | null {
 }
 
 export function parseWalletCommand(raw: string): WalletCommand {
+  let rawLaunchFeeOptions: ReturnType<typeof launchFeeOptionsFromText> = {};
+  try { rawLaunchFeeOptions = launchFeeOptionsFromText(raw); } catch (error) {
+    return { kind: "unknown", reason: error instanceof Error ? error.message : "Invalid creator fee options." };
+  }
   const recipientAddress = /\b(?:send|transfer|give)\b/i.test(raw)
     ? raw.match(/\bto\s+(0x[a-fA-F0-9]{40})\b/i)?.[1]
       || raw.match(/\b(?:send|transfer|give)\s+(0x[a-fA-F0-9]{40})\b/i)?.[1]
@@ -304,7 +331,7 @@ export function parseWalletCommand(raw: string): WalletCommand {
     : undefined;
   const text = raw.replace(/@[a-zA-Z0-9_]{1,15}/g, " ").replace(/\s+/g, " ").trim();
   const launch = parseLaunch(text);
-  if (launch) return launch;
+  if (launch) return launch.kind === "launch" ? { ...launch, ...rawLaunchFeeOptions } : launch;
   const swapMatch = text.match(new RegExp(`\\bswap\\s+\\$${NUMBER}\\s+(?:worth\\s+)?of\\s+\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\\s+for\\s+\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\\b`, "i"));
   if (swapMatch) {
     const slippage = slippageBps(text);
@@ -554,6 +581,8 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       ...(twitter ? { twitter: normalizedXOrRaw(twitter) } : {}),
       ...(optionalText("telegram", 300) ? { telegram: normalizedTelegramOrRaw(optionalText("telegram", 300)!) } : {}),
       ...(pairToken ? { pairToken } : {}),
+      ...(typeof item.feeRecipient === "string" && (/^@[a-zA-Z0-9_]{1,15}$/.test(item.feeRecipient) || /^0x[a-fA-F0-9]{40}$/.test(item.feeRecipient)) ? { feeRecipient: item.feeRecipient } : {}),
+      ...(item.holderFeeSharing === true ? { holderFeeSharing: true } : {}),
       ...(devBuy ? { devBuy } : {}),
     };
   }

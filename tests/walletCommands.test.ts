@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { normalizeLaunchLinks, normalizeLaunchTelegram, normalizeTelegramUrl, normalizeWebsiteUrl, normalizeXUrl, parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
+import { normalizeLaunchFeeOptions, normalizeLaunchLinks, normalizeLaunchTelegram, normalizeTelegramUrl, normalizeWebsiteUrl, normalizeXUrl, parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
 
 describe("X wallet commands", () => {
+  it("grounds creator-fee launch options only in exact unquoted phrases", () => {
+    expect(parseWalletCommand("launch Cedar ticker CDR assign fees to @alice")).toMatchObject({ kind: "launch", feeRecipient: "@alice" });
+    expect(parseWalletCommand("launch Cedar ticker CDR assign fees to 0x1111111111111111111111111111111111111111")).toMatchObject({ kind: "launch", feeRecipient: "0x1111111111111111111111111111111111111111" });
+    expect(parseWalletCommand("launch Cedar ticker CDR holder fee sharing")).toMatchObject({ kind: "launch", holderFeeSharing: true });
+    expect(parseWalletCommand('launch Cedar ticker CDR description "holder fee sharing"')).not.toHaveProperty("holderFeeSharing");
+    expect(parseWalletCommand("launch Cedar ticker CDR assign fees to @alice holder fee sharing")).toMatchObject({ kind: "unknown" });
+    expect(normalizeLaunchFeeOptions({ kind: "launch", launchMode: "pons", name: "Cedar", symbol: "CDR", feeRecipient: "@invented" }, "launch Cedar ticker CDR"))
+      .toEqual({ kind: "launch", launchMode: "pons", name: "Cedar", symbol: "CDR", feeRecipient: undefined, holderFeeSharing: undefined });
+  });
   it("parses only the explicit dollar token-for-token swap shape", () => {
     expect(parseWalletCommand("Swap $25 of SNDK for PONSBOT")).toEqual({
       kind: "swap_token_for_token", amount: "25", unit: "usd", fromToken: "SNDK", toToken: "PONSBOT", slippageBps: 250,
