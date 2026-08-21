@@ -384,7 +384,10 @@ const launchRecordValidator = v.object({
   pairToken: v.optional(v.string()),
   tokenAddress: v.optional(v.string()), normalizedTokenAddress: v.optional(v.string()), poolAddress: v.optional(v.string()),
   positionId: v.optional(v.string()), devBuySucceeded: v.optional(v.boolean()),
-  creatorFeeRecipient: v.optional(v.string()), holderFeeSharing: v.optional(v.boolean()), holderFeeDistributor: v.optional(v.string()),
+  creatorFeeRecipient: v.optional(v.string()), normalizedCreatorFeeRecipient: v.optional(v.string()),
+  holderFeeSharing: v.optional(v.boolean()), holderFeeDistributor: v.optional(v.string()),
+  holderFeeSharingStatus: v.optional(v.union(v.literal("pending"), v.literal("enabled"), v.literal("retrying"), v.literal("failed"))),
+  holderFeeSharingAttempts: v.optional(v.number()), holderFeeSharingLastError: v.optional(v.string()), holderFeeSharingNextAttemptAt: v.optional(v.number()),
 });
 
 export const recordPreparedExecution = internalMutation({
@@ -527,13 +530,18 @@ export const listWalletTokenAddresses = internalQuery({
 
 export const listOwnedLaunchTokens = internalQuery({
   args: { xUserId: v.string() },
-  handler: async (ctx, { xUserId }) => (await ctx.db.query("tokenLaunches")
-    .withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", xUserId)).collect())
+  handler: async (ctx, { xUserId }) => {
+    const wallet = await ctx.db.query("cryptoWallets").withIndex("by_owner_x_user_id", (q) => q.eq("ownerXUserId", xUserId)).unique();
+    const owned = await ctx.db.query("tokenLaunches").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", xUserId)).collect();
+    const beneficiary = wallet ? await ctx.db.query("tokenLaunches")
+      .withIndex("by_creator_fee_recipient", (q) => q.eq("normalizedCreatorFeeRecipient", wallet.address.toLowerCase())).collect() : [];
+    const launches = [...new Map([...owned, ...beneficiary].map((launch) => [launch._id, launch])).values()];
     // claim() collects the ETH escrow at once. Non-ETH pair escrows require
     // claimToken(pair) and deliberately remain individual token claims.
-    .flatMap((launch) => launch.tokenAddress && !launch.holderFeeSharing
-      && (!launch.creatorFeeRecipient || launch.creatorFeeRecipient.toLowerCase() === launch.creatorAddress?.toLowerCase())
-      && (!launch.pairToken || /^0x0{40}$/i.test(launch.pairToken)) ? [launch.tokenAddress] : []),
+    return launches.flatMap((launch) => launch.tokenAddress && !launch.holderFeeSharing
+      && (!launch.creatorFeeRecipient || launch.creatorFeeRecipient.toLowerCase() === wallet?.address.toLowerCase())
+      && (!launch.pairToken || /^0x0{40}$/i.test(launch.pairToken)) ? [launch.tokenAddress] : []);
+  },
 });
 
 export const indexWalletToken = internalMutation({
@@ -683,17 +691,53 @@ export const recordRevertedExecution = internalMutation({
   },
 });
 
+export const deferHolderFeeSharing = internalMutation({
+  args: { requestId: v.string(), safeError: v.string() },
+  handler: async (ctx, args) => {
+    const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
+    if (!launch || !launch.holderFeeSharing || launch.holderFeeDistributor) return;
+    const attempts = (launch.holderFeeSharingAttempts || 0) + 1;
+    if (attempts >= 8) {
+      await ctx.db.patch(launch._id, {
+        holderFeeSharingStatus: "failed", holderFeeSharingAttempts: attempts,
+        holderFeeSharingLastError: args.safeError.slice(0, 240), holderFeeSharingNextAttemptAt: undefined, updatedAt: Date.now(),
+      });
+      return;
+    }
+    const delay = Math.min(15 * 60_000, 30_000 * 2 ** Math.max(0, attempts - 1));
+    await ctx.db.patch(launch._id, {
+      holderFeeSharingStatus: "retrying", holderFeeSharingAttempts: attempts,
+      holderFeeSharingLastError: args.safeError.slice(0, 240), holderFeeSharingNextAttemptAt: Date.now() + delay, updatedAt: Date.now(),
+    });
+    await ctx.scheduler.runAfter(delay, internal.wallets.resumeHolderFeeSharing, { requestId: args.requestId });
+  },
+});
+
 export const resumeHolderFeeSharing = internalAction({
   args: { requestId: v.string() },
   handler: async (ctx, { requestId }) => {
     const current = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId });
     if (!current?.wallet || !current.launch?.tokenAddress || !current.launch.holderFeeSharing || current.launch.holderFeeDistributor) return;
-    const registry = await ctx.runQuery(internal.registry.runtimeConfig, {});
-    const command: Extract<WalletCommand, { kind: "launch" }> = {
-      kind: "launch", launchMode: "pons", name: current.launch.name, symbol: current.launch.symbol,
-      holderFeeSharing: true,
-    };
-    await enableHolderFeeSharing(ctx, current.wallet, current.launch.ownerXUserId, current.request.sourcePostId, requestId, command, current.launch.tokenAddress, registry);
+    const lockRequestId = `${requestId}:holder-resume:${Date.now()}`;
+    const locked = await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, { walletId: current.wallet._id, requestId: lockRequestId });
+    if (!locked) {
+      await ctx.runMutation(internal.wallets.deferHolderFeeSharing, { requestId, safeError: "wallet is busy with another transaction" });
+      return;
+    }
+    try {
+      const registry = await ctx.runQuery(internal.registry.runtimeConfig, {});
+      const command: Extract<WalletCommand, { kind: "launch" }> = {
+        kind: "launch", launchMode: "pons", name: current.launch.name, symbol: current.launch.symbol,
+        holderFeeSharing: true,
+      };
+      await enableHolderFeeSharing(ctx, current.wallet, current.launch.ownerXUserId, current.request.sourcePostId, requestId, command, current.launch.tokenAddress, registry);
+    } catch (error) {
+      await ctx.runMutation(internal.wallets.deferHolderFeeSharing, {
+        requestId, safeError: error instanceof Error ? error.message : "holder fee sharing recovery failed",
+      });
+    } finally {
+      await ctx.runMutation(internal.wallets.releaseWalletExecutionLock, { walletId: current.wallet._id, requestId: lockRequestId });
+    }
   },
 });
 
@@ -703,7 +747,8 @@ export const recordHolderFeeDistributor = internalMutation({
     const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (launch) await ctx.db.patch(launch._id, {
       holderFeeSharing: true, holderFeeDistributor: args.distributor,
-      creatorFeeRecipient: args.distributor, updatedAt: Date.now(),
+      creatorFeeRecipient: args.distributor, normalizedCreatorFeeRecipient: args.distributor.toLowerCase(),
+      holderFeeSharingStatus: "enabled", holderFeeSharingLastError: undefined, holderFeeSharingNextAttemptAt: undefined, updatedAt: Date.now(),
     });
   },
 });
@@ -1292,7 +1337,10 @@ export const executeCommand = internalAction({
           poolAddress: result.poolAddress, positionId: result.positionId,
           devBuySucceeded: result.devBuySucceeded,
           creatorFeeRecipient: String(operation.creatorFeeRecipient || wallet.address),
+          normalizedCreatorFeeRecipient: String(operation.creatorFeeRecipient || wallet.address).toLowerCase(),
           holderFeeSharing: command.holderFeeSharing,
+          holderFeeSharingStatus: command.holderFeeSharing ? "pending" as const : undefined,
+          holderFeeSharingAttempts: command.holderFeeSharing ? 0 : undefined,
         } : undefined;
         const to = result.toAddress && safeAddress(result.toAddress) ? result.toAddress : operationDestination(operation);
         const callKind = result.callKind || String(operation.type);

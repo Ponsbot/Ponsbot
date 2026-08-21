@@ -10,6 +10,7 @@ export type PublicLaunch = {
   website?: string; twitter?: string; telegram?: string; tokenAddress?: string;
   transactionHash: string; devBuySucceeded?: boolean; creatorAddress?: string; createdAt: number;
   pairToken?: string; pairSymbol?: string; poolAddress?: string; launcherUsername?: string; marketCapUsd?: number; marketCapUpdatedAt?: number; lastBuyAt?: number; storedMarketCapUsd?: number; volume24hUsd?: number; graduated?: boolean;
+  creatorFeeRecipient?: string; feeRecipientUsername?: string; holderFeeSharing?: boolean;
 };
 
 const PREVIEW_WALLET = "0x0000000000000000000000000000000000000b07";

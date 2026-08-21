@@ -12,7 +12,8 @@ function publicLaunch(launch: {
   transactionHash: string; devBuySucceeded?: boolean; createdAt: number;
   pairToken?: string; poolAddress?: string; launcherUsername?: string;
   creatorAddress?: string; pairSymbol?: string; publicLastBuyAt?: number; publicMarketCapUsd?: number; publicVolume24hUsd?: number; publicGraduated?: boolean;
-}, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string, lastBuyAt?: number, storedMarketCapUsd?: number, volume24hUsd?: number, graduated?: boolean) {
+  creatorFeeRecipient?: string; holderFeeSharing?: boolean;
+}, creatorAddress?: string, launcherUsername?: string, pairSymbol?: string, lastBuyAt?: number, storedMarketCapUsd?: number, volume24hUsd?: number, graduated?: boolean, feeRecipientUsername?: string) {
   return {
     name: launch.name,
     symbol: launch.symbol,
@@ -29,6 +30,9 @@ function publicLaunch(launch: {
     poolAddress: launch.poolAddress,
     creatorAddress: launch.creatorAddress || creatorAddress,
     launcherUsername: launch.launcherUsername || launcherUsername,
+    creatorFeeRecipient: launch.creatorFeeRecipient,
+    holderFeeSharing: launch.holderFeeSharing,
+    feeRecipientUsername,
     createdAt: launch.createdAt,
     lastBuyAt: launch.publicLastBuyAt ?? lastBuyAt,
     storedMarketCapUsd: launch.publicMarketCapUsd ?? storedMarketCapUsd,
@@ -64,7 +68,11 @@ export const getLaunch = query({
     const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
     const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
     const market = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", (q) => q.eq("normalizedTokenAddress", normalized)).unique();
-    return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd, market?.volume24hUsd, market?.graduated);
+    const feeWallet = launch.normalizedCreatorFeeRecipient ? await ctx.db.query("cryptoWallets")
+      .withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.normalizedCreatorFeeRecipient)).unique() : null;
+    const feeUser = feeWallet && !feeWallet.xUsername ? await ctx.db.query("xReplyUsers")
+      .withIndex("by_x_user_id", (q) => q.eq("xUserId", feeWallet.ownerXUserId)).unique() : null;
+    return publicLaunch(launch, wallet?.address, user?.username, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : pair?.symbol, market?.lastBuyAt, market?.marketCapUsd, market?.volume24hUsd, market?.graduated, feeWallet?.xUsername || feeUser?.username);
   },
 });
 

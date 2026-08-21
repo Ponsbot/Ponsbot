@@ -27,7 +27,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     send: "📤 Tell me the amount, token, and destination wallet or X handle. Example: send 25 PONSBOT to @user. You can also buy and send in one post: buy $100 of PONSBOT and send it to @user.",
     buy_sell: "🔄 Tell me buy or sell, the amount, and the ticker or contract. Try “buy $5 of PONSBOT”, “sell 100 MSFT”, or “swap $25 of SNDK for PONSBOT.”",
     burn: "🔥 Say burn, the amount, and the ticker or contract. To purchase and immediately burn what you receive, say buy or purchase plus burn: buy $25 of PONSBOT and burn it.",
-    launch: "🚀 Verified X accounts can launch on Pons V2 from an X post! Add name and ticker; artwork, description, website, X, TG, dev buy, and pair are optional. For fee features, use these exact phrases: “assign fees to @USER”, “assign fees to WALLETADDRESS”, or “holder fee sharing”.",
+    launch: "🚀 Verified accounts can launch on Pons V2! Add name and ticker. Artwork, description, website, socials, dev buy, or pair are optional. To assign fees to someone else or to holders, use the exact phrases “assign fees to” and an X handle or wallet address, or “holder fee sharing”.",
     pairs: "🔗 You can pair your Pons V2 launch with: NVDA, SPCX, GOOGL, TSLA, RIVN, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, TTWO, COST, DJT, MSTR, QQQ, RDDT, USDG, ETH.",
     fees: "💸 Pons V2 creator fees are paid in each launch's paired asset. Say “claim my fees” to claim all launched tokens paired with ETH, or “claim my fees for PONSBOT” for one launch. Non-ETH-paired launches must be claimed individually.",
   };
