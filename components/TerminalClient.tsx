@@ -30,11 +30,12 @@ export function TerminalClient() {
   const logRef = useRef<HTMLDivElement>(null);
   const refreshing = useRef(false);
 
-  const refresh = useCallback(async (includeHoldings = false) => {
+  const refresh = useCallback(async (includeHoldings = false, includeCatalog = false) => {
     if (refreshing.current || document.visibilityState === "hidden") return;
     refreshing.current = true;
     try {
-      const response = await fetch(includeHoldings ? "/api/terminal" : "/api/terminal?scope=history", { cache: "no-store" });
+      const endpoint = includeCatalog ? "/api/terminal" : includeHoldings ? "/api/terminal?scope=holdings" : "/api/terminal?scope=history";
+      const response = await fetch(endpoint, { cache: "no-store" });
       if (response.ok) {
         const next = await response.json() as TerminalData;
         setData((current) => ({
@@ -51,7 +52,7 @@ export function TerminalClient() {
   }, []);
   useEffect(() => {
     fetch("/api/auth/x/session", { cache: "no-store" }).then((response) => response.json()).then(async (value: Session) => {
-      setSession(value); if (value.authenticated) await refresh(true); setLoading(false);
+      setSession(value); if (value.authenticated) await refresh(true, true); setLoading(false);
     }).catch(() => setLoading(false));
   }, [refresh]);
   useEffect(() => {

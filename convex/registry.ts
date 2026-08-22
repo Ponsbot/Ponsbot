@@ -2,18 +2,24 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 
 const BOOTSTRAP_CONTRACTS = {
-  pons_v2_factory: process.env.PONS_V2_FACTORY_ADDRESS || "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
+  pons_v2_factory: "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
   pons_v2_launch_router: "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948",
   pons_holder_distributor_factory: "0x70e95CC5f03DB2906081E7a8D16e4C4209291507",
   swap_router: "0xcaf681a66d020601342297493863e78c959e5cb2",
   swap_quoter: "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
   weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
-  v4_quoter: process.env.PONS_V4_QUOTER_ADDRESS || "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
-  universal_router: process.env.PONS_V4_UNIVERSAL_ROUTER_ADDRESS || "0x8876789976decbfcbbbe364623c63652db8c0904",
-  permit2: process.env.PONS_PERMIT2_ADDRESS || "0x000000000022D473030F116dDEE9F6B43aC78BA3",
-  v4_state_view: process.env.PONS_V4_STATE_VIEW_ADDRESS || "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
+  v4_quoter: "0x8dc178efb8111bb0973dd9d722ebeff267c98f94",
+  universal_router: "0x8876789976decbfcbbbe364623c63652db8c0904",
+  permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+  v4_state_view: "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
 } as const;
-const ENV_MANAGED_CONTRACTS = new Set(["pons_v2_factory", "v4_quoter", "universal_router", "permit2", "v4_state_view"]);
+const CONTRACT_ENV_OVERRIDES: Partial<Record<keyof typeof BOOTSTRAP_CONTRACTS, string | undefined>> = {
+  pons_v2_factory: process.env.PONS_V2_FACTORY_ADDRESS,
+  v4_quoter: process.env.PONS_V4_QUOTER_ADDRESS,
+  universal_router: process.env.PONS_V4_UNIVERSAL_ROUTER_ADDRESS,
+  permit2: process.env.PONS_PERMIT2_ADDRESS,
+  v4_state_view: process.env.PONS_V4_STATE_VIEW_ADDRESS,
+};
 
 const BOOTSTRAP_PAIRS = [
   ["0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", "NVDA", "NVIDIA"],
@@ -84,19 +90,23 @@ export const ensureInitialized = internalMutation({
       }
       await ctx.db.insert("protocolContracts", { key: "public_launch_view_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
     }
-    const publishedLaunchMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "public_published_launch_migration_v1")).unique();
+    const publishedLaunchMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "public_published_launch_migration_v2")).unique();
     if (!publishedLaunchMigration) {
       for (const launch of await ctx.db.query("tokenLaunches").collect()) {
-        if (launch.tokenAddress && launch.publicPublished !== true) await ctx.db.patch(launch._id, { publicPublished: true, updatedAt: now });
+        const transaction = await ctx.db.query("walletTransactions").withIndex("by_request_id", (q) => q.eq("requestId", launch.requestId)).unique();
+        const shouldPublish = Boolean(launch.tokenAddress && (transaction?.status === "confirmed" || launch.ownerXUserId === "ponsbot-preview"));
+        if (launch.publicPublished !== shouldPublish) await ctx.db.patch(launch._id, { publicPublished: shouldPublish, updatedAt: now });
       }
-      await ctx.db.insert("protocolContracts", { key: "public_published_launch_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
+      await ctx.db.insert("protocolContracts", { key: "public_published_launch_migration_v2", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
     }
     const previouslyInitialized = Boolean(await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique());
-    for (const [key, address] of Object.entries(BOOTSTRAP_CONTRACTS)) {
+    for (const [key, fallbackAddress] of Object.entries(BOOTSTRAP_CONTRACTS)) {
+      const override = CONTRACT_ENV_OVERRIDES[key as keyof typeof BOOTSTRAP_CONTRACTS]?.trim();
+      const address = override || fallbackAddress;
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error(`${key} contract address is invalid`);
       const existing = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", key)).unique();
       if (!existing) await ctx.db.insert("protocolContracts", { key, address, normalizedAddress: address.toLowerCase(), active: true, updatedAt: now });
-      else if (ENV_MANAGED_CONTRACTS.has(key) && existing.address.toLowerCase() !== address.toLowerCase()) {
+      else if (override && existing.address.toLowerCase() !== address.toLowerCase()) {
         await ctx.db.patch(existing._id, { address, normalizedAddress: address.toLowerCase(), active: true, updatedAt: now });
       }
     }

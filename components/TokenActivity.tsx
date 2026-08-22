@@ -17,12 +17,15 @@ export function TokenActivity({ tokenAddress, symbol, currentMarketCapUsd, artwo
   const holdersFetchedAt = useRef(0);
   useEffect(() => {
     let stopped = false;
+    let running = false;
+    let controller: AbortController | null = null;
     const refresh = async () => {
-      if (stopped || document.visibilityState !== "visible") return;
-      const marketResult = await fetch("/api/market/view", { method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: [tokenAddress] }) })
+      if (stopped || running || document.visibilityState !== "visible") return;
+      running = true; controller = new AbortController();
+      const marketResult = await fetch("/api/market/view", { method: "POST", cache: "no-store", signal: controller.signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: [tokenAddress] }) })
         .then(async (response) => response.ok ? { ok: true, payload: await response.json() } : { ok: false, payload: null })
         .catch(() => ({ ok: false, payload: null }));
-      const result = await fetch(`/api/market/activity?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store" }).then(async (response) => response.ok ? { ok: true, payload: await response.json() } : { ok: false, payload: null }).catch(() => ({ ok: false, payload: null }));
+      const result = await fetch(`/api/market/activity?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store", signal: controller.signal }).then(async (response) => response.ok ? { ok: true, payload: await response.json() } : { ok: false, payload: null }).catch(() => ({ ok: false, payload: null }));
       if (!stopped) {
         setActivity(result.ok ? result.payload?.activity || [] : []);
         setActivityAvailable(result.ok);
@@ -31,12 +34,13 @@ export function TokenActivity({ tokenAddress, symbol, currentMarketCapUsd, artwo
         if (typeof nextMarketCap === "number" && Number.isFinite(nextMarketCap)) setLiveMarketCapUsd(nextMarketCap);
       }
       if (tab === "holders" && Date.now() - holdersFetchedAt.current >= 60_000) {
-        const holderPayload = await fetch(`/api/market/holders?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : { holders: [] }).catch(() => ({ holders: [] }));
+        const holderPayload = await fetch(`/api/market/holders?token=${encodeURIComponent(tokenAddress)}`, { cache: "no-store", signal: controller.signal }).then((response) => response.ok ? response.json() : { holders: [] }).catch(() => ({ holders: [] }));
         if (!stopped) { setHolders(holderPayload.holders || []); holdersFetchedAt.current = Date.now(); }
       }
+      running = false; controller = null;
     };
     void refresh(); const timer = window.setInterval(refresh, 10_000);
-    return () => { stopped = true; window.clearInterval(timer); };
+    return () => { stopped = true; controller?.abort(); window.clearInterval(timer); };
   }, [tokenAddress, tab]);
   const points = useMemo(() => {
     const cutoff = Date.now() - (range === "1H" ? 3_600_000 : range === "6H" ? 21_600_000 : 86_400_000);

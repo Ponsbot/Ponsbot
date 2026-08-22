@@ -1483,6 +1483,7 @@ export const consumeTerminalLimit = internalMutation({
 export const listTerminalHistory = internalQuery({
   args: { ownerXUserId: v.string(), sessionId: v.string(), includeCatalog: v.boolean() },
   handler: async (ctx, args) => {
+    const activeSince = Date.now() - 30 * 24 * 60 * 60_000;
     const [messages, requests, launches, launchCatalog, registryTokens] = await Promise.all([
       ctx.db.query("terminalMessages").withIndex("by_session_created_at", (q) => q.eq("sessionId", args.sessionId)).order("desc").take(40),
       ctx.db.query("walletRequests").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(40),
@@ -1490,8 +1491,11 @@ export const listTerminalHistory = internalQuery({
       args.includeCatalog ? ctx.db.query("tokenLaunches").withIndex("by_public_created_at", (q) => q.eq("publicPublished", true)).order("desc").take(2_000) : Promise.resolve([]),
       args.includeCatalog ? ctx.db.query("tokenRegistry").filter((q) => q.eq(q.field("active"), true)).take(250) : Promise.resolve([]),
     ]);
+    const activeLaunches = args.includeCatalog
+      ? await ctx.db.query("tokenLaunches").withIndex("by_public_last_buy", (q) => q.eq("publicPublished", true).gte("publicLastBuyAt", activeSince)).order("desc").collect()
+      : [];
     const catalog = new Map<string, { tokenAddress: string; symbol: string; name: string; pairToken?: string }>();
-    for (const item of launchCatalog) if (item.tokenAddress) catalog.set(item.tokenAddress.toLowerCase(), { tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken });
+    for (const item of [...launchCatalog, ...activeLaunches, ...launches]) if (item.tokenAddress) catalog.set(item.tokenAddress.toLowerCase(), { tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken });
     for (const item of registryTokens) if (!catalog.has(item.normalizedAddress)) catalog.set(item.normalizedAddress, { tokenAddress: item.address, symbol: item.symbol, name: item.name });
     return {
       messages: messages.reverse().map((item) => ({ role: item.role, messageType: item.messageType, text: item.text, requestId: item.requestId, createdAt: item.createdAt })),

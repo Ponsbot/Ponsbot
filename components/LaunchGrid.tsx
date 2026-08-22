@@ -80,18 +80,23 @@ function MarketViewer({ sort, tokenAddresses, onMarket, onLaunches }: { sort: So
   const tokenKey = tokenAddresses.join(",");
   useEffect(() => {
     let stopped = false;
+    let running = false;
+    let controller: AbortController | null = null;
     const ping = async () => {
-      if (stopped || document.visibilityState !== "visible") return;
-      const [marketPayload, launchPayload] = await Promise.all([
-        fetch("/api/market/view", { method: "POST", cache: "no-store", headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: tokenKey ? tokenKey.split(",") : [] }) }).then((response) => response.ok ? response.json() : undefined).catch(() => undefined),
-        fetch(`/api/launches?count=40&sort=${sort}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : undefined).catch(() => undefined),
-      ]);
-      if (!stopped && Array.isArray(marketPayload?.market)) onMarket(marketPayload.market);
-      if (!stopped && Array.isArray(launchPayload?.page)) onLaunches(launchPayload.page, launchPayload.isDone ? null : launchPayload.continueCursor || null);
+      if (stopped || running || document.visibilityState !== "visible") return;
+      running = true; controller = new AbortController();
+      try {
+        const [marketPayload, launchPayload] = await Promise.all([
+          fetch("/api/market/view", { method: "POST", cache: "no-store", signal: controller.signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ tokenAddresses: tokenKey ? tokenKey.split(",") : [] }) }).then((response) => response.ok ? response.json() : undefined).catch(() => undefined),
+          fetch(`/api/launches?count=40&sort=${sort}`, { cache: "no-store", signal: controller.signal }).then((response) => response.ok ? response.json() : undefined).catch(() => undefined),
+        ]);
+        if (!stopped && Array.isArray(marketPayload?.market)) onMarket(marketPayload.market);
+        if (!stopped && Array.isArray(launchPayload?.page)) onLaunches(launchPayload.page, launchPayload.isDone ? null : launchPayload.continueCursor || null);
+      } finally { running = false; controller = null; }
     };
     void ping();
     const timer = window.setInterval(ping, 10_000);
-    return () => { stopped = true; window.clearInterval(timer); };
+    return () => { stopped = true; controller?.abort(); window.clearInterval(timer); };
   }, [tokenKey, sort, onMarket, onLaunches]);
   return null;
 }

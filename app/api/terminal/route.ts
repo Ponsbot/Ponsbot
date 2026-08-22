@@ -34,10 +34,12 @@ export async function GET(request: NextRequest) {
   if (!convexUrl) return NextResponse.json({ error: "Terminal data is not configured" }, { status: 503 });
   if (!await activeSession(auth.secret, auth.session)) return NextResponse.json({ authenticated: false }, { status: 401, headers: { "cache-control": "no-store" } });
   const client = new ConvexHttpClient(convexUrl);
-  const historyOnly = request.nextUrl.searchParams.get("scope") === "history";
+  const scope = request.nextUrl.searchParams.get("scope");
+  const includeCatalog = scope !== "history" && scope !== "holdings";
+  const includeHoldings = scope !== "history";
   const [history, wallet] = await Promise.all([
-    client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId, includeCatalog: !historyOnly }),
-    historyOnly ? Promise.resolve(null) : getWalletHoldings(auth.session.walletAddress),
+    client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId, includeCatalog }),
+    includeHoldings ? getWalletHoldings(auth.session.walletAddress) : Promise.resolve(null),
   ]);
   return NextResponse.json({ authenticated: true, username: auth.session.username, walletAddress: auth.session.walletAddress, expiresAt: auth.session.expiresAt, history, ...(wallet ? { holdings: wallet.holdings } : {}) }, { headers: { "cache-control": "no-store" } });
 }

@@ -72,7 +72,7 @@ export const getLaunch = query({
   handler: async (ctx, { tokenAddress }) => {
     const normalized = tokenAddress.toLowerCase();
     const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", (q) => q.eq("normalizedTokenAddress", normalized)).unique();
-    if (!launch) return null;
+    if (!launch || launch.publicPublished !== true) return null;
     const wallet = await ctx.db.get(launch.walletId);
     const user = launch.launcherUsername ? null : await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", (q) => q.eq("xUserId", launch.ownerXUserId)).unique();
     const pair = launch.pairToken ? await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", (q) => q.eq("normalizedAddress", launch.pairToken!.toLowerCase())).unique() : null;
