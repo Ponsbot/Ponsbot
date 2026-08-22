@@ -40,12 +40,10 @@ export function TokenActivity({ tokenAddress, symbol, currentMarketCapUsd, artwo
   }, [tokenAddress, tab]);
   const points = useMemo(() => {
     const cutoff = Date.now() - (range === "1H" ? 3_600_000 : range === "6H" ? 21_600_000 : 86_400_000);
-    return activity.filter((item) => item.marketCapUsd !== undefined && item.timestamp >= cutoff).sort((a, b) => a.timestamp - b.timestamp) as Array<Activity & { marketCapUsd: number }>;
-  }, [activity, range]);
-  if (liveMarketCapUsd !== undefined) {
-    if (points.length) points[points.length - 1] = { ...points[points.length - 1], marketCapUsd: liveMarketCapUsd };
-    else points.push({ transactionHash: "", logIndex: 0, kind: "buy", walletAddress: "", tokenAmount: "0", timestamp: Date.now(), marketCapUsd: liveMarketCapUsd });
-  }
+    const historical = activity.filter((item) => item.marketCapUsd !== undefined && item.timestamp >= cutoff).sort((a, b) => a.timestamp - b.timestamp) as Array<Activity & { marketCapUsd: number }>;
+    const currentPoint: Activity & { marketCapUsd: number } = { transactionHash: "", logIndex: -1, kind: "buy", walletAddress: "", tokenAmount: "0", timestamp: Date.now(), marketCapUsd: liveMarketCapUsd ?? 0 };
+    return liveMarketCapUsd === undefined ? historical : [...historical, currentPoint];
+  }, [activity, range, liveMarketCapUsd]);
   return <section className="token-market-panel"><div className="token-page-columns"><div className="token-left-column"><div className="token-market-overview"><div className="token-market-artwork">{artwork}</div><div className="token-market-summary">{summary}</div></div><div className="token-chart-column"><div className="market-chart-head"><div><small>Market cap</small><strong>{points.length ? formatMoney(points[points.length - 1].marketCapUsd) : "—"}</strong></div><div className="chart-ranges">{(["1H", "6H", "1D"] as const).map((value) => <button type="button" className={range === value ? "active" : ""} onClick={() => setRange(value)} key={value}>{value}</button>)}</div></div><MarketChart points={points} /></div></div><div className="token-right-column"><div className="token-details-column">{details}</div><div className="token-activity-column">
     <div className="activity-tabs" role="tablist"><button type="button" className={tab === "trades" ? "active" : ""} onClick={() => setTab("trades")}>Recent Trades</button><button type="button" className={tab === "holders" ? "active" : ""} onClick={() => setTab("holders")}>Holders</button></div>
     {tab === "trades" && activityAvailable === false ? <p className="terminal-empty">Activity is temporarily unavailable.</p> : null}

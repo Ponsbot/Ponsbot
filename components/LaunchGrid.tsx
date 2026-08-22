@@ -16,18 +16,28 @@ export function LaunchGrid({ launches }: { launches: PublicLaunch[] }) {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const paginationStarted = useRef(false);
+  const sortRequest = useRef<AbortController | null>(null);
   useEffect(() => setLiveLaunches(launches), [launches]);
+  useEffect(() => () => sortRequest.current?.abort(), []);
 
   const sorted = useMemo(() => liveLaunches.filter((launch) => !graduatedOnly || launch.graduated).sort((a, b) => sort === "oldest" ? a.createdAt - b.createdAt : sort === "mcap" ? (b.marketCapUsd ?? -1) - (a.marketCapUsd ?? -1) : sort === "volume" ? (b.volume24hUsd ?? -1) - (a.volume24hUsd ?? -1) : sort === "lastBuy" ? (b.lastBuyAt ?? -1) - (a.lastBuyAt ?? -1) : b.createdAt - a.createdAt), [liveLaunches, sort, graduatedOnly]);
   const pages = Math.ceil(sorted.length / PAGE_SIZE);
   const visible = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const choose = async (next: Sort) => {
+    sortRequest.current?.abort();
+    const controller = new AbortController();
+    sortRequest.current = controller;
     setSort(next); setPage(1); setLoadingMore(true); paginationStarted.current = false;
     try {
-      const payload = await fetch(`/api/launches?count=40&sort=${next}`, { cache: "no-store" }).then((response) => response.ok ? response.json() : undefined);
+      const payload = await fetch(`/api/launches?count=40&sort=${next}`, { cache: "no-store", signal: controller.signal }).then((response) => response.ok ? response.json() : undefined);
+      if (controller.signal.aborted) return;
       if (Array.isArray(payload?.page)) setLiveLaunches(payload.page);
       setNextCursor(payload?.isDone ? null : payload?.continueCursor || null);
-    } finally { setLoadingMore(false); }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) console.error("launch_sort_failed", error);
+    } finally {
+      if (sortRequest.current === controller) { sortRequest.current = null; setLoadingMore(false); }
+    }
   };
   const updateMarket = useCallback((market: MarketUpdate[]) => setLiveLaunches((current) => current.map((launch) => {
     const update = market.find((item) => item.tokenAddress?.toLowerCase() === launch.tokenAddress?.toLowerCase());

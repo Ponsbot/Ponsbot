@@ -84,7 +84,7 @@ export default defineSchema({
     holderFeeSharing: v.optional(v.boolean()), holderFeeDistributor: v.optional(v.string()),
     holderFeeSharingStatus: v.optional(v.union(v.literal("pending"), v.literal("enabled"), v.literal("retrying"), v.literal("failed"))),
     holderFeeSharingAttempts: v.optional(v.number()), holderFeeSharingLastError: v.optional(v.string()), holderFeeSharingNextAttemptAt: v.optional(v.number()),
-    creatorAddress: v.optional(v.string()), pairSymbol: v.optional(v.string()), publicMarketCapUsd: v.optional(v.number()), publicVolume24hUsd: v.optional(v.number()), publicLastBuyAt: v.optional(v.number()), publicGraduated: v.optional(v.boolean()),
+    creatorAddress: v.optional(v.string()), pairSymbol: v.optional(v.string()), publicPublished: v.optional(v.boolean()), publicMarketCapUsd: v.optional(v.number()), publicVolume24hUsd: v.optional(v.number()), publicLastBuyAt: v.optional(v.number()), publicGraduated: v.optional(v.boolean()),
     graduationAnnouncementStatus: v.optional(v.union(v.literal("monitoring"), v.literal("posting"), v.literal("posted"), v.literal("ignored"), v.literal("uncertain"))),
     graduationAnnouncementAttemptedAt: v.optional(v.number()), graduationAnnouncementPostedAt: v.optional(v.number()),
     graduationAnnouncementPostId: v.optional(v.string()), graduationAnnouncementNextAttemptAt: v.optional(v.number()),
@@ -93,8 +93,9 @@ export default defineSchema({
   }).index("by_request_id", ["requestId"]).index("by_owner_created_at", ["ownerXUserId", "createdAt"])
     .index("by_creator_fee_recipient", ["normalizedCreatorFeeRecipient"])
     .index("by_token_address", ["tokenAddress"]).index("by_normalized_token_address", ["normalizedTokenAddress"]).index("by_symbol", ["symbol"])
-    .index("by_created_at", ["createdAt"]).index("by_public_market_cap", ["publicMarketCapUsd"])
-    .index("by_public_volume", ["publicVolume24hUsd"]).index("by_public_last_buy", ["publicLastBuyAt"]),
+    .index("by_created_at", ["createdAt"]).index("by_public_created_at", ["publicPublished", "createdAt"])
+    .index("by_public_market_cap", ["publicPublished", "publicMarketCapUsd"])
+    .index("by_public_volume", ["publicPublished", "publicVolume24hUsd"]).index("by_public_last_buy", ["publicPublished", "publicLastBuyAt"]),
 
   tokenActivity: defineTable({
     tokenAddress: v.string(), normalizedTokenAddress: v.string(), transactionHash: v.string(), logIndex: v.number(),

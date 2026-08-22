@@ -55,6 +55,10 @@ export async function POST(request: Request) {
   const lease = await convex.mutation(api.site.acquireMarketIndexLease, { now, secret, viewerKey, leaseId });
   if (lease.rateLimited) return NextResponse.json({ ok: false, error: "market refresh rate limited" }, { status: 429, headers: { "retry-after": "60" } });
   if (!lease.acquired) return NextResponse.json({ ok: true, indexed: false, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
+  let leaseValid = true;
+  const heartbeat = setInterval(() => {
+    void convex.mutation(api.site.renewMarketIndexLease, { now: Date.now(), secret, leaseId }).then((renewed) => { leaseValid = renewed; }).catch(() => { leaseValid = false; });
+  }, 30_000);
   try {
     const rpc = createPublicClient({ transport: http(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 8_000 }) });
     const [targets, latest, runtimeConfig] = await Promise.all([
@@ -67,7 +71,8 @@ export async function POST(request: Request) {
     const factory = runtimeConfig.factory as Address;
     const marketInfrastructure = { factory, stateView: runtimeConfig.stateView as Address };
     if (!targets.length) {
-      await convex.mutation(api.site.recordMarketIndex, { secret, leaseId, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
+      const recorded = leaseValid && await convex.mutation(api.site.recordMarketIndex, { secret, leaseId, indexedThroughBlock: latest.toString(), marketCaps: [], events: [] });
+      if (!recorded) throw new Error("market index lease was lost before recording");
       return NextResponse.json({ ok: true, indexed: true });
     }
     const needsInitialCursor = targets.some((target) => !target.indexedThroughBlock);
@@ -193,7 +198,7 @@ export async function POST(request: Request) {
     });
     // Only actively viewed tokens receive current market-cap refreshes.
     await Promise.all(prioritized.map(async (target) => marketCaps.set(target.tokenAddress, await tokenMarketCapUsd(target.tokenAddress as Address, undefined, undefined, marketInfrastructure).catch(() => undefined))));
-    await convex.mutation(api.site.recordMarketIndex, {
+    const recorded = leaseValid && await convex.mutation(api.site.recordMarketIndex, {
       secret,
       leaseId,
       indexedThroughBlock: scanTo.toString(),
@@ -204,10 +209,13 @@ export async function POST(request: Request) {
       }),
       events,
     });
+    if (!recorded) throw new Error("market index lease was lost before recording");
     return NextResponse.json({ ok: true, indexed: true, events: events.length, market: await convex.query(api.site.getMarketStates, { tokenAddresses: [...viewed] }) });
   } catch (error) {
     console.error("market_view_index_failed", error instanceof Error ? error.message : "unknown");
     await convex.mutation(api.site.releaseMarketIndexLease, { secret, leaseId }).catch(() => undefined);
     return NextResponse.json({ ok: false }, { status: 502 });
+  } finally {
+    clearInterval(heartbeat);
   }
 }

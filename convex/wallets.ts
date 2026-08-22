@@ -632,12 +632,13 @@ export const recordConfirmedExecution = internalMutation({
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
       if (!launch) await ctx.db.insert("tokenLaunches", {
         requestId: args.requestId, walletId: args.walletId, transactionHash: args.transactionHash,
-        ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase(), graduationAnnouncementStatus: "monitoring" as const } : {}), createdAt: now, updatedAt: now,
+        ...args.launch, ...publicFields, ...(args.launch.tokenAddress ? { normalizedTokenAddress: args.launch.tokenAddress.toLowerCase(), publicPublished: true, graduationAnnouncementStatus: "monitoring" as const } : {}), createdAt: now, updatedAt: now,
       });
       if (launch) await ctx.db.patch(launch._id, {
         ...args.launch, ...publicFields,
         ...(args.launch.tokenAddress ? {
           normalizedTokenAddress: args.launch.tokenAddress.toLowerCase(),
+          publicPublished: true,
           ...(launch.graduationAnnouncementStatus ? {} : { graduationAnnouncementStatus: "monitoring" as const }),
         } : {}), updatedAt: now,
       });

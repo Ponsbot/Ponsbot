@@ -84,6 +84,13 @@ export const ensureInitialized = internalMutation({
       }
       await ctx.db.insert("protocolContracts", { key: "public_launch_view_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
     }
+    const publishedLaunchMigration = await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "public_published_launch_migration_v1")).unique();
+    if (!publishedLaunchMigration) {
+      for (const launch of await ctx.db.query("tokenLaunches").collect()) {
+        if (launch.tokenAddress && launch.publicPublished !== true) await ctx.db.patch(launch._id, { publicPublished: true, updatedAt: now });
+      }
+      await ctx.db.insert("protocolContracts", { key: "public_published_launch_migration_v1", address: "0x0000000000000000000000000000000000000000", normalizedAddress: "0x0000000000000000000000000000000000000000", active: false, updatedAt: now });
+    }
     const previouslyInitialized = Boolean(await ctx.db.query("protocolContracts").withIndex("by_key", (q) => q.eq("key", "pons_v2_factory")).unique());
     for (const [key, address] of Object.entries(BOOTSTRAP_CONTRACTS)) {
       if (!/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error(`${key} contract address is invalid`);

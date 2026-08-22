@@ -44,8 +44,8 @@ function publicLaunch(launch: {
 export const listLaunches = query({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, { limit }) => {
-    const launches = await ctx.db.query("tokenLaunches").order("desc").take(Math.min(Math.max(limit || 24, 1), 100));
-    return launches.filter((launch) => launch.tokenAddress).map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
+    const launches = await ctx.db.query("tokenLaunches").withIndex("by_public_created_at", (q) => q.eq("publicPublished", true)).order("desc").take(Math.min(Math.max(limit || 24, 1), 100));
+    return launches.map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
   },
 });
 
@@ -54,15 +54,15 @@ export const listLaunchesPage = query({
   handler: async (ctx, { paginationOpts, sort }) => {
     const options = { ...paginationOpts, numItems: Math.min(paginationOpts.numItems, 40) };
     const result = sort === "oldest"
-      ? await ctx.db.query("tokenLaunches").withIndex("by_created_at").order("asc").paginate(options)
+      ? await ctx.db.query("tokenLaunches").withIndex("by_public_created_at", (q) => q.eq("publicPublished", true)).order("asc").paginate(options)
       : sort === "mcap"
-        ? await ctx.db.query("tokenLaunches").withIndex("by_public_market_cap").order("desc").paginate(options)
+        ? await ctx.db.query("tokenLaunches").withIndex("by_public_market_cap", (q) => q.eq("publicPublished", true)).order("desc").paginate(options)
         : sort === "volume"
-          ? await ctx.db.query("tokenLaunches").withIndex("by_public_volume").order("desc").paginate(options)
+          ? await ctx.db.query("tokenLaunches").withIndex("by_public_volume", (q) => q.eq("publicPublished", true)).order("desc").paginate(options)
           : sort === "lastBuy"
-            ? await ctx.db.query("tokenLaunches").withIndex("by_public_last_buy").order("desc").paginate(options)
-            : await ctx.db.query("tokenLaunches").withIndex("by_created_at").order("desc").paginate(options);
-    const page = result.page.filter((launch) => launch.tokenAddress).map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
+            ? await ctx.db.query("tokenLaunches").withIndex("by_public_last_buy", (q) => q.eq("publicPublished", true)).order("desc").paginate(options)
+            : await ctx.db.query("tokenLaunches").withIndex("by_public_created_at", (q) => q.eq("publicPublished", true)).order("desc").paginate(options);
+    const page = result.page.map((launch) => publicLaunch(launch, undefined, launch.launcherUsername, launch.pairToken === "0x0000000000000000000000000000000000000000" ? "ETH" : launch.pairSymbol));
     return { ...result, page };
   },
 });
@@ -132,11 +132,22 @@ export const acquireMarketIndexLease = mutation({
       return { acquired: false, indexedThroughBlock: current.indexedThroughBlock };
     }
     if (current) {
-      await ctx.db.patch(current._id, { leaseUntil: now + 310_000, leaseId, lastViewerAt: now, updatedAt: now });
+      await ctx.db.patch(current._id, { leaseUntil: now + 75_000, leaseId, lastViewerAt: now, updatedAt: now });
       return { acquired: true, indexedThroughBlock: current.indexedThroughBlock };
     }
-    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 310_000, leaseId, lastViewerAt: now, updatedAt: now });
+    await ctx.db.insert("marketIndexState", { key: "global", leaseUntil: now + 75_000, leaseId, lastViewerAt: now, updatedAt: now });
     return { acquired: true };
+  },
+});
+
+export const renewMarketIndexLease = mutation({
+  args: { now: v.number(), secret: v.string(), leaseId: v.string() },
+  handler: async (ctx, { now, secret, leaseId }) => {
+    if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
+    const current = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
+    if (!current || current.leaseId !== leaseId || current.leaseUntil <= now) return false;
+    await ctx.db.patch(current._id, { leaseUntil: now + 75_000, updatedAt: now });
+    return true;
   },
 });
 
@@ -158,7 +169,7 @@ export const recordMarketIndex = mutation({
   handler: async (ctx, { secret, leaseId, indexedThroughBlock, marketCaps, events }) => {
     if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market index authorization failed");
     const activeLease = await ctx.db.query("marketIndexState").withIndex("by_key", (q) => q.eq("key", "global")).unique();
-    if (!activeLease || activeLease.leaseId !== leaseId) return false;
+    if (!activeLease || activeLease.leaseId !== leaseId || activeLease.leaseUntil <= Date.now()) return false;
     const now = Date.now();
     for (const event of events) {
       const exists = await ctx.db.query("tokenActivity").withIndex("by_transaction_log", (q) => q.eq("transactionHash", event.transactionHash).eq("logIndex", event.logIndex)).unique();
@@ -285,7 +296,7 @@ export const seedPreview = internalMutation({
       name: "Pons Bot Preview", symbol: "PONSBOT", imageUri: "/ponsbot.png",
       description: "A preview launch showing how every token launched through Pons Bot gets its own page.",
       website: "https://ponsfamily.com", twitter: "https://x.com/Ponsbotfamily", devBuyWei: "20000000000000000",
-      transactionHash: `0x${"1".repeat(64)}`, tokenAddress: PREVIEW_TOKEN, normalizedTokenAddress: PREVIEW_TOKEN.toLowerCase(), devBuySucceeded: true, createdAt: now, updatedAt: now,
+      transactionHash: `0x${"1".repeat(64)}`, tokenAddress: PREVIEW_TOKEN, normalizedTokenAddress: PREVIEW_TOKEN.toLowerCase(), publicPublished: true, devBuySucceeded: true, createdAt: now, updatedAt: now,
       graduationAnnouncementStatus: "ignored",
     }); else if (existingLaunch.twitter !== "https://x.com/Ponsbotfamily") await ctx.db.patch(existingLaunch._id, { twitter: "https://x.com/Ponsbotfamily", updatedAt: now });
     const existingHoldings = await ctx.db.query("walletHoldingSnapshots").withIndex("by_wallet_address", (q) => q.eq("walletAddress", PREVIEW_WALLET)).collect();
