@@ -1,19 +1,14 @@
-import fs from "node:fs";
 import {
   createPublicClient, decodeFunctionData, decodeFunctionResult, encodeAbiParameters, encodeFunctionData,
   http, keccak256, parseAbi, parseEther,
 } from "viem";
 
-const env = Object.fromEntries(fs.readFileSync(".env.local", "utf8").split(/\r?\n/).filter((line) => line && !line.startsWith("#") && line.includes("=")).map((line) => {
-  const separator = line.indexOf("="); return [line.slice(0, separator), line.slice(separator + 1)];
-}));
 // Keep this diagnostic off the production provider; it is intentionally read-only and request-heavy.
 const rpcUrl = process.env.PONS_CHECK_RPC_URL || "https://rpc.mainnet.chain.robinhood.com";
 const client = createPublicClient({ batch: { multicall: true }, transport: http(rpcUrl) });
 const factory = "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e";
 const router = "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948";
 const sourceTransaction = "0x57da1faf4175641232d8b4de594a1999f9f50da819266429752f4de1980f25a7";
-const sourceToken = "0xb3ecf7a16de3d0ec9b538a31efd57375dd563db1";
 const factoryAbi = parseAbi([
   "function getLaunchedToken(address) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists))",
   "function getLaunchConfig(uint256) view returns ((uint256 supply,uint256 curveFeeBps,uint256 phantomQuote,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,bool enabled))",
@@ -29,7 +24,6 @@ const predictorAbi = parseAbi(["function predictLaunchAddresses((address pairTok
 const transaction = await client.getTransaction({ hash: sourceTransaction });
 const decoded = decodeFunctionData({ abi: routerAbi, data: transaction.input });
 const [metadata, launchConfigId, pairToken, quoteIn, , recipient, exemptions] = decoded.args;
-const launch = await client.readContract({ address: factory, abi: factoryAbi, functionName: "getLaunchedToken", args: [sourceToken] });
 const [feeEscrow, buybackVault, deployer, config, expectedEconomics, memeHook] = await Promise.all([
   client.readContract({ address: factory, abi: factoryAbi, functionName: "feeEscrow" }),
   client.readContract({ address: factory, abi: factoryAbi, functionName: "buybackVault" }),

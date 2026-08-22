@@ -375,7 +375,6 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     }
     const labeledQuotedName = text.match(/\b(?:name|full\s+name|token\s+name)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const launchQuotedName = text.match(/\b(?:launch|deploy|create|make)(?:\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin))?(?:\s+(?:called|named))?\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
-    const nameBeforeTicker = text.match(/\b(?:launch|deploy|create|make)\s+(?:(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin)\s+)?(?:(?:called|named)\s+)?(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[A-Za-z0-9]{1,12}\b/i)?.[1];
     const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || extractGroundedLaunchName(text);
     if (exactName) item.name = exactName.trim().replace(/[.,;:]+$/, "");
     const quotedDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
@@ -568,27 +567,6 @@ export function explicitInformationalTopic(text: string): WalletHelpTopic | null
   if (/\b(?:launch|launching|ticker|developer\s+buy|dev\s+buy)\b/i.test(text)) return "launch";
   if (/\bwallet|receiving\s+address|chain\b/i.test(text)) return "wallet";
   return "capabilities";
-}
-
-function legacyRequestedOperations(text: string) {
-  const operationText = withoutQuotedContent(text).replace(/\b(?:developer|dev)\s+buy\b/gi, "developer allocation")
-    .replace(/\blaunch\s+(fees?|revenue|rewards?)\b/gi, "creator $1")
-    .replace(/\bgive\s+me\s+my\s+wallet\s+address\b/gi, "show my wallet address");
-  if (/\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+for\s+\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b/i.test(operationText)) return ["swap_token_for_token" as WalletOperation];
-  if (/\b(?:buy|purchase)\b/i.test(operationText) && /\bburn\b/i.test(operationText)) return /\b(?:send|transfer|give|pay|move|envoie)\b/i.test(operationText)
-    ? ["buy_and_burn" as WalletOperation, "send" as WalletOperation] : ["buy_and_burn" as WalletOperation];
-  if (/\b(?:buy|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b/i.test(operationText)
-    && /\b(?:send|transfer|give|pay|move|envoie)\b/i.test(operationText)) return ["buy_and_send" as WalletOperation];
-  const patterns: Array<[WalletOperation, RegExp]> = [
-    ["create_wallet", /\b(?:create|open|set\s*up|make)\b[\s\S]{0,20}\bwallet\b/i],
-    ["show_wallet", /\b(?:show|view|see|find|give|what(?:'s|\s+is)|where)\b[\s\S]{0,24}\b(?:my\s+)?(?:wallet|deposit\s+address|receiving\s+address)\b/i],
-    ["show_balance", /\b(?:show|check|view|see|what(?:'s|\s+is)|how\s+much)\b[\s\S]{0,28}\b(?:balance|do\s+i\s+have)\b/i],
-    ["send", /\b(?:send|transfer|give)\b/i], ["burn", /\bburn\b/i],
-    ["buy", /\b(?:buy|purchase|grab|gimme|ape|compra|ach[eè]te)\b|\b(?:use|put)\b[\s\S]{0,35}\b(?:to\s+purchase|into)\b/i], ["sell", /\bsell\b/i],
-    ["claim_fees", /\b(?:claim|collect|withdraw)\b[\s\S]{0,28}\b(?:fees?|revenue|rewards?)\b/i], ["launch", /\b(?:launch|deploy|create)\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)|\b(?:launch|deploy)\b/i],
-  ];
-  return patterns.filter(([, pattern]) => pattern.test(operationText)).map(([operation]) => operation)
-    .filter((operation, index, all) => all.indexOf(operation) === index);
 }
 
 export function requestedOperations(text: string): WalletOperation[] {

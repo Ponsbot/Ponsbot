@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 
 const BOOTSTRAP_CONTRACTS = {
-  pons_v2_factory: "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
+  pons_v2_factory: process.env.PONS_V2_FACTORY_ADDRESS || "0x7eD598BcEf8bd9Edd8C97A195C6d13f40801EC7e",
   pons_v2_launch_router: "0xe33E9E479dF8802cb0866d5d05258bEc4cF62948",
   pons_holder_distributor_factory: "0x70e95CC5f03DB2906081E7a8D16e4C4209291507",
   swap_router: "0xcaf681a66d020601342297493863e78c959e5cb2",
@@ -13,7 +13,7 @@ const BOOTSTRAP_CONTRACTS = {
   permit2: process.env.PONS_PERMIT2_ADDRESS || "0x000000000022D473030F116dDEE9F6B43aC78BA3",
   v4_state_view: process.env.PONS_V4_STATE_VIEW_ADDRESS || "0xf3334192d15450cdd385c8b70e03f9a6bd9e673b",
 } as const;
-const ENV_MANAGED_CONTRACTS = new Set(["v4_quoter", "universal_router", "permit2", "v4_state_view"]);
+const ENV_MANAGED_CONTRACTS = new Set(["pons_v2_factory", "v4_quoter", "universal_router", "permit2", "v4_state_view"]);
 
 const BOOTSTRAP_PAIRS = [
   ["0xd0601ce157db5bdc3162bbac2a2c8af5320d9eec", "NVDA", "NVIDIA"],

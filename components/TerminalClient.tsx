@@ -12,6 +12,7 @@ type History = {
   actions: Array<{ requestId: string; kind: string; amount?: string; token?: string; status: string; source: string; transactionHash?: string; safeError?: string; createdAt: number; updatedAt: number }>;
   launches: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
   tokenCatalog: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
+  catalogIncluded: boolean;
 };
 type TerminalData = { authenticated: boolean; username: string; walletAddress: string; holdings: Holding[]; history: History };
 
@@ -36,7 +37,15 @@ export function TerminalClient() {
       const response = await fetch(includeHoldings ? "/api/terminal" : "/api/terminal?scope=history", { cache: "no-store" });
       if (response.ok) {
         const next = await response.json() as TerminalData;
-        setData((current) => ({ ...next, holdings: next.holdings ?? current?.holdings ?? [] }));
+        setData((current) => ({
+          ...next,
+          holdings: next.holdings ?? current?.holdings ?? [],
+          history: {
+            ...next.history,
+            launches: next.history.catalogIncluded ? next.history.launches : current?.history.launches ?? [],
+            tokenCatalog: next.history.catalogIncluded ? next.history.tokenCatalog : current?.history.tokenCatalog ?? [],
+          },
+        }));
       }
     } finally { refreshing.current = false; }
   }, []);

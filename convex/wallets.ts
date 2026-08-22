@@ -1481,14 +1481,14 @@ export const consumeTerminalLimit = internalMutation({
 });
 
 export const listTerminalHistory = internalQuery({
-  args: { ownerXUserId: v.string(), sessionId: v.string() },
+  args: { ownerXUserId: v.string(), sessionId: v.string(), includeCatalog: v.boolean() },
   handler: async (ctx, args) => {
     const [messages, requests, launches, launchCatalog, registryTokens] = await Promise.all([
       ctx.db.query("terminalMessages").withIndex("by_session_created_at", (q) => q.eq("sessionId", args.sessionId)).order("desc").take(40),
       ctx.db.query("walletRequests").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(40),
-      ctx.db.query("tokenLaunches").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(100),
-      ctx.db.query("tokenLaunches").order("desc").take(2_000),
-      ctx.db.query("tokenRegistry").filter((q) => q.eq(q.field("active"), true)).take(250),
+      args.includeCatalog ? ctx.db.query("tokenLaunches").withIndex("by_owner_created_at", (q) => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(100) : Promise.resolve([]),
+      args.includeCatalog ? ctx.db.query("tokenLaunches").withIndex("by_public_created_at", (q) => q.eq("publicPublished", true)).order("desc").take(2_000) : Promise.resolve([]),
+      args.includeCatalog ? ctx.db.query("tokenRegistry").filter((q) => q.eq(q.field("active"), true)).take(250) : Promise.resolve([]),
     ]);
     const catalog = new Map<string, { tokenAddress: string; symbol: string; name: string; pairToken?: string }>();
     for (const item of launchCatalog) if (item.tokenAddress) catalog.set(item.tokenAddress.toLowerCase(), { tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken });
@@ -1498,6 +1498,7 @@ export const listTerminalHistory = internalQuery({
       actions: requests.map((item) => { let command: Record<string, unknown> = {}; try { command = JSON.parse(item.normalizedJson); } catch {} return { requestId: item.requestId, kind: item.kind, amount: typeof command.amount === "string" ? command.amount : undefined, token: typeof command.token === "string" ? command.token : typeof command.fromToken === "string" && typeof command.toToken === "string" ? `${command.fromToken} → ${command.toToken}` : undefined, status: item.status, source: item.source || "x", transactionHash: item.transactionHash, safeError: item.safeError, createdAt: item.createdAt, updatedAt: item.updatedAt }; }),
       launches: launches.flatMap((item) => item.tokenAddress ? [{ tokenAddress: item.tokenAddress, symbol: item.symbol, name: item.name, pairToken: item.pairToken }] : []),
       tokenCatalog: [...catalog.values()],
+      catalogIncluded: args.includeCatalog,
     };
   },
 });
@@ -1507,14 +1508,15 @@ type TerminalHistoryResult = {
   actions: Array<{ requestId: string; kind: string; amount?: string; token?: string; status: string; source: "x" | "terminal"; transactionHash?: string; safeError?: string; createdAt: number; updatedAt: number }>;
   launches: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
   tokenCatalog: Array<{ tokenAddress: string; symbol: string; name: string; pairToken?: string }>;
+  catalogIncluded: boolean;
 };
 
 export const terminalHistory = action({
-  args: { secret: v.string(), ownerXUserId: v.string(), sessionId: v.string() },
+  args: { secret: v.string(), ownerXUserId: v.string(), sessionId: v.string(), includeCatalog: v.optional(v.boolean()) },
   handler: async (ctx, args): Promise<TerminalHistoryResult> => {
     if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("terminal authorization failed");
     if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId)) throw new Error("invalid terminal session");
-    return ctx.runQuery(internal.wallets.listTerminalHistory, { ownerXUserId: args.ownerXUserId, sessionId: args.sessionId });
+    return ctx.runQuery(internal.wallets.listTerminalHistory, { ownerXUserId: args.ownerXUserId, sessionId: args.sessionId, includeCatalog: args.includeCatalog !== false });
   },
 });
 

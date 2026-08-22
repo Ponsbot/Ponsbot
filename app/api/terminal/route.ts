@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
   const client = new ConvexHttpClient(convexUrl);
   const historyOnly = request.nextUrl.searchParams.get("scope") === "history";
   const [history, wallet] = await Promise.all([
-    client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId }),
+    client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId, includeCatalog: !historyOnly }),
     historyOnly ? Promise.resolve(null) : getWalletHoldings(auth.session.walletAddress),
   ]);
   return NextResponse.json({ authenticated: true, username: auth.session.username, walletAddress: auth.session.walletAddress, expiresAt: auth.session.expiresAt, history, ...(wallet ? { holdings: wallet.holdings } : {}) }, { headers: { "cache-control": "no-store" } });

@@ -270,11 +270,6 @@ function parseLaunch(text: string): WalletCommand | null {
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s*\)/)
     || text.match(/\$([a-zA-Z][a-zA-Z0-9]{0,11})\b/)
     || text.match(/\b(?:token|coin)\s+([a-zA-Z][a-zA-Z0-9]{0,11})\s+(?:called|named)\b/i);
-  const quotedName = text.match(/\b(?:called|named|(?:(?:full|token)\s+)?name)\s*(?:is|=|:)?\s*["“]([^"”]{1,48})["”]/i)?.[1]
-    || text.match(/\b(?:launch|create|deploy)\s+(?:a\s+)?(?:token|coin)?\s*["“]([^"”]{1,48})["”]/i)?.[1];
-  const namedName = text.match(/\b(?:called|named|name|call\s+it)\s*(?:is|=|:)?\s*([^,;|/]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*[,;|/]|$)/i)?.[1];
-  const nameBeforeTicker = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s+(.{1,48}?)\s+(?:ticker|symbol)\s*(?:is|=|:)?\s*\$?[a-zA-Z0-9]{1,12}\b/i)?.[1];
-  const launchName = text.match(/\b(?:launch|create|deploy)\s+(?:me\s+)?(?:a\s+)?(?:new\s+)?(?:token|coin)?\s*(?:called|named)?\s*([^,;|/$()]+?)(?=\s+(?:with|ticker|symbol|using|and\b|dev\s*buy|website|site|description|desc)|\s*\$[a-zA-Z]|\s*\(|\s*[,;|/]|$)/i)?.[1];
   const name = extractGroundedLaunchName(text) || "";
   const symbol = cleanSymbol(symbolMatch?.[1] || "");
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
