@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CopyAddress } from "@/components/CopyAddress";
 import { ExternalTokenImage } from "@/components/ExternalTokenImage";
+import { splitTerminalMessage } from "@/lib/terminal-message";
 
 type Session = { authenticated: boolean; username?: string; walletAddress?: string; csrfToken?: string; expiresAt?: number };
 type Holding = { address?: string; name: string; symbol: string; balance: string; iconUrl?: string; usdValue?: number };
@@ -26,7 +27,6 @@ export function TerminalClient() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [chat, setChat] = useState("");
-  const [notice, setNotice] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const refreshing = useRef(false);
 
@@ -61,17 +61,17 @@ export function TerminalClient() {
     const holdingsTimer = window.setInterval(() => void refresh(true), 60_000);
     return () => { window.clearInterval(historyTimer); window.clearInterval(holdingsTimer); };
   }, [refresh, session?.authenticated]);
-  useEffect(() => { const log = logRef.current; if (log) log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); }, [data?.history.messages.length, notice]);
+  useEffect(() => { const log = logRef.current; if (log) log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); }, [data?.history.messages.length]);
 
   const submit = async (payload: { channel: "terminal_chat" | "terminal_form"; text: string; command?: unknown }) => {
     if (!session?.csrfToken || busy) return;
-    setBusy(true); setNotice("");
+    setBusy(true);
     try {
       const response = await fetch("/api/terminal", { method: "POST", headers: { "content-type": "application/json", "x-pons-csrf": session.csrfToken }, body: JSON.stringify({ ...payload, eventId: eventId() }) });
-      const result = await response.json();
+      const result = await response.json().catch(() => ({ error: "The terminal request could not be completed." }));
       if (result.reauthRequired) { window.location.href = "/api/auth/x/start?returnTo=/terminal"; return; }
-      setNotice(result.message || result.error || "Request completed.");
       await refresh(true);
+      if (!response.ok) appendLocalAssistant(result.message || result.error || "The terminal request could not be completed.");
     } finally { setBusy(false); }
   };
   const submitChat = (event: FormEvent) => { event.preventDefault(); const text = chat.trim(); if (!text) return; setChat(""); void submit({ channel: "terminal_chat", text }); };
@@ -85,16 +85,30 @@ export function TerminalClient() {
       <div className="terminal-tools"><DirectActionForms busy={busy} holdings={data?.holdings || []} launches={data?.history.launches || []} tokenCatalog={data?.history.tokenCatalog || []} submit={submit} /></div>
       <div className="terminal-console">
         <div className="terminal-log" ref={logRef} aria-live="polite">
-          {(data?.history.messages || []).map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.createdAt}-${index}`}><small>{message.role === "user" ? `@${session.username}` : "Pons Bot"}</small><p>{message.text}</p></div>)}
+          {(data?.history.messages || []).map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.createdAt}-${index}`}><small>{message.role === "user" ? `@${session.username}` : "Pons Bot"}</small><p><TerminalMessageText text={message.text} /></p></div>)}
           {!data?.history.messages.length ? <div className="terminal-line assistant"><small>Pons Bot</small><p>Pons Bot terminal active. What would you like to do?</p></div> : null}
         </div>
         <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
-        {notice ? <p className="terminal-notice">{notice}</p> : null}
       </div>
     </div>
     <section className="terminal-holdings"><div className="terminal-section-head"><div><p className="eyebrow">Connected wallet</p><h2>Current Holdings</h2></div><CopyAddress address={session.walletAddress!} /></div><div className="terminal-holdings-grid">{(data?.holdings || []).map((holding) => <article key={`${holding.address || "eth"}-${holding.symbol}`}><span className="holding-icon">{holding.iconUrl ? <ExternalTokenImage src={holding.iconUrl} name={holding.name} /> : holding.symbol[0]}</span><div><strong>{holding.name}</strong><small>{holding.symbol}</small></div><p>{holding.balance} {holding.symbol}{holding.usdValue !== undefined ? <small> ({usd(holding.usdValue)})</small> : null}</p></article>)}</div>{data && !data.holdings.length ? <p className="terminal-empty">No holdings found yet.</p> : null}</section>
     <section className="terminal-actions"><div className="terminal-section-head"><div><h2>Recent Actions</h2></div></div><div className="activity-table-wrap"><table className="activity-table"><thead><tr><th>Action</th><th>Amount</th><th>Token</th><th>Source</th><th>Status</th><th>Time</th><th>Txn</th></tr></thead><tbody>{(data?.history.actions || []).map((action) => <tr key={action.requestId}><td>{action.kind.replaceAll("_", " ")}</td><td>{action.amount || "—"}</td><td>{action.token || "—"}</td><td>{action.source === "terminal" ? "Terminal" : "X"}</td><td>{action.status}</td><td>{new Date(action.createdAt).toLocaleString()}</td><td>{action.transactionHash ? <a href={`https://robinhoodchain.blockscout.com/tx/${action.transactionHash}`} target="_blank" rel="noreferrer">View ↗</a> : "—"}</td></tr>)}{data && !data.history.actions.length ? <tr><td colSpan={7}>No actions yet.</td></tr> : null}</tbody></table></div></section>
   </section>;
+
+  function appendLocalAssistant(text: string) {
+    setData((current) => current ? {
+      ...current,
+      history: {
+        ...current.history,
+        messages: [...current.history.messages, { role: "assistant", messageType: "result", text, createdAt: Date.now() }],
+      },
+    } : current);
+  }
+}
+
+export function TerminalMessageText({ text }: { text: string }) {
+  const parts = splitTerminalMessage(text);
+  return <>{parts.map((part, index) => typeof part === "string" ? part : <span key={`${part.url}-${index}`}><a href={part.url} target="_blank" rel="noopener noreferrer">{part.url}</a>{part.suffix}</span>)}</>;
 }
 
 function DirectActionForms({ busy, holdings, launches, tokenCatalog, submit }: { busy: boolean; holdings: Holding[]; launches: History["launches"]; tokenCatalog: History["tokenCatalog"]; submit: (payload: { channel: "terminal_form"; text: string; command: unknown }) => Promise<void> }) {

@@ -1535,11 +1535,21 @@ export const executeTerminalCommand = action({
     const user = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: args.ownerXUserId });
     if (!user) throw new Error("authenticated wallet was not found");
     const allowed = await ctx.runMutation(internal.wallets.consumeTerminalLimit, { ownerXUserId: args.ownerXUserId, channel: args.channel });
-    if (!allowed) return { ok: false, message: "⏳ You’ve reached the terminal request limit. Please wait a few minutes and try again." };
+    if (!allowed) {
+      const message = "⏳ You’ve reached the terminal request limit. Please wait a few minutes and try again.";
+      const attempted = args.text?.trim();
+      if (attempted) await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user", messageType: args.channel === "terminal_chat" ? "chat" : "action", text: attempted });
+      await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+      return { ok: false, message };
+    }
     let command: WalletCommand | null = null;
     let displayText = args.text?.trim() || "";
     if (args.channel === "terminal_chat") {
-      if (!displayText || displayText.length > 500) return { ok: false, message: "Enter a terminal request of 500 characters or fewer." };
+      if (!displayText || displayText.length > 500) {
+        const message = "Enter a terminal request of 500 characters or fewer.";
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+        return { ok: false, message };
+      }
       await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user", messageType: "chat", text: displayText });
       const intent = await parseXWalletIntent(displayText, false);
       if (intent.kind === "help") {
@@ -1558,7 +1568,11 @@ export const executeTerminalCommand = action({
       displayText = displayText || (command && command.kind !== "unknown" ? `${command.kind} request` : "Direct request");
       await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user", messageType: "action", text: displayText });
     }
-    if (!command || command.kind === "unknown") return { ok: false, message: "❌ That terminal request is invalid." };
+    if (!command || command.kind === "unknown") {
+      const message = "❌ That terminal request is invalid.";
+      await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
+      return { ok: false, message };
+    }
     if (!isTerminalCommand(command)) {
       const message = command.kind === "launch" ? "🚀 Launches are available through X posts only." : "❌ That action is not available in the terminal.";
       await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: message });
