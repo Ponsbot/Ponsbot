@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { TerminalClient } from "@/components/TerminalClient";
 
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: { absolute: "Pons Bot" },
   description: "Connect X to check balances, buy, sell, swap, send, burn, and claim creator fees from your Pons Bot wallet.",
