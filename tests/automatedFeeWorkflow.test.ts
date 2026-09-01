@@ -1,0 +1,39 @@
+import { describe, expect, it } from "vitest";
+import {
+  AUTOMATED_FEE_WORKFLOW_CONTINUATION,
+  automatedFeeControllerTransactionMayExist,
+  isAutomatedFeeControllerWorkflowRoot,
+  isAutomatedFeeWorkflowContinuation,
+  isTerminalAutomatedFeeControllerReview,
+} from "../lib/automated-fee-workflow";
+
+describe("automated fee workflow continuation", () => {
+  it("recognizes only the private persisted-workflow continuation signal", () => {
+    expect(isAutomatedFeeWorkflowContinuation(new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION))).toBe(true);
+    expect(isAutomatedFeeWorkflowContinuation(new Error(`Uncaught Error: ${AUTOMATED_FEE_WORKFLOW_CONTINUATION}\n    at handler (../convex/wallets.ts:3740:26)`))).toBe(true);
+    expect(isAutomatedFeeWorkflowContinuation(new Error(`different error: ${AUTOMATED_FEE_WORKFLOW_CONTINUATION}`))).toBe(false);
+    expect(isAutomatedFeeWorkflowContinuation(new Error("confirmation timed out"))).toBe(false);
+    expect(isAutomatedFeeWorkflowContinuation(AUTOMATED_FEE_WORKFLOW_CONTINUATION)).toBe(false);
+  });
+
+  it("distinguishes root controller workflows from colon-delimited child records", () => {
+    const root = { status: "broadcast" as const, ownerXUserId: "123", walletRef: "0x1", vaultAddress: "0x2" };
+    expect(isAutomatedFeeControllerWorkflowRoot(root)).toBe(true);
+    expect(isAutomatedFeeControllerWorkflowRoot({ status: "broadcast", transactionHash: "0xabc" })).toBe(false);
+  });
+
+  it("prevents quota refunds whenever a controller transaction may exist", () => {
+    expect(automatedFeeControllerTransactionMayExist({ status: "prepared", signedTransaction: "0xabc" })).toBe(true);
+    expect(automatedFeeControllerTransactionMayExist({ status: "failed", transactionHash: "0xabc" })).toBe(true);
+    expect(automatedFeeControllerTransactionMayExist({ status: "reserved" })).toBe(false);
+  });
+
+  it("keeps terminal manual-review outcomes out of automatic replay", () => {
+    expect(isTerminalAutomatedFeeControllerReview({
+      status: "manual_review", diagnosticCode: "CONTROLLER_TRANSACTION_DROPPED",
+    })).toBe(true);
+    expect(isTerminalAutomatedFeeControllerReview({
+      status: "manual_review", diagnosticCode: "CONTROLLER_CHANGE_RECONCILIATION_REQUIRED",
+    })).toBe(false);
+  });
+});
