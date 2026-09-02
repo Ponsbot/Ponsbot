@@ -152,14 +152,14 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <button type="button" role="tab" aria-selected={view === "positions"} className={view === "positions" ? "active" : ""} onClick={() => setView("positions")}>My Positions <span>{positions.filter(position => position.status === "active").length}</span></button>
     </div>
 
-    {view === "build" ? <div className="liquidity-build-experience">
-    {!guideMessages.length ? <form className="liquidity-builder liquidity-builder-start" onSubmit={build}>
+    {view === "build" ? <div className="liquidity-build-experience liquidity-build-workspace">
+    <form className="liquidity-builder liquidity-builder-start" onSubmit={build}>
       <div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
       <div className="liquidity-start-fields"><label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
       <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><div className="liquidity-unit-toggle"><button type="button" className={unit === "usd" ? "active" : ""} onClick={() => setUnit("usd")}>USD</button><button type="button" className={unit === "eth" ? "active" : ""} onClick={() => setUnit("eth")}>ETH</button></div></div></label></div>
       <fieldset className="liquidity-pair-picker"><legend>Choose a pool pair</legend><div><button type="button" className={pair === "ETH" ? "active" : ""} onClick={() => setPair("ETH")}><strong>ETH</strong><span>Pair your token with ETH</span></button><button type="button" className={pair === "USDG" ? "active" : ""} onClick={() => setPair("USDG")}><strong>USDG</strong><span>Pair your token with USDG</span></button></div></fieldset>
-      <button className="button button-dark" disabled={busy} type="submit">Analyze Pools</button>
-    </form> : null}
+      <button className="button button-dark" disabled={busy || !token.trim() || !budget.trim()} type="submit">{guideMessages.length ? "Update Analysis" : "Analyze Pools"}</button>
+    </form>
 
     {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
       <div className="liquidity-step-progress"><div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><strong>Position setup</strong></div><span>{busy ? "Working…" : "In progress"}</span></div>
@@ -173,7 +173,11 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
         })}</div> : null}
         <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom answer or question</label><div><input id="liquidity-custom-answer" value={reply} maxLength={500} onChange={event => setReply(event.target.value)} placeholder="Type a value, request a change, or ask what this means…" /><button disabled={busy || !reply.trim()} type="submit">Continue</button></div></form>
       </article>
-    </div> : null}
+    </div> : <aside className="liquidity-build-preview" aria-hidden="true">
+      <div className="liquidity-preview-card"><span>1</span><div><strong>Pool analysis</strong><p>Matching ETH and USDG pool options will appear here.</p></div></div>
+      <div className="liquidity-preview-card"><span>2</span><div><strong>Position settings</strong><p>Choose a pool or customize the range, fee, shape, and bands.</p></div></div>
+      <div className="liquidity-preview-card"><span>3</span><div><strong>Review and confirm</strong><p>Review the completed position quote before any funds move.</p></div></div>
+    </aside>}
     </div> : <div className="liquidity-position-list">
       <div className="terminal-section-head"><div><p className="eyebrow">Your positions</p><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>
