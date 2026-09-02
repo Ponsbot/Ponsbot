@@ -67,6 +67,20 @@ export const terminalPositions = action({
             expectedFrom: context.wallet.address, draft, legs: JSON.parse(position.legsJson),
           }, Math.max(1, Math.min(15_000, deadline - Date.now())));
         } catch { live = undefined; }
+        if (live) {
+          try {
+            await ctx.runMutation(internal.liquidity.cacheTerminalPositionStatus, {
+              ownerXUserId: args.ownerXUserId, positionId: position.publicId,
+              liveStatusJson: JSON.stringify(live), observedAt: Date.now(),
+            });
+          } catch {
+            // A cache write must never hide a fresh signer result from this request.
+          }
+        }
+      }
+      if (position.status === "active" && !live && position.liveStatusJson) {
+        try { live = JSON.parse(position.liveStatusJson) as LiquidityPositionStatus; }
+        catch { live = undefined; }
       }
       const historical = executionClaimedFees(position.publicId, context.executions);
       let persisted: LiquidityClaimedFee[] = [], persistedLast: { items: LiquidityClaimedFee[]; claimedAt: number } | undefined;

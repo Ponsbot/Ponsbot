@@ -22,6 +22,17 @@ import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClai
 
 const source = v.union(v.literal("x"), v.literal("terminal"));
 const requestArgs = { ownerXUserId: v.string(), source, scope: v.string(), requestKey: v.string(), text: v.string(), parentPostId: v.optional(v.string()) };
+
+export const cacheTerminalPositionStatus = internalMutation({
+  args: { ownerXUserId: v.string(), positionId: v.string(), liveStatusJson: v.string(), observedAt: v.number() },
+  handler: async (ctx, args) => {
+    const position = await ctx.db.query("liquidityManagedPositions")
+      .withIndex("by_public_id", q => q.eq("publicId", args.positionId)).unique();
+    if (!position || position.ownerXUserId !== args.ownerXUserId || position.status !== "active") return false;
+    await ctx.db.patch(position._id, { liveStatusJson: args.liveStatusJson, liveStatusAt: args.observedAt });
+    return true;
+  },
+});
 async function latestForScope(ctx: QueryCtx | MutationCtx, scope: string) {
   return ctx.db.query("liquidityConversations").withIndex("by_scope_active", q => q.eq("scope", scope).eq("active", true)).order("desc").first();
 }
@@ -510,7 +521,7 @@ export const handle = internalAction({
                     ownerXUserId: args.ownerXUserId, sessionId,
                   });
                   if (!searchLimit.allowed) throw new Error("LP_TERMINAL_SEARCH_LIMIT");
-                  if (searchLimit.warn) terminalSearchWarning = `⚠️ You’ve used 10 of today’s 15 terminal liquidity pool searches. You have ${searchLimit.remaining} remaining.`;
+                  if (searchLimit.warn) terminalSearchWarning = `⚠️ You’ve used 25 of today’s 30 terminal liquidity pool searches. You have ${searchLimit.remaining} remaining.`;
                 }
                 const discovered = await discoverLiquidityPools(context.tokenAddress as `0x${string}`, d.fields.unit === "usd" ? Number(d.fields.amount) : undefined, undefined, { fresh: true, fields: d.fields });
                 d.symbol = discovered.symbol;
@@ -579,7 +590,7 @@ export const handle = internalAction({
         : code === "LP_NEW_POOL_PRICE_UNVERIFIED" ? "⚠️ I couldn’t independently verify a reliable current price to initialize this new pool. No funds were moved. Reply refresh shortly, or choose an existing pool."
         : code === "LP_REFERENCE_PRICE_DISAGREEMENT" ? "⚠️ Independent price sources disagree too much to safely initialize this pool. No funds were moved. Reply refresh later, or choose an existing pool."
         : code === "LP_NO_CLAIMABLE_FEES" ? "ℹ️ That position does not currently have LP fees worth collecting, so no gas was spent."
-        : code === "LP_TERMINAL_SEARCH_LIMIT" ? "⏳ You’ve reached today’s limit of 15 terminal liquidity pool searches. You can search again tomorrow."
+        : code === "LP_TERMINAL_SEARCH_LIMIT" ? "⏳ You’ve reached today’s limit of 30 terminal liquidity pool searches. You can search again tomorrow."
         : code.includes("LP_INVALID_MCAP_RANGE") ? "⚠️ Enter a positive lower and upper dollar MCap, with the lower value first. No funds were moved. Example: $50k to $150k"
         : code.includes("LP_INSUFFICIENT_GAS") ? liquidityFundingMessage(d, walletAddress, true)
         : /LP_(?:PRECHECK_)?INSUFFICIENT_(?:FUNDS|FUNDING)/.test(code) || code === "INSUFFICIENT_FUNDS" ? liquidityFundingMessage(d, walletAddress)

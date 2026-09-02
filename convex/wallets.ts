@@ -5990,7 +5990,7 @@ export const consumeTerminalLiquiditySearch = internalMutation({
       .withIndex("by_key", q => q.eq("key", key)).unique();
     const sameDay = record?.utcDay === day;
     const used = sameDay ? record!.dailyCount : 0;
-    if (used >= 15) return { allowed: false, remaining: 0, warn: false };
+    if (used >= 30) return { allowed: false, remaining: 0, warn: false };
     const nextCount = used + 1;
     const value = {
       utcDay: day,
@@ -6001,7 +6001,7 @@ export const consumeTerminalLiquiditySearch = internalMutation({
     };
     if (record) await ctx.db.patch(record._id, value);
     else await ctx.db.insert("terminalRateLimits", { key, ...value });
-    return { allowed: true, remaining: 15 - nextCount, warn: nextCount === 10 };
+    return { allowed: true, remaining: 30 - nextCount, warn: nextCount === 25 };
   },
 });
 

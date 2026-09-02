@@ -193,6 +193,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [workflowPhase, setWorkflowPhase] = useState<string>();
   const [builderResetAt, setBuilderResetAt] = useState(0);
   const workflowRefreshSequence = useRef(0);
+  const initialLiveRetryAttempted = useRef(false);
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
 
@@ -201,7 +202,11 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       const response = await fetch("/api/terminal/liquidity", { cache: "no-store" });
       const value = await response.json();
       if (!response.ok) throw new Error(value.error || "Liquidity positions could not be loaded.");
-      setPositions(Array.isArray(value.positions) ? value.positions : []);
+      const incoming = Array.isArray(value.positions) ? value.positions as Position[] : [];
+      setPositions(current => incoming.map(position => ({
+        ...position,
+        live: position.live ?? current.find(previous => previous.id === position.id)?.live ?? null,
+      })));
       setError("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Liquidity positions could not be loaded."); }
     finally { setLoading(false); }
@@ -209,9 +214,16 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
 
   useEffect(() => { void refresh(); }, [refresh]);
   useEffect(() => {
-    const timer = window.setInterval(() => void refresh(), acting ? 5_000 : 60_000);
+    if (!acting) return;
+    const timer = window.setInterval(() => void refresh(), 5_000);
     return () => window.clearInterval(timer);
   }, [acting, refresh]);
+  useEffect(() => {
+    if (loading || initialLiveRetryAttempted.current || !positions.some(position => position.status === "active" && !position.live)) return;
+    initialLiveRetryAttempted.current = true;
+    const timer = window.setTimeout(() => void refresh(), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [loading, positions, refresh]);
 
   const refreshWorkflow = useCallback(async () => {
     const sequence = ++workflowRefreshSequence.current;
