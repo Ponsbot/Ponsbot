@@ -56,6 +56,7 @@ export default defineSchema({
       v.union(v.literal("quoted"), v.literal("replied_to")),
     ),
     nestedReply: v.optional(v.boolean()),
+    botParentAuthorized: v.optional(v.boolean()),
     parentPostId: v.optional(v.string()),
     replyDepth: v.optional(v.number()),
     recipientXUserId: v.optional(v.string()),

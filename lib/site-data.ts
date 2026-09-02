@@ -181,7 +181,11 @@ export async function isPonsbotWallet(address: string) {
   return Boolean(await getPonsbotWallet(address));
 }
 
-export async function getWalletHoldings(address: string, knownWallet?: PublicWalletRecord): Promise<{ holdings: PublicHolding[]; available: boolean; username?: string }> {
+export async function getWalletHoldings(
+  address: string,
+  knownWallet?: PublicWalletRecord,
+  options?: { pricingWaitMs?: number },
+): Promise<{ holdings: PublicHolding[]; available: boolean; username?: string }> {
   if (!isAddress(address)) return { holdings: [], available: false };
   const base = "https://robinhoodchain.blockscout.com/api/v2";
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
@@ -222,9 +226,10 @@ export async function getWalletHoldings(address: string, knownWallet?: PublicWal
   // then render balances without USD estimates rather than making a slow
   // third-party price service hold up the whole page.
   const pricingController = new AbortController();
+  const pricingWaitMs = Math.max(250, Math.min(options?.pricingWaitMs ?? 750, 8_000));
   const displayedHoldings = await Promise.race([
     enrichHoldingDisplay(holdings, pricingController.signal),
-    new Promise<PublicHolding[]>((resolve) => setTimeout(() => resolve(holdings), 750)),
+    new Promise<PublicHolding[]>((resolve) => setTimeout(() => resolve(holdings), pricingWaitMs)),
   ]);
   pricingController.abort();
   return { holdings: displayedHoldings, available, username: walletRecord?.username };

@@ -52,6 +52,7 @@ import {
 import {
   hasExplicitBotMention,
   isPassiveBotChainReply,
+  launchPostAuthorized,
   shouldRestrictChainReply,
 } from "../lib/x-passive-chain-policy";
 import {
@@ -704,6 +705,7 @@ export const reserveInteraction = internalMutation({
       v.union(v.literal("quoted"), v.literal("replied_to")),
     ),
     nestedReply: v.optional(v.boolean()),
+    botParentAuthorized: v.optional(v.boolean()),
     parentPostId: v.optional(v.string()),
     replyDepth: v.optional(v.number()),
     parsedIntentJson: v.optional(v.string()),
@@ -809,7 +811,7 @@ export const guidedHelpContext = internalQuery({
     // Authorization is inherited only through this owner's persisted guided
     // chain. Looking solely at the immediately preceding reply loses the
     // original explicit mention after one or two guided questions.
-    let sourceExplicitMention = /@ponsbotfamily\b/i.test(parent.text);
+    let sourceExplicitMention = parent.botParentAuthorized === true || /@ponsbotfamily\b/i.test(parent.text);
     let ancestor = parent;
     for (let depth = 0; !sourceExplicitMention && depth < 16; depth += 1) {
       if (!ancestor.parentPostId) break;
@@ -817,7 +819,7 @@ export const guidedHelpContext = internalQuery({
         .withIndex("by_response_post_id", q => q.eq("responsePostId", ancestor.parentPostId!))
         .unique();
       if (!prior || prior.authorXUserId !== args.ownerXUserId || prior.updatedAt < Date.now() - GUIDED_HELP_TTL_MS) break;
-      sourceExplicitMention = /@ponsbotfamily\b/i.test(prior.text);
+      sourceExplicitMention = prior.botParentAuthorized === true || /@ponsbotfamily\b/i.test(prior.text);
       ancestor = prior;
     }
     return operation ? {
@@ -851,6 +853,16 @@ export const ownedBotReplyContext = internalQuery({
     const parent = await ctx.db.query("xReplyInteractions")
       .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId!)).unique();
     return Boolean(parent && parent.authorXUserId === args.ownerXUserId);
+  },
+});
+
+export const botReplyContext = internalQuery({
+  args: { parentPostId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.parentPostId) return false;
+    const parent = await ctx.db.query("xReplyInteractions")
+      .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId!)).unique();
+    return Boolean(parent);
   },
 });
 
@@ -2025,7 +2037,7 @@ export const retryInteraction = internalAction({
       if (
         intent.kind === "command" &&
         intent.command.kind === "launch" &&
-        !hasExplicitBotMention(
+        !launchPostAuthorized(
           current.interaction.text,
           current.interaction.referencedPostId &&
             current.interaction.referencedPostType
@@ -2036,9 +2048,10 @@ export const retryInteraction = internalAction({
                 },
               ]
             : undefined,
-          )
-          && !guidedLaunchExecution?.state.explicitMentionAuthorized
-          && !gasResumeAuthorized(current.interaction.guidedHelpStateJson)
+          current.interaction.botParentAuthorized === true,
+        ) &&
+        !guidedLaunchExecution?.state.explicitMentionAuthorized &&
+        !gasResumeAuthorized(current.interaction.guidedHelpStateJson)
       ) {
         // Reject silently. This is a safety boundary, not a prompt for another
         // automated reply inside a conversation that did not invoke the bot.
@@ -2217,7 +2230,7 @@ export const retryInteraction = internalAction({
       const gasResumeStateJson = isInsufficientEthReply(reply) && intent.kind === "command"
         ? JSON.stringify({
             type: "gas_resume", sourceText: workflowText.slice(0, 800),
-            explicitMentionAuthorized: hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
+            explicitMentionAuthorized: current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
           })
         : undefined;
       if (outcomeCommandKind || gasResumeStateJson) await ctx.runMutation(internal.xReplies.updateInteraction, {
@@ -2991,7 +3004,7 @@ export const pollMentions = internalAction({
         async parentPostId => (await ctx.runQuery(internal.xReplies.replyDepthFromParent, { parentPostId })) ?? undefined,
         async ids => {
           const result = await xGet<{ data?: ReferencePost[]; errors?: unknown[] }>("/tweets",
-            new URLSearchParams({ ids: ids.join(","), "tweet.fields": "referenced_tweets" }), 5_000);
+            new URLSearchParams({ ids: ids.join(","), "tweet.fields": "author_id,referenced_tweets" }), 5_000);
           // Deleted/inaccessible parents may be omitted, just as they were in
           // expansions. Do not let one deleted post stall every new mention.
           // Transport/rate-limit failures still throw and retain the poll cursor.
@@ -3001,6 +3014,7 @@ export const pollMentions = internalAction({
       const admitted: Array<{
         mention: Mention; directText: string; restrictedReply: boolean; directedHelp: boolean;
         contextualGasHelp: boolean; parentPostId?: string; replyDepth: number;
+        botParentAuthorized: boolean;
         gasResume?: { parsedIntentJson?: string; mediaUrl?: string; recipientAddress?: string; explicitMentionAuthorized: boolean; resumable: boolean; sourceText?: string };
         workflowCooldownNotice?: boolean;
       }> = [];
@@ -3079,6 +3093,17 @@ export const pollMentions = internalAction({
           ownerXUserId: mention.author_id || "",
           parentPostId,
         });
+        const directBotReply = await ctx.runQuery(internal.xReplies.botReplyContext, {
+          parentPostId,
+        });
+        // A clear launch may be issued as a direct reply to a bot-authored
+        // post. Persist this proof so processing retries and guided follow-ups
+        // do not depend on X returning the parent a second time. A persisted
+        // responsePostId proves a bot reply; author_id covers original bot
+        // posts that were not created by this interaction table.
+        const botParentAuthorized = Boolean(parentPostId && (
+          directBotReply || referencedTweets.get(parentPostId)?.author_id === botUserId
+        ));
         const workflowAdmission = guidedHelpContinuation?.allowed || liquidityContinuation || ownedBotReply
           ? await ctx.runMutation(internal.xReplies.admitWorkflowContinuation, {
               ownerXUserId: mention.author_id || "", postId: mention.id,
@@ -3110,7 +3135,7 @@ export const pollMentions = internalAction({
         if (!workflowCooldownNotice && !await ctx.runMutation(internal.xFloodProtection.admitBeforeProfile, {
           postId: mention.id, authorXUserId: mention.author_id, text: directText, parentPostId,
         })) continue;
-        admitted.push({ mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth });
+        admitted.push({ mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized });
       }
       // No profiles for ignored thread chatter, duplicate posts or flood-limited
       // lookups. Transport failures throw before executable interactions exist,
@@ -3125,7 +3150,7 @@ export const pollMentions = internalAction({
         { id: a.mention.id, text: a.directText, verified: users.get(a.mention.author_id)?.verified === true, operation: straightforwardCommandOperation(directPostCommandText(a.directText)) ?? undefined },
         { id: b.mention.id, text: b.directText, verified: users.get(b.mention.author_id)?.verified === true, operation: straightforwardCommandOperation(directPostCommandText(b.directText)) ?? undefined },
       ));
-      for (const { mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth } of admitted) {
+      for (const { mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized } of admitted) {
         const user = users.get(mention.author_id);
         if (!user || user.id === botUserId) continue;
         // Search indexing can lag badge changes. Fail closed on the freshly
@@ -3147,6 +3172,7 @@ export const pollMentions = internalAction({
             authorVerified: user.verified === true,
             text: directText,
             ...(restrictedReply && !directedHelp ? { nestedReply: true } : {}),
+            ...(botParentAuthorized ? { botParentAuthorized: true } : {}),
             ...(contextualGasHelp ? { parsedIntentJson: JSON.stringify({ kind: "help", topic: "gas" }) } : {}),
             ...(gasResume?.parsedIntentJson ? { parsedIntentJson: gasResume.parsedIntentJson } : {}),
             ...(gasResume?.mediaUrl ? { mediaUrl: gasResume.mediaUrl, mediaSource: "direct" as const } : {}),

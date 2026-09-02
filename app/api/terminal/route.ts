@@ -53,7 +53,9 @@ export async function GET(request: NextRequest) {
   const [historyResult, houdiniResult, walletResult, catalogResult] = await Promise.allSettled([
     holdingsOnly ? Promise.resolve(emptyHistory) : client.action(api.wallets.terminalHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionId: auth.session.sessionId, includeCatalog, includePublicCatalog: false, ...(includeCatalog || !updatedAfter ? {} : { updatedAfter }), ...(includeCatalog || !feesUpdatedAfter ? {} : { feesUpdatedAfter }) }),
     holdingsOnly ? Promise.resolve([]) : client.query(api.site.listHoudiniSwapHistory, { secret: auth.secret, ownerXUserId: auth.session.xUserId, sessionIdHash: createHash("sha256").update(auth.session.sessionId).digest("hex"), ...(includeCatalog || !updatedAfter ? {} : { updatedAfter }) }),
-    includeHoldings ? getWalletHoldings(auth.session.walletAddress) : Promise.resolve(null),
+    // Holdings load independently from chat history, so the terminal can give
+    // token pricing enough time to finish without delaying messages/actions.
+    includeHoldings ? getWalletHoldings(auth.session.walletAddress, undefined, { pricingWaitMs: 5_000 }) : Promise.resolve(null),
     includeCatalog ? readTerminalCatalog(convexUrl) : Promise.resolve([]),
   ]);
   const history = historyResult.status === "fulfilled" ? historyResult.value : {

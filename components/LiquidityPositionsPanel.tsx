@@ -17,6 +17,29 @@ const amount = (value: string) => Number(value).toLocaleString("en-US", { maximu
 const mcap = (value?: number) => value == null ? "—" : value >= 1e9 ? `$${(value / 1e9).toFixed(2)}B` : value >= 1e6 ? `$${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `$${(value / 1e3).toFixed(1)}K` : `$${value.toFixed(0)}`;
 const short = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`;
 
+function parseCompactMoney(value: string) {
+  const match = value.trim().replaceAll(",", "").match(/^\$?([0-9]+(?:\.[0-9]+)?)\s*([kmb])?$/i);
+  if (!match) return undefined;
+  const multiplier = match[2]?.toLowerCase() === "b" ? 1e9 : match[2]?.toLowerCase() === "m" ? 1e6 : match[2]?.toLowerCase() === "k" ? 1e3 : 1;
+  const parsed = Number(match[1]) * multiplier;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function currentMarketCapFromMessages(messages: TerminalMessageRecord[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const match = messages[index].text.match(/Current MCap:\s*(\$?[0-9][0-9,.]*\s*[KMB]?)/i);
+    const parsed = match ? parseCompactMoney(match[1]) : undefined;
+    if (parsed && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function ShapeGraphic({ shape }: { shape: "flat" | "bell" | "bid-ask" }) {
+  return <span className={`liquidity-shape-graphic ${shape}`} aria-hidden="true">
+    {[0, 1, 2, 3, 4].map(index => <i key={index} />)}
+  </span>;
+}
+
 function liquidityQuickReplies(text: string) {
   const replies: Array<{ label: string; value: string; emphasis?: boolean }> = [];
   const add = (label: string, value = label, emphasis = false) => {
@@ -26,6 +49,9 @@ function liquidityQuickReplies(text: string) {
   if (/custom pool/i.test(text)) add("Custom Pool", "custom pool");
   if (/ETH or USDG|pool pair/i.test(text)) { add("ETH", "ETH"); add("USDG", "USDG"); }
   if (/V3 or V4|Uniswap version|pool version/i.test(text)) { add("V3", "V3"); add("V4", "V4"); }
+  if (/swap fee|fee percentage|fee tier/i.test(text)) {
+    add("0.01%", "0.01%"); add("0.05%", "0.05%"); add("0.3%", "0.3%"); add("1%", "1%");
+  }
   if (/shape distribution|flat.+bell.+bid[- ]ask/is.test(text)) { add("Flat", "flat"); add("Bell", "bell"); add("Bid-Ask", "bid ask"); }
   if (/how many bands|number of bands|choose.*bands/i.test(text)) { add("3 Bands", "3 bands"); add("5 Bands", "5 bands"); add("7 Bands", "7 bands"); }
   if (/review your liquidity quote|confirm to proceed/i.test(text)) { add("Confirm", "confirm", true); add("Make Changes", "I want to make changes"); add("Cancel", "cancel"); }
@@ -52,6 +78,15 @@ function LiquidityMessageText({ text }: { text: string }) {
   return <>{splitTerminalMessage(text).map((part, index) => typeof part === "string"
     ? <span key={index}>{part}</span>
     : <span key={index}><a href={part.url} target="_blank" rel="noreferrer">{part.url}</a>{part.suffix}</span>)}</>;
+}
+
+function LiquidityQuoteDetails({ text }: { text: string }) {
+  const sections = text.split(/\n\s*\n/).map(section => section.trim()).filter(Boolean)
+    .filter(section => !/^💧 Review your liquidity quote$/i.test(section));
+  return <div className="liquidity-quote-details">{sections.map((section, index) =>
+    <section key={`${index}-${section.slice(0, 24)}`} className={/reply with changes|confirm to proceed/i.test(section) ? "liquidity-quote-action" : "liquidity-quote-section"}>
+      <LiquidityMessageText text={section} />
+    </section>)}</div>;
 }
 
 function liquidityStepTitle(text: string) {
@@ -99,8 +134,9 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [token, setToken] = useState("");
   const [budget, setBudget] = useState("");
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
-  const [pair, setPair] = useState<"ETH" | "USDG">("ETH");
   const [reply, setReply] = useState("");
+  const [rangeLower, setRangeLower] = useState("");
+  const [rangeUpper, setRangeUpper] = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -124,7 +160,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     const symbol = token.trim();
     const value = budget.trim();
     if (!symbol || !value) return;
-    const text = `create a ${unit === "usd" ? `$${value}` : `${value} ETH`} liquidity position for ${symbol} paired with ${pair}`;
+    const text = `create a ${unit === "usd" ? `$${value}` : `${value} ETH`} liquidity position for ${symbol}`;
     void submit({ channel: "terminal_chat", text });
   };
   const replyToGuide = (event: FormEvent) => {
@@ -133,6 +169,12 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     if (!text) return;
     setReply("");
     void submit({ channel: "terminal_chat", text });
+  };
+  const submitRange = (event: FormEvent) => {
+    event.preventDefault();
+    const lower = rangeLower.trim(), upper = rangeUpper.trim();
+    if (!lower || !upper) return;
+    void submit({ channel: "terminal_chat", text: `${lower} to ${upper}` });
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
     setActing(`${kind}:${position.id}`);
@@ -143,8 +185,23 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const guideMessages = liquidityGuideMessages(messages);
   const latestAssistant = [...guideMessages].reverse().find(message => message.role === "assistant");
   const quickReplies = latestAssistant ? liquidityQuickReplies(latestAssistant.text) : [];
+  const poolChoiceStep = quickReplies.some(item => /^pool\s+\d+$/i.test(item.value));
+  const feeChoiceStep = latestAssistant ? /swap fee|fee percentage|fee tier/i.test(latestAssistant.text) : false;
+  const shapeChoiceStep = latestAssistant ? /shape distribution|flat.+bell.+bid[- ]ask/is.test(latestAssistant.text) : false;
+  const rangeChoiceStep = latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover/i.test(latestAssistant.text) : false;
+  const currentMarketCap = currentMarketCapFromMessages(guideMessages);
+  const sliderMaximum = currentMarketCap ? currentMarketCap * 2 : 0;
+  const sliderLower = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeLower) ?? currentMarketCap * .5)) : 0;
+  const sliderUpper = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeUpper) ?? currentMarketCap * 1.5)) : 0;
+  const quoteChoiceStep = latestAssistant ? /review your liquidity quote|confirm to proceed/i.test(latestAssistant.text) : false;
   const selections = guideMessages.filter(message => message.role === "user").slice(1).slice(-5);
   const choose = (value: string) => void submit({ channel: "terminal_chat", text: value });
+
+  useEffect(() => {
+    if (!rangeChoiceStep || !currentMarketCap) return;
+    setRangeLower(current => current.trim() ? current : String(Math.round(currentMarketCap * .5)));
+    setRangeUpper(current => current.trim() ? current : String(Math.round(currentMarketCap * 1.5)));
+  }, [currentMarketCap, rangeChoiceStep]);
 
   return <section className="liquidity-positions-shell">
     <div className="liquidity-section-tabs" role="tablist" aria-label="Liquidity positions">
@@ -157,21 +214,35 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
       <div className="liquidity-start-fields"><label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
       <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><div className="liquidity-unit-toggle"><button type="button" className={unit === "usd" ? "active" : ""} onClick={() => setUnit("usd")}>USD</button><button type="button" className={unit === "eth" ? "active" : ""} onClick={() => setUnit("eth")}>ETH</button></div></div></label></div>
-      <fieldset className="liquidity-pair-picker"><legend>Choose a pool pair</legend><div><button type="button" className={pair === "ETH" ? "active" : ""} onClick={() => setPair("ETH")}><strong>ETH</strong><span>Pair your token with ETH</span></button><button type="button" className={pair === "USDG" ? "active" : ""} onClick={() => setPair("USDG")}><strong>USDG</strong><span>Pair your token with USDG</span></button></div></fieldset>
       <button className="button button-dark" disabled={busy || !token.trim() || !budget.trim()} type="submit">{guideMessages.length ? "Update Analysis" : "Analyze Pools"}</button>
     </form>
 
     {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
-      <div className="liquidity-step-progress"><div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><strong>Position setup</strong></div><span>{busy ? "Working…" : "In progress"}</span></div>
+      <div className="liquidity-step-progress"><strong>Position setup</strong><span>{busy ? "Working…" : "In progress"}</span></div>
       {selections.length ? <div className="liquidity-selection-trail">{selections.map((message, index) => <span key={`${message.requestId || message.createdAt}-${index}`}>{message.text}</span>)}</div> : null}
       <article className="liquidity-current-step">
         <header><span className="liquidity-step-icon">{busy ? "•••" : "◆"}</span><div><p>Current step</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
-        <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={latestAssistant.text} /> : "Pons Bot is analyzing the available liquidity pools."}</div>
-        {quickReplies.length ? <div className="liquidity-choice-cards">{quickReplies.map(item => {
+        {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={latestAssistant.text} />
+          : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={latestAssistant.text} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
+        {quickReplies.length ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
           const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
-          return <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{description ? <span>{description}</span> : null}<i>Choose →</i></button>;
+          const shape = /bid[- ]ask/i.test(item.label) ? "bid-ask" : /bell/i.test(item.label) ? "bell" : /^flat$/i.test(item.label) ? "flat" : undefined;
+          return <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{shape ? <ShapeGraphic shape={shape} /> : null}{description ? <span>{description}</span> : null}<i>Choose →</i></button>;
         })}</div> : null}
-        <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom answer or question</label><div><input id="liquidity-custom-answer" value={reply} maxLength={500} onChange={event => setReply(event.target.value)} placeholder="Type a value, request a change, or ask what this means…" /><button disabled={busy || !reply.trim()} type="submit">Continue</button></div></form>
+        {rangeChoiceStep ? <form className="liquidity-range-answer" onSubmit={submitRange}>
+          <label>Position MCap range</label>
+          {currentMarketCap ? <div className="liquidity-range-slider">
+            <div className="liquidity-range-current"><span>Current MCap</span><strong>{mcap(currentMarketCap)}</strong></div>
+            <div className="liquidity-dual-range">
+              <div className="liquidity-range-track" />
+              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} />
+              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} />
+            </div>
+            <div className="liquidity-range-scale"><span>$0</span><span>{mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
+            <div className="liquidity-range-selected"><span>Lower <strong>{mcap(Math.min(sliderLower, sliderUpper))}</strong></span><span>Upper <strong>{mcap(Math.max(sliderLower, sliderUpper))}</strong></span></div>
+          </div> : null}
+          <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value)} placeholder="100k or 100,000" /></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value)} placeholder="250k or 250,000" /></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
+        </form> : <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">{feeChoiceStep ? "Custom swap fee" : "Custom answer or question"}</label><div><input id="liquidity-custom-answer" value={reply} maxLength={500} inputMode={feeChoiceStep ? "decimal" : undefined} onChange={event => setReply(event.target.value)} placeholder={feeChoiceStep ? "Enter a custom percentage, such as 0.25%" : "Type a value, request a change, or ask what this means…"} /><button disabled={busy || !reply.trim()} type="submit">{feeChoiceStep ? "Apply" : "Continue"}</button></div></form>}
       </article>
     </div> : <aside className="liquidity-build-preview" aria-hidden="true">
       <div className="liquidity-preview-card"><span>1</span><div><strong>Pool analysis</strong><p>Matching ETH and USDG pool options will appear here.</p></div></div>
@@ -187,8 +258,10 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div className="liquidity-position-cards">{visible.map(position => {
         const range = position.live?.marketCapRangeUsd ?? (position.lowerMarketCapUsd && position.upperMarketCapUsd ? { lower: position.lowerMarketCapUsd, upper: position.upperMarketCapUsd } : null);
         const liveFees = position.live?.assets.filter(asset => asset.unclaimed !== null) ?? [];
+        const valuedAssets = position.live?.assets.filter(asset => asset.usd !== null && Number.isFinite(asset.usd)) ?? [];
+        const positionUsd = valuedAssets.length ? valuedAssets.reduce((total, asset) => total + asset.usd!, 0) : null;
         return <article key={position.id} className="liquidity-position-card">
-          <header><div><strong>{position.id}</strong><h3>${position.symbol}</h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
+          <header><div><strong>{position.id}</strong><h3><span>${position.symbol}</span><em>{money(positionUsd)}</em></h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
           <dl>
             <div><dt>Position value</dt><dd>{position.live?.assets.map(asset => `${amount(asset.amount)} ${asset.symbol} (${money(asset.usd)})`).join(" + ") || "Live value unavailable"}</dd></div>
             <div><dt>Unclaimed LP fees</dt><dd>{liveFees.length ? liveFees.map(asset => `${amount(asset.unclaimed!)} ${asset.symbol} (${money(asset.unclaimedUsd)})`).join(" + ") : position.status === "closed" ? "—" : "None currently"}</dd></div>

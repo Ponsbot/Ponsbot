@@ -3,9 +3,9 @@ export function restrictedXIntakeEnabled() {
 }
 
 export function excludedXReadCountries() {
-  // Keep this explicit and code-owned so stale deployment environment values
-  // cannot silently broaden the geographic restriction.
-  return ["ID"];
+  // Country-level intake restrictions are currently disabled. Keep this
+  // code-owned so stale deployment environment values cannot restore them.
+  return [];
 }
 
 export function walletBalanceReadsExcluded() {

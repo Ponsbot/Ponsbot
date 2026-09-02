@@ -1,4 +1,8 @@
-export type ReferencePost = { id: string; referenced_tweets?: Array<{ id: string; type: "replied_to" | "quoted" | "retweeted" }> };
+export type ReferencePost = {
+  id: string;
+  author_id?: string;
+  referenced_tweets?: Array<{ id: string; type: "replied_to" | "quoted" | "retweeted" }>;
+};
 
 // No parent text or media is needed for thread protection. Reuse this poll's
 // posts and persisted depths before making one batched, bounded X lookup.
@@ -16,7 +20,11 @@ export async function loadReplyMetadata(
   for (let i = 0; i < missing.length; i += 100) {
     const requested = new Set(missing.slice(i, i + 100));
     for (const post of await fetchParents([...requested])) if (requested.has(post.id))
-      references.set(post.id, { id: post.id, referenced_tweets: post.referenced_tweets });
+      references.set(post.id, {
+        id: post.id,
+        author_id: post.author_id,
+        referenced_tweets: post.referenced_tweets,
+      });
   }
   return { references, depths };
 }

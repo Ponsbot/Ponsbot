@@ -20,6 +20,12 @@ it("deduplicates and batches unknown immediate parents without requesting their 
  expect(isReplyToReply(posts[0],result.references)).toBe(true);
  expect(includedReplyDepth(posts[0],result.references)).toBe(2);
 });
+it("retains fetched parent authors for bot-parent authorization",async()=>{
+ const result=await loadReplyMetadata([reply("1","bot-post")],new Set(["1"]),async()=>undefined,async()=>[
+  {id:"bot-post",author_id:"12345"},
+ ]);
+ expect(result.references.get("bot-post")?.author_id).toBe("12345");
+});
 it("propagates temporary lookup failures so polling does not advance its cursor",async()=>{
  await expect(loadReplyMetadata([reply("1","p")],new Set(["1"]),async()=>undefined,async()=>{throw Error("429")})).rejects.toThrow("429");
 });

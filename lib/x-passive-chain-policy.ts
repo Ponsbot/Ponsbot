@@ -34,6 +34,21 @@ export function hasExplicitBotMention(text: string, references: XReference[] | u
 }
 
 /**
+ * Launch authorization is satisfied by a direct invocation in the current
+ * post or by the platform-verifiable fact that its direct parent is the bot.
+ * Intent parsing must still classify the current post as a launch before this
+ * authorization is consulted.
+ */
+export function launchPostAuthorized(
+  text: string,
+  references: XReference[] | undefined,
+  botParentAuthorized: boolean,
+  botUsername = "Ponsbotfamily",
+) {
+  return botParentAuthorized || hasExplicitBotMention(text, references, botUsername);
+}
+
+/**
  * Applies transaction/wallet-only reply handling to every deeper reply and to
  * any first-level reply where the bot is merely inherited from the thread.
  */

@@ -28,7 +28,7 @@ type History = {
 };
 type TerminalData = { authenticated: boolean; username: string; walletAddress: string; holdings: Holding[]; history: History; houdiniPreviewEnabled?: boolean };
 
-function eventId() { return `${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "")}`; }
+function eventId(prefix = "") { return `${prefix}${Date.now().toString(36)}_${crypto.randomUUID().replaceAll("-", "")}`; }
 function usd(value: number) { return value > 0 && value < .01 ? "<$0.01" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
 function shortContract(address?: string) { return address ? `${address.slice(0, 4)}…${address.slice(-3)}` : ""; }
 function houdiniOrderUrl(orderId: string) { return `https://app.houdiniswap.com/order-details?houdiniId=${encodeURIComponent(orderId)}`; }
@@ -208,14 +208,18 @@ export function TerminalClient() {
     return () => { stopped = true; window.clearInterval(timer); };
   }, [activeHoudiniReviewIds, refresh, session?.authenticated, session?.csrfToken, workspace]);
 
-  const submit = async (payload: { channel: "terminal_chat" | "terminal_form"; text: string; command?: unknown }) => {
+  const submit = async (payload: { channel: "terminal_chat" | "terminal_form"; text: string; command?: unknown }, displayContext?: "liquidity_builder") => {
     // React state updates are not synchronous, so a fast double click or Enter
     // press can reach this function twice before `busy` is rendered. Keep an
     // immediate ref guard as well so one user gesture creates one event ID and
     // one wallet request.
     if (!session?.csrfToken || submitInFlight.current) return;
     submitInFlight.current = true;
-    const requestEventId = eventId();
+    // Builder-step traffic remains in the shared history because the visual
+    // liquidity workflow needs it to advance. Prefixing its request identity
+    // lets the regular terminal console omit those duplicated prompts and
+    // selections without affecting persistence, parsing, or execution.
+    const requestEventId = eventId(displayContext === "liquidity_builder" ? "liquidity-builder_" : "");
     if (payload.channel === "terminal_chat") appendLocalUser(payload.text, requestEventId);
     setBusy(true);
     try {
@@ -238,6 +242,10 @@ export function TerminalClient() {
   if (loading) return <section className="terminal-shell"><div className="terminal-gate"><p>Connecting to your terminal…</p></div></section>;
   if (!session?.authenticated) return <section className="terminal-shell terminal-signed-out"><div className="terminal-connect-modal" role="dialog" aria-modal="true"><h2>Connect to X to use the terminal.</h2><a className="button button-dark" href="/api/auth/x/start?returnTo=/terminal">Connect X</a></div></section>;
 
+  const terminalDisplayMessages = (data?.history.messages || []).filter(
+    (message) => !message.requestId?.startsWith("liquidity-builder_"),
+  );
+
   return <section className="terminal-shell">
     <header className="terminal-heading">
       <p className="eyebrow">Pons Bot Terminal</p>
@@ -251,13 +259,13 @@ export function TerminalClient() {
       <div className="terminal-tools"><DirectActionForms busy={busy} holdings={data?.holdings || []} launches={data?.history.launches || []} tokenCatalog={data?.history.tokenCatalog || []} submit={submit} /></div>
       <div className="terminal-console">
         <div className="terminal-log" ref={logRef} aria-live="polite">
-          {(data?.history.messages || []).map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.createdAt}-${index}`}><small>{message.role === "user" ? `@${session.username}` : "Pons Bot"}</small><p><TerminalMessageText text={message.text} /></p></div>)}
-          {!data?.history.messages.length ? <div className="terminal-line assistant"><small>Pons Bot</small><p>Pons Bot terminal active. What would you like to do?</p></div> : null}
+          {terminalDisplayMessages.map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.createdAt}-${index}`}><small>{message.role === "user" ? `@${session.username}` : "Pons Bot"}</small><p><TerminalMessageText text={message.text} /></p></div>)}
+          {!terminalDisplayMessages.length ? <div className="terminal-line assistant"><small>Pons Bot</small><p>Pons Bot terminal active. What would you like to do?</p></div> : null}
         </div>
         <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, manage liquidity, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
       </div>
     </div> : workspace === "houdini" ? <HoudiniSwapPanel enabled={Boolean(session.houdiniPreviewEnabled)} csrfToken={session.csrfToken || ""} />
-      : <LiquidityPositionsPanel busy={busy} submit={submit} messages={data?.history.messages || []} username={session.username || "you"} />}
+      : <LiquidityPositionsPanel busy={busy} submit={(payload) => submit(payload, "liquidity_builder")} messages={data?.history.messages || []} username={session.username || "you"} />}
     <section className="terminal-holdings"><div className="terminal-section-head"><div><p className="eyebrow">Connected wallet</p><h2>Current Holdings</h2></div><CopyAddress address={session.walletAddress!} /></div><div className="terminal-holdings-grid">{(data?.holdings || []).map((holding) => {
       const tokenHref = holding.address && holding.isPonsbotLaunch ? `/launch/${holding.address}` : undefined;
       const icon = <span className="holding-icon">{holding.iconUrl ? <ExternalTokenImage src={holding.iconUrl} name={holding.name} /> : holding.symbol[0]}</span>;

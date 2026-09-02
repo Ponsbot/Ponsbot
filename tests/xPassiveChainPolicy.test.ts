@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { includedReplyDepth, isReplyToReply, shouldHandleDirectedChainHelp, shouldHandlePassiveChainText } from "../convex/xReplies";
-import { hasExplicitBotMention, isPassiveBotChainReply, shouldRestrictChainReply } from "../lib/x-passive-chain-policy";
+import { hasExplicitBotMention, isPassiveBotChainReply, launchPostAuthorized, shouldRestrictChainReply } from "../lib/x-passive-chain-policy";
 
 const reply = [{ type: "replied_to" as const, id: "123" }];
 
@@ -52,6 +52,13 @@ describe("passive X chain filtering", () => {
     expect(hasExplicitBotMention("@alice @Ponsbotfamily launch North Star ticker NSTAR", reply)).toBe(false);
     expect(hasExplicitBotMention("@alice @Ponsbotfamily launch North Star ticker NSTAR @Ponsbotfamily", reply)).toBe(true);
     expect(hasExplicitBotMention("@Ponsbotfamily launch North Star ticker NSTAR", reply)).toBe(true);
+  });
+
+  it("authorizes a launch when the direct parent is a verified bot post", () => {
+    expect(launchPostAuthorized("launch North Star ticker NSTAR", reply, true)).toBe(true);
+    expect(launchPostAuthorized("@alice @Ponsbotfamily launch North Star ticker NSTAR", reply, true)).toBe(true);
+    expect(launchPostAuthorized("launch North Star ticker NSTAR", reply, false)).toBe(false);
+    expect(launchPostAuthorized("@alice @Ponsbotfamily launch North Star ticker NSTAR", reply, false)).toBe(false);
   });
 
   it("applies deep-reply intent restrictions to every reply without a direct bot tag", () => {
