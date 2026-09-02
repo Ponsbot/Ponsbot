@@ -14,7 +14,7 @@ describe("wallet failure messages", () => {
 
   it("maps the signer's pre-sign maximum-cost check to the launch gas response", () => {
     expect(safeFailure(new Error("transaction total cost (gas * gas fee + value) exceeds the balance"), "launch"))
-      .toBe("⛽ You'll need to fund your wallet with ETH for gas to launch. Fund it, then reply “resume”.");
+      .toBe("⛽ You'll need to fund your wallet with ~0.0015 ETH for gas and the Pons launch fee. Fund it, then reply “resume”.");
   });
 
   it("explains when an earlier wallet operation still holds the execution lease", () => {

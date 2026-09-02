@@ -79,7 +79,7 @@ describe("zero native ETH gate", () => {
   it("preserves the no-gas response across Convex errors", () => {
     const error = new EmptyNativeGasBalanceError();
     expect(isEmptyNativeGasBalanceError(new Error(`Server Error: ${error.message}`))).toBe(true);
-    expect(safeFailure(error, "launch")).toContain("fund your wallet with ETH for gas to launch");
+    expect(safeFailure(error, "launch")).toContain("fund your wallet with ~0.0015 ETH for gas and the Pons launch fee");
     expect(safeFailure(error, "buy")).toContain("fund your wallet with ETH for gas to buy");
     expect(safeFailure(error, "buy")).toContain("reply “resume”");
   });
@@ -93,7 +93,9 @@ describe("zero native ETH gate", () => {
     const f = fixture();
     const result = await handler(executeCommand)(f.ctx, args(text));
     expect(result).toMatchObject({ ok: false });
-    expect(result.message).toContain("fund your wallet with ETH for gas to");
+    expect(result.message).toContain(text.startsWith("launch ")
+      ? "fund your wallet with ~0.0015 ETH for gas and the Pons launch fee"
+      : "fund your wallet with ETH for gas to");
     expect(result.message).toContain("reply “resume”");
     expect(result.message).toContain(`https://www.ponsbot.family/wallet/${address}`);
     expect(f.calls.map(c => c.name)).toEqual(["wallets:getXUserAndWallet", "wallets:reserveWalletRequest", "wallets:updateWalletRequest"]);

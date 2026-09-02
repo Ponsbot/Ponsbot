@@ -451,7 +451,7 @@ async function addClaimUsdValue(display: string) {
 }
 
 function fundingMessage(message: string, walletAddress: string, requestId?: string) {
-  return /(?:enough ETH|needs a little more ETH|Add ETH for gas|fund your wallet with ETH for gas)/i.test(message)
+  return /(?:enough ETH|needs a little more ETH|Add ETH for gas|fund your wallet with (?:~?[\d.]+\s+)?ETH for gas)/i.test(message)
     ? `${message}\nYour wallet: ${walletPageUrl(walletAddress, requestId)}`
     : message;
 }
@@ -3114,7 +3114,9 @@ export function safeFailure(
                 : operationKind === "reassign_fees" ? "reassign creator fees"
                   : operationKind === "upgrade_fees" ? "upgrade creator fees"
                     : "complete this transaction";
-  const gasResume = `⛽ You'll need to fund your wallet with ETH for gas to ${gasAction}. Fund it, then reply “resume”.`;
+  const gasResume = operationKind === "launch"
+    ? "⛽ You'll need to fund your wallet with ~0.0015 ETH for gas and the Pons launch fee. Fund it, then reply “resume”."
+    : `⛽ You'll need to fund your wallet with ETH for gas to ${gasAction}. Fund it, then reply “resume”.`;
   if (/ETH transfer amount plus gas exceeds/i.test(message)) return gasResume;
   if (
     /total cost .*exceeds the balance|gas \* gas fee \+ value.*exceeds the balance/i.test(
@@ -3990,8 +3992,8 @@ export const executeCommand = internalAction({
                 }
                 return { ok: true, message: "", pending: true, deferred: true };
               }
-              const lines = completed.map(item => `$${item.symbol}: ${significantAmount(item.amount)}${item.usdValue ? ` (${item.usdValue})` : ""}`);
-              const message = `⚠️ ${completed.length} of 5 top-token ${command.burn ? "buy-and-burns" : "buys"} completed before $${target.symbol} failed.\n${lines.join("\n")}${lines.length ? "\n" : ""}${safeFailure(error, "buy_top_five")}`;
+              const lines = completed.map(item => `${item.symbol}: ${significantAmount(item.amount)}${item.usdValue ? ` (${item.usdValue})` : ""}`);
+              const message = `⚠️ ${completed.length} of 5 top-token ${command.burn ? "buy-and-burns" : "buys"} completed before ${target.symbol} failed.\n${lines.join("\n")}${lines.length ? "\n" : ""}${safeFailure(error, "buy_top_five")}`;
               await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "failed", workflowStage,
                 safeError: message, finalMessage: message, transactionHash: completed.at(-1)?.transactionHash,
                 diagnosticCode: privateDiagnosticCode(error), diagnosticDetail: sanitizedDiagnosticDetail(error) });
@@ -3999,11 +4001,11 @@ export const executeCommand = internalAction({
             }
           }
           const resultBlocks = completed.map(item => [
-            `${command.burn ? "🔥" : "🟢"} $${item.symbol}: ${significantAmount(item.amount)} ${command.burn ? "burned" : "bought"}${item.usdValue ? ` (${item.usdValue})` : ""}`,
+            `${command.burn ? "🔥" : "🟢"} ${item.symbol}: ${significantAmount(item.amount)} ${command.burn ? "burned" : "bought"}${item.usdValue ? ` (${item.usdValue})` : ""}`,
             ponsBotTokenUrl(item.tokenAddress),
           ].join("\n")).join("\n\n");
           const transactionLinks = completed.map(item => [
-            `$${item.symbol}`,
+            item.symbol,
             `Buy TXN: ${transactionUrl(item.buyTransactionHash)}`,
             ...(item.burnTransactionHash ? [`Burn TXN: ${transactionUrl(item.burnTransactionHash)}`] : []),
           ].join("\n")).join("\n\n");
@@ -5890,7 +5892,7 @@ export const terminalGasResumeContext = internalQuery({
     if (!latest || latest.ownerXUserId !== args.ownerXUserId || latest.role !== "assistant"
       || latest.createdAt < Date.now() - GUIDED_HELP_TTL_MS
       || latest.resumeConsumedByRequestId
-      || !/fund your wallet with ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(latest.text)) return null;
+      || !/fund your wallet with (?:~?[\d.]+\s+)?ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(latest.text)) return null;
     const sourceIndex = recent.slice(1).findIndex(message => message.role === "user" && !isResumeReply(message.text)) + 1;
     if (sourceIndex <= 0) return null;
     const source = recent[sourceIndex];
@@ -5910,7 +5912,7 @@ export const claimTerminalGasResume = internalMutation({
     const prompt = await ctx.db.get(args.promptMessageId);
     if (!prompt || prompt.sessionId !== args.sessionId || prompt.ownerXUserId !== args.ownerXUserId
       || prompt.role !== "assistant" || prompt.createdAt < Date.now() - GUIDED_HELP_TTL_MS
-      || !/fund your wallet with ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(prompt.text)) return false;
+      || !/fund your wallet with (?:~?[\d.]+\s+)?ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(prompt.text)) return false;
     if (prompt.resumeConsumedByRequestId) return prompt.resumeConsumedByRequestId === args.requestId;
     await ctx.db.patch(prompt._id, { resumeConsumedByRequestId: args.requestId });
     return true;
