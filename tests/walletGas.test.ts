@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { bufferedActualCost, estimateActualFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "../lib/wallet-signer/gas";
+import { bufferedActualCost, estimateActualFees, estimateResilientAutomationFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "../lib/wallet-signer/gas";
 
 describe("wallet gas envelope", () => {
   it("splits one 10% budget between gas units and gas price without stacking", () => {
@@ -74,6 +74,14 @@ describe("wallet gas envelope", () => {
     };
     expect(await estimateActualFees(client)).toEqual({ maxFeePerGas: 103n, maxPriorityFeePerGas: 3n });
     expect(client.estimateFeesPerGas).not.toHaveBeenCalled();
+  });
+
+  it("gives delayed automated transactions a two-block base-fee cushion", async () => {
+    const client = {
+      getBlock: vi.fn().mockResolvedValue({ baseFeePerGas: 100n }),
+      estimateMaxPriorityFeePerGas: vi.fn().mockResolvedValue(3n),
+    };
+    expect(await estimateResilientAutomationFees(client)).toEqual({ maxFeePerGas: 203n, maxPriorityFeePerGas: 3n });
   });
 
   it("fails closed when current fee data is missing or invalid", async () => {

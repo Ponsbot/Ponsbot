@@ -22,6 +22,23 @@ export function geckoLiquidityMarketCap(marketCap: unknown, fdv: unknown) {
   return Number.isFinite(fallback) && fallback > 0 ? fallback : undefined;
 }
 
+// Liquidity ranges use total-supply valuation. Gecko's reported FDV can lag
+// or disagree with its own live token price and normalized total supply, so
+// calculate the value from those two fields when they are available.
+export function geckoLiquidityTotalSupplyMarketCap(
+  priceUsd: unknown,
+  normalizedTotalSupply: unknown,
+  marketCap: unknown,
+  fdv: unknown,
+) {
+  const price = Number(priceUsd);
+  const supply = Number(normalizedTotalSupply);
+  const calculated = price * supply;
+  if (Number.isFinite(price) && price > 0 && Number.isFinite(supply) && supply > 0
+    && Number.isFinite(calculated) && calculated > 0) return calculated;
+  return geckoLiquidityMarketCap(marketCap, fdv);
+}
+
 export function freshMarketCap(value: number | undefined, updatedAt: number | undefined, now: number) {
   return value !== undefined && Number.isFinite(value) && value >= 0
     && updatedAt !== undefined && now - updatedAt < CURRENT_MARKET_CAP_TTL_MS;

@@ -9,7 +9,7 @@ import type { LiquidityQuotePlan } from "../lib/liquidity-quote";
 import type { LiquidityPositionStatus } from "../lib/liquidity-status";
 import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 import { geckoSharedFetch } from "../lib/gecko-shared";
-import { geckoLiquidityMarketCap } from "../lib/market-index-policy";
+import { geckoLiquidityTotalSupplyMarketCap } from "../lib/market-index-policy";
 
 type SignedStep = { received?: string[] };
 type TerminalPositionResult = {
@@ -115,13 +115,19 @@ export const terminalWorkflowState = action({
       const startedAt = Date.now();
       try {
         const response = await geckoSharedFetch(
-          `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${draft.tokenAddress}/pools?page=1`,
+          `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${draft.tokenAddress}`,
           60_000, 8_000, true, false, startedAt, "interactive",
         );
         if (response.ok) {
-          const payload = await response.json() as { data?: Array<{ attributes?: { market_cap_usd?: string | null; fdv_usd?: string | null } }> };
-          const live = (payload.data ?? []).map(pool => geckoLiquidityMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd))
-            .find(value => value !== undefined && Number.isFinite(value) && value > 0);
+          const payload = await response.json() as { data?: { attributes?: {
+            price_usd?: string | null; normalized_total_supply?: string | null;
+            market_cap_usd?: string | null; fdv_usd?: string | null;
+          } } };
+          const attributes = payload.data?.attributes;
+          const live = geckoLiquidityTotalSupplyMarketCap(
+            attributes?.price_usd, attributes?.normalized_total_supply,
+            attributes?.market_cap_usd, attributes?.fdv_usd,
+          );
           if (live !== undefined) currentMarketCapUsd = live;
         }
       } catch { /* Retain the workflow's last validated MCap if Gecko is unavailable. */ }

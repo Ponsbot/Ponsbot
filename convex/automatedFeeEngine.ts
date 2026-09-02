@@ -29,6 +29,8 @@ import {
 } from "../lib/automated-fee-policy";
 import {
   AUTOMATED_FEE_WORKFLOW_CONTINUATION,
+  automatedFeeFailureRequiresManualReview,
+  automatedFeeRejectedPreBroadcastStage,
   automatedFeeControllerTransactionMayExist,
   isAutomatedFeeControllerWorkflowRoot,
   isAutomatedFeeWorkflowContinuation,
@@ -1664,6 +1666,85 @@ export const recordRunStageBroadcast = internalMutation({
   },
 });
 
+export const clearRejectedPreBroadcastStage = internalMutation({
+  args: {
+    runId: v.id("automatedFeeRuns"),
+    leaseId: v.string(),
+    stage: v.union(v.literal("sweep"), v.literal("processing"), v.literal("delivery")),
+  },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.leaseId !== args.leaseId || (run.leaseUntil ?? 0) < Date.now()) {
+      throw new Error("automated fee run lease is unavailable");
+    }
+    const hash = args.stage === "sweep" ? run.sweepTransactionHash
+      : args.stage === "processing" ? run.processingTransactionHash : run.deliveryTransactionHash;
+    const broadcastAt = args.stage === "sweep" ? run.sweepBroadcastAt
+      : args.stage === "processing" ? run.processingBroadcastAt : run.deliveryBroadcastAt;
+    const blockNumber = args.stage === "sweep" ? run.sweepBlockNumber
+      : args.stage === "processing" ? run.processingBlockNumber : run.deliveryBlockNumber;
+    if (!hash || broadcastAt !== undefined || blockNumber !== undefined) {
+      throw new Error("automated fee rejected envelope is not safe to replace");
+    }
+    const stagePatch = args.stage === "sweep" ? {
+      sweepTransactionHash: undefined, sweepSignedTransaction: undefined, sweepTransactionNonce: undefined,
+      sweepPreparedAt: undefined,
+    } : args.stage === "processing" ? {
+      transactionHash: undefined, processingTransactionHash: undefined, processingSignedTransaction: undefined,
+      processingTransactionNonce: undefined, processingPreparedAt: undefined,
+    } : {
+      deliveryTransactionHash: undefined, deliverySignedTransaction: undefined, deliveryTransactionNonce: undefined,
+      deliveryPreparedAt: undefined,
+    };
+    await ctx.db.patch(run._id, { ...stagePatch, workflowStage: `${args.stage}_reprepare_required`, updatedAt: Date.now() });
+    return true;
+  },
+});
+
+// Operator-only recovery for an old deterministic pre-broadcast rejection.
+// The exact persisted hash prevents accidentally resetting a different run.
+export const recoverRejectedPreBroadcastRun = internalMutation({
+  args: { runId: v.id("automatedFeeRuns"), expectedTransactionHash: v.string() },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    if (!run || run.status !== "manual_review") throw new Error("automated fee run is not in manual review");
+    const stage = automatedFeeRejectedPreBroadcastStage(run.diagnosticDetail ?? "");
+    if (!stage) throw new Error("automated fee run was not stopped by a replaceable pre-broadcast fee rejection");
+    const hash = stage === "sweep" ? run.sweepTransactionHash
+      : stage === "processing" ? run.processingTransactionHash : run.deliveryTransactionHash;
+    const broadcastAt = stage === "sweep" ? run.sweepBroadcastAt
+      : stage === "processing" ? run.processingBroadcastAt : run.deliveryBroadcastAt;
+    const blockNumber = stage === "sweep" ? run.sweepBlockNumber
+      : stage === "processing" ? run.processingBlockNumber : run.deliveryBlockNumber;
+    if (!hash || hash.toLowerCase() !== args.expectedTransactionHash.toLowerCase()
+      || broadcastAt !== undefined || blockNumber !== undefined) {
+      throw new Error("automated fee recovery identity or state mismatch");
+    }
+    const stagePatch = stage === "sweep" ? {
+      sweepTransactionHash: undefined, sweepSignedTransaction: undefined, sweepTransactionNonce: undefined,
+      sweepPreparedAt: undefined,
+    } : stage === "processing" ? {
+      transactionHash: undefined, processingTransactionHash: undefined, processingSignedTransaction: undefined,
+      processingTransactionNonce: undefined, processingPreparedAt: undefined,
+    } : {
+      deliveryTransactionHash: undefined, deliverySignedTransaction: undefined, deliveryTransactionNonce: undefined,
+      deliveryPreparedAt: undefined,
+    };
+    const now = Date.now();
+    await ctx.db.patch(run._id, {
+      ...stagePatch, status: "deferred", workflowStage: `${stage}_reprepare_required`,
+      nextRetryAt: now, diagnosticCode: "AUTOMATED_FEE_FEE_ENVELOPE_REPREPARE",
+      diagnosticDetail: undefined, leaseId: undefined, leaseUntil: undefined, updatedAt: now,
+    });
+    await ctx.db.patch(run.programId, {
+      status: "enrolled", workDueAt: now, nextProcessAt: now,
+      processingDiagnosticCode: "RPC_RETRY", updatedAt: now,
+    });
+    await ctx.scheduler.runAfter(0, internal.automatedFeeQueue.dispatch, {});
+    return { recovered: true, stage };
+  },
+});
+
 export const recordPendingStageCheck = internalMutation({
   args: { runId: v.id("automatedFeeRuns"), stage: v.union(v.literal("sweep"), v.literal("processing"), v.literal("delivery")) },
   handler: async (ctx, args) => {
@@ -2044,7 +2125,7 @@ export const processProgram = internalAction({
         if (!(await acquireKeeper())) return { status: "keeper_leased", runId: run._id };
         try {
           const prepared = await signerRequest<SweepPrepared>("/v1/automated-fees/prepare-sweep", {
-            idempotencyKey: `${run.idempotencyKey}:sweep`, chainId: ROBINHOOD_CHAIN_ID,
+            idempotencyKey: `${run.idempotencyKey}:sweep${run.retryCount ? `:retry-${run.retryCount}` : ""}`, chainId: ROBINHOOD_CHAIN_ID,
             vaultAddress: program.vaultAddress, sweepKind: inspection.phase === 0 ? "curve" : "graduated",
             minConversionQuoteOut: inspection.phase === 0 ? "0" : "1", minBuybackTokensOut: "1",
           }, 60_000);
@@ -2102,7 +2183,7 @@ export const processProgram = internalAction({
           const deadline = Math.floor(Date.now() / 1000) + 300;
           const quote = await signerRequest<any>("/v1/automated-fees/authorize", { chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress, deadline, nonce: inspection.executionNonce }, 60_000);
           const prepared = await signerRequest<PreparedTx>("/v1/automated-fees/prepare", {
-            idempotencyKey: `${run.idempotencyKey}:processing`, chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress,
+            idempotencyKey: `${run.idempotencyKey}:processing${run.retryCount ? `:retry-${run.retryCount}` : ""}`, chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress,
             maxBuybackAmount: quote.maxBuybackAmount, minPonsbotOut: quote.minPonsbotOut,
             minSweepBuybackTokensOut: quote.minSweepBuybackTokensOut, deadline: quote.deadline,
             routeTarget: quote.routeTarget, routeData: quote.routeData, quoteSignature: quote.signature,
@@ -2144,7 +2225,7 @@ export const processProgram = internalAction({
         if (!(await acquireKeeper())) return { status: "keeper_leased", runId: run._id };
         try {
           const prepared = await signerRequest<DeliveryPrepared>("/v1/automated-fees/prepare-delivery", {
-            idempotencyKey: `${run.idempotencyKey}:delivery`, chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress,
+            idempotencyKey: `${run.idempotencyKey}:delivery${run.retryCount ? `:retry-${run.retryCount}` : ""}`, chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress,
             beneficiary: run.beneficiaryAddress, asset: run.pairTokenAddress, amount: run.beneficiaryAllocated,
             processingBlockNumber: run.processingBlockNumber!,
           }, 60_000);
@@ -2197,6 +2278,12 @@ export const processProgram = internalAction({
     } catch (error) {
       if (run) {
         const detail = error instanceof Error ? error.message : String(error);
+        const rejectedStage = automatedFeeRejectedPreBroadcastStage(detail);
+        if (rejectedStage) {
+          await ctx.runMutation(internal.automatedFeeEngine.clearRejectedPreBroadcastStage, {
+            runId: run._id, leaseId: actionLeaseId, stage: rejectedStage,
+          });
+        }
         // Explicit requests may reach economically tiny quotes that scheduled
         // cycles never see. A zero-output authorization is not retryable until
         // more fees accumulate. No processing envelope exists at this point.
@@ -2214,7 +2301,7 @@ export const processProgram = internalAction({
           });
           return { status: "graduated_sweep_deferred", runId: run._id };
         }
-        const manualReview = /MISMATCH|REVERTED|DROPPED|INVALID|out of order/i.test(detail);
+        const manualReview = rejectedStage ? false : automatedFeeFailureRequiresManualReview(detail);
         await ctx.runMutation(internal.automatedFeeEngine.deferProcessingRun, {
           programId: program._id, runId: run._id, manualReview,
           diagnosticCode: detail.match(/AUTOMATED_FEE_[A-Z_]+/)?.[0] ?? "AUTOMATED_FEE_PROCESSING_FAILED",

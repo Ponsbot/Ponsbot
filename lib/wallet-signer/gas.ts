@@ -24,6 +24,24 @@ export async function estimateActualFees(client: ActualFeeClient) {
   };
 }
 
+/** EIP-1559 envelope for delayed automated jobs. A two-block base-fee cushion
+ * prevents a valid keeper transaction becoming unbroadcastable between CDP
+ * signing and the following RPC submission. The chain still charges only the
+ * actual base fee plus priority fee. */
+export async function estimateResilientAutomationFees(client: ActualFeeClient) {
+  const [block, priorityFee] = await Promise.all([
+    client.getBlock(),
+    client.estimateMaxPriorityFeePerGas(),
+  ]);
+  if (typeof block.baseFeePerGas !== "bigint" || block.baseFeePerGas < 0n || priorityFee < 0n) {
+    throw new Error("current EIP-1559 fees are unavailable");
+  }
+  return {
+    maxFeePerGas: block.baseFeePerGas * 2n + priorityFee,
+    maxPriorityFeePerGas: priorityFee,
+  };
+}
+
 /** One rounded-up 10% margin. Input must be an UNBUFFERED actual-cost estimate. */
 export function bufferedActualCost(estimatedCost: bigint) {
   if (estimatedCost < 0n) throw new Error("estimated cost must not be negative");

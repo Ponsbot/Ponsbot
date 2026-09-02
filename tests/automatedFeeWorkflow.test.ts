@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   AUTOMATED_FEE_WORKFLOW_CONTINUATION,
+  automatedFeeFailureRequiresManualReview,
+  automatedFeeRejectedPreBroadcastStage,
   automatedFeeControllerTransactionMayExist,
   isAutomatedFeeControllerWorkflowRoot,
   isAutomatedFeeWorkflowContinuation,
@@ -8,6 +10,19 @@ import {
 } from "../lib/automated-fee-workflow";
 
 describe("automated fee workflow continuation", () => {
+  it("retries base-fee broadcast rejection instead of freezing the vault", () => {
+    expect(automatedFeeFailureRequiresManualReview("SIGNER_INTERNAL_FAILURE: Missing or invalid parameters. max fee per gas less than block base fee")).toBe(false);
+    expect(automatedFeeFailureRequiresManualReview("automated fee signer request failed [/v1/automated-fees/broadcast]: Missing or invalid parameters. max fee per gas less than block base fee")).toBe(false);
+    expect(automatedFeeFailureRequiresManualReview("AUTOMATED_FEE_PROCESSING_REVERTED")).toBe(true);
+    expect(automatedFeeFailureRequiresManualReview("automated fee processing receipt mismatch")).toBe(true);
+  });
+
+  it("identifies deterministic pre-broadcast fee-envelope rejections", () => {
+    expect(automatedFeeRejectedPreBroadcastStage("automated fee signer request failed [/v1/automated-fees/broadcast]: Missing or invalid parameters: max fee per gas less than block base fee")).toBe("processing");
+    expect(automatedFeeRejectedPreBroadcastStage("automated fee signer request failed [/v1/automated-fees/broadcast-sweep]: fee cap less than block base fee")).toBe("sweep");
+    expect(automatedFeeRejectedPreBroadcastStage("automated fee signer request failed [/v1/automated-fees/broadcast-delivery]: max fee per gas less than block base fee")).toBe("delivery");
+    expect(automatedFeeRejectedPreBroadcastStage("request timed out")).toBeNull();
+  });
   it("recognizes only the private persisted-workflow continuation signal", () => {
     expect(isAutomatedFeeWorkflowContinuation(new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION))).toBe(true);
     expect(isAutomatedFeeWorkflowContinuation(new Error(`Uncaught Error: ${AUTOMATED_FEE_WORKFLOW_CONTINUATION}\n    at handler (../convex/wallets.ts:3740:26)`))).toBe(true);

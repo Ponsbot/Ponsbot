@@ -3,7 +3,7 @@ import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
 import { checkedUsdToEthWei } from "./pricing";
-import { estimateActualFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
+import { estimateActualFees, estimateResilientAutomationFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
 import { requireNativeGasBalance, requireWalletNativeGas } from "../wallet-native-gas";
 import { nativeTokenOperationError } from "../native-token-operation";
 import { reliableHttp } from "../rpc-http";
@@ -780,7 +780,7 @@ export async function prepareAutomatedFeeTransaction(request: AutomatedFeeKeeper
   });
   await client.call({ account: account.address, to: vault, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -816,7 +816,7 @@ export async function prepareAutomatedFeeSweepTransaction(request: AutomatedFeeS
     }
   }
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -855,7 +855,7 @@ export async function prepareAutomatedFeeDeliveryTransaction(request: AutomatedF
   });
   await client.call({ account: account.address, to: vault, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -895,7 +895,7 @@ export async function prepareAutomatedFeeVaultDeployment(request: AutomatedFeeVa
   const data = encodeFunctionData({ abi: automatedFeeVaultFactoryAbi, functionName: "deployVault", args: [request.salt as Hex, init] });
   await client.call({ account: account.address, to: factory, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: factory, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: factory, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -921,7 +921,7 @@ export async function prepareAutomatedFeePairRoute(request: AutomatedFeePairRout
   });
   await client.call({ account: account.address, to: executor, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: executor, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: executor, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -1010,7 +1010,7 @@ export async function prepareAutomatedFeeControllerTransaction(request: Automate
   const data = automatedFeeControllerCalldata(request.operation);
   await client.call({ account: account.address, to: vault, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -1091,7 +1091,7 @@ export async function prepareAutomatedFeeControllerSweep(request: AutomatedFeeCo
   const data = encodeFunctionData({ abi: automatedFeeVaultAbi, functionName: "sweepCurveFees", args: [0n] });
   await client.call({ account: account.address, to: vault, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateActualFees(client),
+    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
@@ -1321,7 +1321,7 @@ export async function sponsorFreeLaunch(input: { idempotencyKey: string; recipie
   if (account.address.toLowerCase() === input.recipient.toLowerCase()) throw new Error("free launch recipient is invalid");
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
     client.estimateGas({ account: account.address, to: input.recipient, value }),
-    estimateActualFees(client),
+    estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
     client.getBalance({ address: account.address }),
   ]);
@@ -1458,7 +1458,7 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
 export async function spendableEthBalance(address: Address, reservedGasUnits: number, requestedEth?: string) {
   const client = rpcClient();
   const balance = await requireNativeGasBalance(() => client.getBalance({ address }));
-  const fees = await estimateActualFees(client);
+  const fees = await estimateResilientAutomationFees(client);
   const result = spendableEthAfterGas(
     balance,
     BigInt(reservedGasUnits),
@@ -2023,7 +2023,7 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   const requested = unit === "usd" ? await checkedUsdToEthWei(amount)
     : unit === "eth" ? parseEther(amount)
       : await client.getBalance({ address: owner }) * BigInt(Math.round(Number(amount) * 100)) / 10_000n;
-  const [balance, fees] = await Promise.all([client.getBalance({ address: owner }), estimateActualFees(client)]);
+  const [balance, fees] = await Promise.all([client.getBalance({ address: owner }), estimateResilientAutomationFees(client)]);
   const gas = await client.estimateGas({
     account: owner, to: recipient, value: requested > 0n ? requested : 1n,
     // Estimation only: a full-balance request cannot cover gas until we have
@@ -2050,7 +2050,7 @@ async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "opera
   await client.call({ account: account.address, to, data, value });
   const [estimatedGas, fees, rpcNonce, balance] = await Promise.all([
     gasQuote?.estimatedGas ?? client.estimateGas({ account: account.address, to, data, value }),
-    gasQuote?.fees ?? estimateActualFees(client),
+    gasQuote?.fees ?? estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
     client.getBalance({ address: account.address }),
   ]);
@@ -2464,7 +2464,7 @@ async function estimateFreeLaunchGrant(
       // rejecting before sponsorship for insufficient sender funds.
       stateOverride: [{ address: owner, balance: parseEther("100") }],
     }),
-    estimateActualFees(client),
+    estimateResilientAutomationFees(client),
   ]);
   const bufferedGasCost = sendAllGasReserve(estimatedGas, fees.maxFeePerGas);
   // ONE margin over the unbuffered launch fee + actual gas-price estimate.

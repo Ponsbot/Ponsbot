@@ -37,3 +37,19 @@ export function isTerminalAutomatedFeeControllerReview(record: AutomatedFeeContr
     "CONTROLLER_TRANSACTION_PENDING_TOO_LONG",
   ].includes(record.diagnosticCode ?? "");
 }
+
+export function automatedFeeFailureRequiresManualReview(detail: string) {
+  if (automatedFeeRejectedPreBroadcastStage(detail)) return false;
+  return /\bAUTOMATED_FEE_[A-Z_]*(?:MISMATCH|REVERTED|DROPPED|INVALID)\b/i.test(detail)
+    || /automated fee[^\n]*(?:mismatch|reverted|dropped|invalid|out of order)/i.test(detail);
+}
+
+export type AutomatedFeeTransactionStage = "sweep" | "processing" | "delivery";
+
+export function automatedFeeRejectedPreBroadcastStage(detail: string): AutomatedFeeTransactionStage | null {
+  if (!/max fee per gas less than block base fee|fee cap less than block base fee/i.test(detail)) return null;
+  if (/\[\/v1\/automated-fees\/broadcast-sweep\]/i.test(detail)) return "sweep";
+  if (/\[\/v1\/automated-fees\/broadcast-delivery\]/i.test(detail)) return "delivery";
+  if (/\[\/v1\/automated-fees\/broadcast\]/i.test(detail)) return "processing";
+  return null;
+}
