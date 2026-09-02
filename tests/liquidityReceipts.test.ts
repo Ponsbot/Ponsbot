@@ -5,7 +5,7 @@ import { deltaLiquidityAbi, liquidityPoolId, liquidityPoolKey } from "../lib/liq
 import { DELTA_LIQUIDITY as A } from "../lib/liquidity-workflow";
 import { LIQUIDITY_TEST_OWNER, LIQUIDITY_TEST_WALLET } from "./liquidityFixtures";
 const rpc = vi.hoisted(() => ({ getTransactionReceipt: vi.fn(), getTransaction: vi.fn(), getBlockNumber: vi.fn(), readContract: vi.fn(), request: vi.fn() }));
-const service = vi.hoisted(() => ({ prepareUnsigned: vi.fn(), signPreparedEnvelope: vi.fn() }));
+const service = vi.hoisted(() => ({ prepareUnsigned: vi.fn(), signPreparedEnvelope: vi.fn(), tokenValueAtBlock: vi.fn(async () => ({ usdValue: 20_000 })) }));
 vi.mock("viem", async original => ({ ...await original<typeof import("viem")>(), createPublicClient: () => rpc }));
 vi.mock("../lib/liquidity-markets", () => ({ liquidityRpc: () => rpc }));
 vi.mock("../lib/wallet-signer/service", () => service);
@@ -60,7 +60,7 @@ describe("LP receipt verification", () => {
   it("reports actual receipt tokens and native transfers, not the old budget", async () => {
     const p = plan("claim"); setupReceipt(p, [{ address: token, topics: encodeEventTopics({ abi: erc20Abi, eventName: "Transfer", args: { from: A.manager, to: owner } }), data: encodeAbiParameters([{ type: "uint256" }], [100000n * 10n ** 18n]) }]);
     rpc.request.mockResolvedValue({ type: "CALL", from: owner, to: A.manager, value: "0x0", calls: [{ type: "CALL", from: A.manager, to: owner, value: "1000000000000000" }, { type: "CALL", from: A.manager, to: owner, value: "5000000000000000", error: "reverted" }] });
-    expect((await inspectLiquidityReceipt(hash, p)).received).toEqual(["0.00100000 ETH", "100000 PONSBOT"]);
+    expect((await inspectLiquidityReceipt(hash, p)).received).toEqual(["0.001 ETH ($2)", "100000 PONSBOT ($20,000)"]);
   });
   it("does not misreport missing native trace data as a zero payout", async () => {
     const p = plan("claim"); setupReceipt(p); rpc.request.mockRejectedValue(new Error("unsupported"));

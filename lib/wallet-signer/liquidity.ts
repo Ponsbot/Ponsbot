@@ -619,6 +619,9 @@ export async function inspectLiquidityReceipt(hash: Hex, suppliedPlan: Liquidity
   }
   const received: string[] = [];
   if (plan.operation === "claim" || plan.operation === "withdraw") {
+    const receivedUsdLabel = (value: number) => Number.isFinite(value) && value >= 0
+      ? ` ($${value > 0 && value < 0.01 ? "<0.01" : value.toLocaleString("en-US", { maximumFractionDigits: 2 })})`
+      : "";
     const amounts = new Map<string, bigint>();
     for (const log of receipt.logs) {
       if (log.address.toLowerCase() === A.v3Npm || log.address.toLowerCase() === A.v4Npm) continue;
@@ -632,7 +635,11 @@ export async function inspectLiquidityReceipt(hash: Hex, suppliedPlan: Liquidity
     for (const [asset, amount] of amounts) if (amount > 0n) {
       const [decimals, symbol] = await Promise.all([c.readContract({ address: asset as Address, abi: erc20Abi, functionName: "decimals" }), c.readContract({ address: asset as Address, abi: erc20Abi, functionName: "symbol" })]);
       if (!/^[A-Za-z0-9_.-]{1,32}$/.test(symbol)) throw new Error("LP_INVALID_RECEIPT_SYMBOL");
-      received.push(`${Number(Number(formatUnits(amount, decimals)).toPrecision(6))} ${symbol}`);
+      const displayAmount = Number(Number(formatUnits(amount, decimals)).toPrecision(6));
+      const usdValue = asset.toLowerCase() === A.usdg
+        ? displayAmount
+        : await tokenValueAtBlock(asset as Address, String(displayAmount), receipt.blockNumber.toString()).then(value => value.usdValue).catch(() => NaN);
+      received.push(`${displayAmount} ${symbol}${receivedUsdLabel(usdValue)}`);
     }
     // Transaction-scoped value transfers, not a whole-block balance delta
     // (which can include unrelated concurrent wallet activity).
@@ -645,7 +652,11 @@ export async function inspectLiquidityReceipt(hash: Hex, suppliedPlan: Liquidity
       if (!trace.type) throw new Error("Missing trace");
       native = sum(trace);
     } catch { native = await explorerLiquidityNativePayout(hash, plan.owner); }
-    if (native !== undefined && native > 0n) received.unshift(`${Number(formatEther(native)).toPrecision(6)} ETH`);
+    if (native !== undefined && native > 0n) {
+      const nativeAmount = Number(Number(formatEther(native)).toPrecision(6));
+      const nativeUsd = await ethUsdPrice().then(price => nativeAmount * price).catch(() => NaN);
+      received.unshift(`${nativeAmount} ETH${receivedUsdLabel(nativeUsd)}`);
+    }
     if (native === undefined) received.push("ETH payout amount unavailable; see transaction");
     else if (!received.length) received.push("0 (no payout in this transaction)");
     if (plan.operation === "withdraw") {

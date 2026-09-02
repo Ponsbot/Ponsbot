@@ -7,13 +7,14 @@ import { canBackLiquidityDraft, liquidityDraftSchema, liquidityFieldsSchema, new
 import type { LiquidityLeg } from "../lib/liquidity-contracts";
 import type { LiquidityQuotePlan } from "../lib/liquidity-quote";
 import type { LiquidityPositionStatus } from "../lib/liquidity-status";
+import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 
 type SignedStep = { received?: string[] };
 type TerminalPositionResult = {
   id: string; status: "active" | "closed"; token: string; symbol: string; version: 3 | 4; poolId: string;
   pair?: "ETH" | "USDG"; shape?: "flat" | "bell" | "bid_ask"; feePercent?: number; bands?: number;
   lowerMarketCapUsd?: number; upperMarketCapUsd?: number; createdAt: number; updatedAt: number; nftIds: string[];
-  feesClaimed: Array<{ symbol: string; amount: string }>; live: LiquidityPositionStatus | null;
+  feesClaimed: LiquidityClaimedFee[]; lastClaim?: { items: LiquidityClaimedFee[]; claimedAt: number }; live: LiquidityPositionStatus | null;
 };
 
 async function signer<T>(path: string, body: unknown, timeout = 120_000): Promise<T> {
@@ -27,8 +28,9 @@ async function signer<T>(path: string, body: unknown, timeout = 120_000): Promis
   return response.json() as Promise<T>;
 }
 
-function summedClaimedFees(positionId: string, executions: Array<{ status: string; planJson: string; stepsJson: string }>) {
-  const totals = new Map<string, number>();
+function executionClaimedFees(positionId: string, executions: Array<{ status: string; planJson: string; stepsJson: string; updatedAt: number }>) {
+  let totals: LiquidityClaimedFee[] = [];
+  let lastClaim: { items: LiquidityClaimedFee[]; claimedAt: number } | undefined;
   for (const execution of executions) {
     if (execution.status !== "confirmed") continue;
     let plan: LiquidityQuotePlan;
@@ -37,15 +39,12 @@ function summedClaimedFees(positionId: string, executions: Array<{ status: strin
     catch { continue; }
     for (let index = 0; index < steps.length; index++) {
       if (plan.calls[index]?.purpose !== "claim" || plan.claimPositions?.[index]?.positionId !== positionId) continue;
-      for (const received of steps[index]?.received ?? []) {
-        const match = /^([0-9]+(?:\.[0-9]+)?)\s+([A-Za-z0-9_.-]{1,32})$/.exec(received.trim());
-        if (!match) continue;
-        const value = Number(match[1]);
-        if (Number.isFinite(value) && value >= 0) totals.set(match[2], (totals.get(match[2]) ?? 0) + value);
-      }
+      const items = (steps[index]?.received ?? []).map(parseLiquidityClaimedFee).filter((fee): fee is LiquidityClaimedFee => Boolean(fee));
+      totals = mergeLiquidityClaimedFees(totals, items);
+      if (items.length && (!lastClaim || execution.updatedAt > lastClaim.claimedAt)) lastClaim = { items, claimedAt: execution.updatedAt };
     }
   }
-  return [...totals].map(([symbol, value]) => ({ symbol, amount: value.toLocaleString("en-US", { maximumSignificantDigits: 8, useGrouping: false }) }));
+  return { totals, lastClaim };
 }
 
 export const terminalPositions = action({
@@ -67,6 +66,10 @@ export const terminalPositions = action({
           }, Math.max(1, Math.min(15_000, deadline - Date.now())));
         } catch { live = undefined; }
       }
+      const historical = executionClaimedFees(position.publicId, context.executions);
+      let persisted: LiquidityClaimedFee[] = [], persistedLast: { items: LiquidityClaimedFee[]; claimedAt: number } | undefined;
+      try { if (position.feesClaimedJson) persisted = JSON.parse(position.feesClaimedJson) as LiquidityClaimedFee[]; } catch { persisted = []; }
+      try { if (position.lastClaimedJson && position.lastClaimedAt) persistedLast = { items: JSON.parse(position.lastClaimedJson) as LiquidityClaimedFee[], claimedAt: position.lastClaimedAt }; } catch { persistedLast = undefined; }
       return {
         id: position.publicId, status: position.status, token: position.token, symbol: position.symbol,
         version: position.version, poolId: position.poolId, pair: fields.pair, shape: fields.shape,
@@ -74,7 +77,8 @@ export const terminalPositions = action({
         lowerMarketCapUsd: fields.lowerMarketCapUsd, upperMarketCapUsd: fields.upperMarketCapUsd,
         createdAt: position.createdAt, updatedAt: position.updatedAt,
         nftIds: (JSON.parse(position.legsJson) as LiquidityLeg[]).map(leg => leg.tokenId),
-        feesClaimed: summedClaimedFees(position.publicId, context.executions), live: live ?? null,
+        feesClaimed: persisted.length ? persisted : historical.totals,
+        lastClaim: persistedLast ?? historical.lastClaim, live: live ?? null,
       };
     }, 4);
     return { positions };
@@ -83,13 +87,19 @@ export const terminalPositions = action({
 
 export const terminalWorkflowState = action({
   args: { secret: v.string(), ownerXUserId: v.string(), sessionIdHash: v.string(), sessionId: v.string() },
-  handler: async (ctx, args): Promise<{ active: boolean; phase?: string; canGoBack: boolean; revision?: number }> => {
+  handler: async (ctx, args): Promise<{ active: boolean; phase?: string; canGoBack: boolean; revision?: number; currentMarketCapUsd?: number }> => {
     if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("LP terminal authorization failed");
     const record: { stateJson: string; revision: number } | null = await ctx.runQuery(internal.liquidity.terminalWorkflowRecord, {
       ownerXUserId: args.ownerXUserId, sessionIdHash: args.sessionIdHash, sessionId: args.sessionId,
     });
     if (!record) return { active: false, canGoBack: false };
     const draft = liquidityDraftSchema.parse(JSON.parse(record.stateJson));
-    return { active: true, phase: draft.phase, canGoBack: canBackLiquidityDraft(draft), revision: record.revision };
+    return {
+      active: true,
+      phase: draft.phase,
+      canGoBack: canBackLiquidityDraft(draft),
+      revision: record.revision,
+      ...(draft.currentMarketCapUsd ? { currentMarketCapUsd: draft.currentMarketCapUsd } : {}),
+    };
   },
 });

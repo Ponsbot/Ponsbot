@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mapLiquidityBounded } from "../lib/liquidity-concurrency";
-import { inheritLiquidityPositionFields, isIndependentLiquidityRead, isOrdinaryWalletCommand, liquidityThreadRedirect, liquidityWalletAllowed, liquidityNftSelection, liquidityStatusSelection, normalizeLiquidityTokenAliases } from "../lib/liquidity-workflow";
+import { inheritLiquidityPositionFields, isIndependentLiquidityRead, isOrdinaryWalletCommand, liquidityThreadRedirect, liquidityWalletAllowed, liquidityNftSelection, liquidityStatusSelection, liquidityClaimSelection, liquidityWithdrawalSelection, normalizeLiquidityTokenAliases } from "../lib/liquidity-workflow";
 import { action, internalAction, internalMutation, internalQuery, mutation, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
@@ -18,6 +18,7 @@ import { decodeFunctionData, keccak256, stringToHex, TransactionNotFoundError, T
 import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, liquidityStepIdempotencyKey, LIQUIDITY_WRITE_ATTEMPTS, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
 import { validateLiquidityQuote, validateLiquidityEnvelope, validateLiquiditySignature, validateLiquidityFinalReceipt, validateLiquidityOpenRefresh } from "../lib/liquidity-wire";
 import { withGuidedHelpCompletion } from "../lib/guided-help-workflow";
+import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 
 const source = v.union(v.literal("x"), v.literal("terminal"));
 const requestArgs = { ownerXUserId: v.string(), source, scope: v.string(), requestKey: v.string(), text: v.string(), parentPostId: v.optional(v.string()) };
@@ -117,6 +118,7 @@ export const reserveTurn = internalMutation({
     let conversation = independentRead ? null : args.source === "terminal" ? await latestForScope(ctx, args.scope) : parent?.conversation ?? null;
     if (conversation && (conversation.ownerXUserId !== args.ownerXUserId || conversation.source !== args.source)) throw new Error("LP access denied");
     if (parent && (parent.conversation.ownerXUserId !== args.ownerXUserId || !independentRead && parent.conversation.currentTurnId !== parent.turn._id)) return { handled: true, message: R.stale };
+    if (!conversation && liquidityControl(args.text)?.kind === "cancel") return { handled: true, message: R.cancelled };
     if (!conversation && !isLiquidityMessage(args.text)) return { handled: false };
     if (conversation) {
       const execution = await ctx.db.query("liquidityExecutions").withIndex("by_conversation", q => q.eq("conversationId", conversation!._id)).first();
@@ -315,7 +317,20 @@ async function positionStatusPages(ctx: ActionCtx, ownerXUserId: string, source:
 export const handle = internalAction({
   args: requestArgs,
   handler: async (ctx, args): Promise<{ handled: boolean; message?: string; silent?: boolean; deferred?: boolean }> => {
-    const reservation = await ctx.runMutation(internal.liquidity.reserveTurn, args);
+    // Position-card actions in the terminal are independent of an unfinished
+    // builder draft. Give an explicit LP claim/withdraw its own scope so it can
+    // execute without replacing or conflicting with the user's saved setup.
+    // Requiring a concrete position ID keeps ambiguous conversational requests
+    // in the ordinary guided flow, where clarification remains available.
+    const terminalManagement = args.source === "terminal"
+      ? liquidityClaimSelection(args.text) ?? liquidityWithdrawalSelection(args.text)
+      : null;
+    const detachedTerminalManagement = terminalManagement?.position
+      && (liquidityClaimSelection(args.text) !== null || terminalManagement.withdrawPercent === 100);
+    const reservationArgs = detachedTerminalManagement
+      ? { ...args, scope: `${args.scope}:manage:${args.requestKey}` }
+      : args;
+    const reservation = await ctx.runMutation(internal.liquidity.reserveTurn, reservationArgs);
     if (!reservation.handled || !reservation.turnId || !reservation.state || !reservation.publicId || !reservation.revision) return reservation;
     let d = liquidityDraftSchema.parse(JSON.parse(reservation.state));
     let preservedSetup: LiquidityDraft | undefined;
@@ -573,7 +588,7 @@ export const handle = internalAction({
         : code.includes("LP_CLAIM_TOO_MANY") ? R.claimTooMany : code.includes("LP_CLAIM_AMBIGUOUS") ? R.ambiguousClaim
         : code.includes("DELTA_NATIVE_ADD_UNVERIFIED") ? R.addUnavailable
         : code.includes("LP_POSITION_SETTINGS_CONFLICT") ? R.settingsConflict : code.includes("LP_POSITION_CAPACITY") ? R.capacity
-        : code.includes("LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP") ? `⚠️ Your selected pool's current MCap${d.currentMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.currentMarketCapUsd)}` : ""}, but your requested range${d.fields.lowerMarketCapUsd && d.fields.upperMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.fields.lowerMarketCapUsd)} to ${formatLiquidityMarketCap(d.fields.upperMarketCapUsd)}` : " does not extend below and above it"}. Choose a range that surrounds the current MCap, then review a new quote. No funds were moved.`
+        : code.includes("LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP") ? `⚠️ Your selected pool's current MCap${d.currentMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.currentMarketCapUsd)}` : ""}, and your requested range${d.fields.lowerMarketCapUsd && d.fields.upperMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.fields.lowerMarketCapUsd)} to ${formatLiquidityMarketCap(d.fields.upperMarketCapUsd)}` : " does not leave enough room around it"}. Although the raw MCap is inside that range, Delta Liquidity must align the range to this pool's band spacing, and the aligned bands do not leave a valid boundary on both sides of the current price. Widen the range or use fewer bands, then review a new quote. Reply refresh to recheck the pool and current MCap. No funds were moved.`
         : code.includes("LP_SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE") ? `⚠️ Your selected pool cannot fit ${d.fields.bands ?? "the requested number of"} bands inside that MCap range because of the pool's price spacing. Use fewer bands or a wider range, then review a new quote. No funds were moved.`
         : code.includes("LP_POOL_SETTINGS_INCOMPATIBLE") ? "⚠️ Your selected pool cannot represent that MCap range and band layout. Use fewer bands, widen the range, or choose another pool, then review a new quote. No funds were moved."
         : code.includes("LP_SELECTED_POOL_UNAVAILABLE") ? "⚠️ I couldn’t verify your selected pool just now. No different pool was substituted and no funds were moved. Reply refresh to retry, or choose custom pool."
@@ -913,6 +928,15 @@ export const finishExecution = internalMutation({
     const e = await ctx.db.get(args.executionId); if (!e || ["confirmed", "failed"].includes(e.status)) return;
     const conversation = await ctx.db.get(e.conversationId); if (!conversation) return;
     const d = liquidityDraftSchema.parse(JSON.parse(conversation.stateJson)), plan = JSON.parse(e.planJson) as LiquidityQuotePlan;
+    const steps = JSON.parse(e.stepsJson) as SignedStep[];
+    const claimsByPosition = new Map<string, LiquidityClaimedFee[]>();
+    for (let index = 0; index < steps.length; index++) {
+      if (!steps[index].confirmed || plan.calls[index]?.purpose !== "claim") continue;
+      const claimedPositionId = plan.claimPositions?.[index]?.positionId;
+      if (!claimedPositionId) continue;
+      const parsed = (steps[index].received ?? []).map(parseLiquidityClaimedFee).filter((fee): fee is LiquidityClaimedFee => Boolean(fee));
+      if (parsed.length) claimsByPosition.set(claimedPositionId, [...(claimsByPosition.get(claimedPositionId) ?? []), ...parsed]);
+    }
     let positionId = d.fields.position;
     if (args.success && (d.operation === "open" || d.operation === "add")) {
       const existing = positionId ? await ctx.db.query("liquidityManagedPositions").withIndex("by_public_id", q => q.eq("publicId", positionId!)).unique() : null;
@@ -935,7 +959,32 @@ export const finishExecution = internalMutation({
       const existing = await ctx.db.query("liquidityManagedPositions").withIndex("by_public_id", q => q.eq("publicId", positionId!)).unique();
       if (existing?.ownerXUserId === e.ownerXUserId) await ctx.db.patch(existing._id, { status: "closed", autoCompoundRequested: false, updatedAt: Date.now() });
     }
-    const steps = JSON.parse(e.stepsJson) as SignedStep[];
+    const historicalClaims = new Map<string, LiquidityClaimedFee[]>();
+    if (args.success && claimsByPosition.size) {
+      const priorExecutions = await ctx.db.query("liquidityExecutions").withIndex("by_owner_updated", q => q.eq("ownerXUserId", e.ownerXUserId)).order("desc").take(500);
+      for (const prior of priorExecutions) {
+        if (prior._id === e._id || prior.status !== "confirmed") continue;
+        try {
+          const priorPlan = JSON.parse(prior.planJson) as LiquidityQuotePlan, priorSteps = JSON.parse(prior.stepsJson) as SignedStep[];
+          for (let index = 0; index < priorSteps.length; index++) {
+            if (priorPlan.calls[index]?.purpose !== "claim") continue;
+            const priorPositionId = priorPlan.claimPositions?.[index]?.positionId;
+            if (!priorPositionId || !claimsByPosition.has(priorPositionId)) continue;
+            const parsed = (priorSteps[index].received ?? []).map(parseLiquidityClaimedFee).filter((fee): fee is LiquidityClaimedFee => Boolean(fee));
+            historicalClaims.set(priorPositionId, mergeLiquidityClaimedFees(historicalClaims.get(priorPositionId) ?? [], parsed));
+          }
+        } catch { /* A malformed historical row must not block a confirmed claim. */ }
+      }
+    }
+    if (args.success) for (const [claimedPositionId, claimed] of claimsByPosition) {
+      const claimedPosition = await ctx.db.query("liquidityManagedPositions").withIndex("by_public_id", q => q.eq("publicId", claimedPositionId)).unique();
+      if (!claimedPosition || claimedPosition.ownerXUserId !== e.ownerXUserId) continue;
+      let previous: LiquidityClaimedFee[] = [];
+      try { previous = claimedPosition.feesClaimedJson ? JSON.parse(claimedPosition.feesClaimedJson) as LiquidityClaimedFee[] : historicalClaims.get(claimedPositionId) ?? []; } catch { previous = historicalClaims.get(claimedPositionId) ?? []; }
+      const now = Date.now();
+      await ctx.db.patch(claimedPosition._id, { feesClaimedJson: JSON.stringify(mergeLiquidityClaimedFees(previous, claimed)),
+        lastClaimedJson: JSON.stringify(claimed), lastClaimedAt: now, updatedAt: now });
+    }
     const claimLinks = plan.claimPositions ? steps.map((s, i) => `${plan.claimPositions![i].positionId} TXN: https://robinhoodchain.blockscout.com/tx/${s.transactionHash}`).join("\n\n") : undefined;
     const successTitle = d.operation === "claim" ? "Delta Liquidity LP fee collection confirmed"
       : d.operation === "withdraw" ? "Delta Liquidity LP fees collected and position withdrawn"

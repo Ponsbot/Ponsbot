@@ -41,6 +41,7 @@ export function TerminalClient() {
   const [awaitingLiquidityResult, setAwaitingLiquidityResult] = useState(false);
   const [chat, setChat] = useState("");
   const [workspace, setWorkspace] = useState<"terminal" | "houdini" | "liquidity">("terminal");
+  const workspaceRestored = useRef(false);
   const logRef = useRef<HTMLDivElement>(null);
   const refreshing = useRef(false);
   const pendingCatalogRefresh = useRef(false);
@@ -51,6 +52,18 @@ export function TerminalClient() {
   const historyCursor = useRef(0);
   const feeHistoryCursor = useRef(0);
   const liquidityPendingSince = useRef(0);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("ponsbot-terminal-workspace-v1");
+    if (saved === "terminal" || saved === "houdini" || saved === "liquidity") setWorkspace(saved);
+    workspaceRestored.current = true;
+  }, []);
+  useEffect(() => {
+    if (workspaceRestored.current) window.localStorage.setItem("ponsbot-terminal-workspace-v1", workspace);
+  }, [workspace]);
+  useEffect(() => {
+    if (session && !session.houdiniPreviewEnabled && workspace === "houdini") setWorkspace("terminal");
+  }, [session, workspace]);
 
   const expireSession = useCallback(async () => {
     if (signingOut.current) return;
@@ -208,7 +221,7 @@ export function TerminalClient() {
     return () => { stopped = true; window.clearInterval(timer); };
   }, [activeHoudiniReviewIds, refresh, session?.authenticated, session?.csrfToken, workspace]);
 
-  const submit = async (payload: { channel: "terminal_chat" | "terminal_form"; text: string; command?: unknown }, displayContext?: "liquidity_builder") => {
+  const submit = async (payload: { channel: "terminal_chat" | "terminal_form"; text: string; command?: unknown }, displayContext?: "liquidity_builder" | "liquidity_management") => {
     // React state updates are not synchronous, so a fast double click or Enter
     // press can reach this function twice before `busy` is rendered. Keep an
     // immediate ref guard as well so one user gesture creates one event ID and
@@ -219,7 +232,7 @@ export function TerminalClient() {
     // liquidity workflow needs it to advance. Prefixing its request identity
     // lets the regular terminal console omit those duplicated prompts and
     // selections without affecting persistence, parsing, or execution.
-    const requestEventId = eventId(displayContext === "liquidity_builder" ? "liquidity-builder_" : "");
+    const requestEventId = eventId(displayContext === "liquidity_builder" ? "liquidity-builder_" : displayContext === "liquidity_management" ? "liquidity-management_" : "");
     if (payload.channel === "terminal_chat") appendLocalUser(payload.text, requestEventId);
     setBusy(true);
     try {
@@ -266,7 +279,7 @@ export function TerminalClient() {
         <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, manage liquidity, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
       </div>
     </div> : workspace === "houdini" ? <HoudiniSwapPanel enabled={Boolean(session.houdiniPreviewEnabled)} csrfToken={session.csrfToken || ""} />
-      : <LiquidityPositionsPanel busy={busy} submit={(payload) => submit(payload, "liquidity_builder")} messages={data?.history.messages || []} username={session.username || "you"} />}
+      : <LiquidityPositionsPanel busy={busy} submit={(payload, context = "builder") => submit(payload, context === "management" ? "liquidity_management" : "liquidity_builder")} messages={data?.history.messages || []} username={session.username || "you"} />}
     {workspace !== "liquidity" ? <><section className="terminal-holdings"><div className="terminal-section-head"><div><p className="eyebrow">Connected wallet</p><h2>Current Holdings</h2></div><CopyAddress address={session.walletAddress!} /></div><div className="terminal-holdings-grid">{(data?.holdings || []).map((holding) => {
       const tokenHref = holding.address && holding.isPonsbotLaunch ? `/launch/${holding.address}` : undefined;
       const icon = <span className="holding-icon">{holding.iconUrl ? <ExternalTokenImage src={holding.iconUrl} name={holding.name} /> : holding.symbol[0]}</span>;

@@ -20,6 +20,7 @@ export const liquidityWorkflowTables = {
     publicId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"),
     version: v.union(v.literal(3), v.literal(4)), token: v.string(), symbol: v.string(), poolId: v.string(),
     fieldsJson: v.string(), legsJson: v.string(), autoCompoundRequested: v.boolean(),
+    feesClaimedJson: v.optional(v.string()), lastClaimedJson: v.optional(v.string()), lastClaimedAt: v.optional(v.number()),
     status: v.union(v.literal("active"), v.literal("closed")), createdAt: v.number(), updatedAt: v.number(),
   }).index("by_owner", ["ownerXUserId"]).index("by_public_id", ["publicId"])
     .index("by_status", ["status"])

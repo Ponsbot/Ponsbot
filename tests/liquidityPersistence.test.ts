@@ -91,6 +91,11 @@ describe("public authenticated liquidity access", () => {
     expect((await invoke(resolveContext, ctx, { ownerXUserId: request.ownerXUserId })).wallet.ownerXUserId).toBe(request.ownerXUserId);
     expect(ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });
+  it("consumes a terminal cancel without an active setup instead of falling through to general help", async () => {
+    const { ctx, request } = await botSetup();
+    expect(await invoke(reserveTurn, ctx, { ...request, requestKey: "terminal:cancel-without-active", text: "cancel" }))
+      .toMatchObject({ handled: true, message: "Liquidity setup cancelled. No funds were moved." });
+  });
   it("rejects a mismatched wallet owner and cross-owner terminal scope reuse", async () => {
     const { ctx, walletId, request } = await botSetup();
     const original = await invoke(reserveTurn, ctx, base);
@@ -311,6 +316,34 @@ describe("liquidity ownership and alternative choices", () => {
     expect(result).toEqual({ handled: true, deferred: true }); expect(ctx.scheduler.runAfter).toHaveBeenCalledTimes(1);
     const request = JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string);
     expect(request.draft.fields.position).toBe("LP-1234ABCE"); expect(request.legs[0].tokenId).toBe("124");
+  });
+  it.each([
+    ["claim LP fees for LP-1234ABCD", "claim"],
+    ["withdraw LP-1234ABCD", "withdraw"],
+  ])("runs terminal position-card action without disturbing an unfinished setup: %s", async (text, operation) => {
+    const ctx = await setup(); await addPosition(ctx); mockManagementQuote();
+    const setupRequest = { ...base, requestKey: "terminal:unfinished-setup" };
+    const setupTurn = await invoke(reserveTurn, ctx, setupRequest);
+    const setupDraft = newLiquidityDraft("open", { token: "PONSBOT", amount: "100", unit: "usd" });
+    setupDraft.phase = "pair";
+    await invoke(saveTurn, ctx, { turnId: setupTurn.turnId, revision: setupTurn.revision, state: JSON.stringify(setupDraft), message: "Choose a pair", active: true });
+    const originalConversation = structuredClone(ctx.data.get(setupTurn.conversationId)!);
+
+    const result = await invoke(handle, actionContext(ctx), {
+      ...base, requestKey: `terminal:position-card-${operation}`, text,
+    });
+
+    expect(result).toEqual({ handled: true, deferred: true });
+    const executions = [...ctx.data.values()].filter(row => row._id.startsWith("liquidityExecutions:"));
+    expect(executions).toHaveLength(1);
+    const managementConversation = ctx.data.get(executions[0].conversationId)!;
+    expect(managementConversation.scope).toContain(":manage:terminal:position-card-");
+    expect(JSON.parse(managementConversation.stateJson).operation).toBe(operation);
+    expect(ctx.data.get(setupTurn.conversationId)).toMatchObject({
+      active: true,
+      currentTurnId: originalConversation.currentTurnId,
+      stateJson: originalConversation.stateJson,
+    });
   });
   it("does not replace a wrong/foreign/closed explicit ID with the one owned active position", async () => {
     for (const extra of [{ ownerXUserId: "outsider" }, { walletId: "other-wallet" }, { status: "closed" }]) {

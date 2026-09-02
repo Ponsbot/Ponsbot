@@ -287,6 +287,7 @@ button:hover:not(:disabled),.button:hover{filter:brightness(.96)}
 @media(max-width:900px){.site-footer{grid-template-columns:1fr 1fr}.footer-legal{grid-column:2}}
 @media(max-width:600px){.site-footer{grid-template-columns:1fr}.footer-legal{grid-column:auto;justify-self:stretch;align-self:auto;max-width:none}}
 .liquidity-position-card footer{align-items:center;justify-content:space-between;gap:10px}.liquidity-position-card footer .liquidity-out-of-range-message{flex:1;margin:0}.liquidity-position-actions{display:flex;flex:0 0 auto;gap:7px}
-@media(max-width:600px){.liquidity-position-card footer{grid-template-columns:minmax(0,1fr) auto}.liquidity-position-actions{display:flex}.liquidity-position-card footer .liquidity-out-of-range-message{min-width:0}}
+.liquidity-claim-success{flex:1;margin:0;padding:8px 10px;border-radius:9px;background:#e9f8d6;color:#3d6c12;font-size:10px;font-weight:800;line-height:1.4}
+@media(max-width:600px){.liquidity-position-card footer{display:flex;flex-wrap:wrap}.liquidity-position-actions{display:flex;margin-left:auto}.liquidity-position-card footer .liquidity-out-of-range-message,.liquidity-position-card footer .liquidity-claim-success{flex-basis:100%;min-width:0}}
 .liquidity-position-card header{align-items:center}.liquidity-position-identity{flex:1;min-width:0}.liquidity-position-card header .liquidity-position-totals{flex:0 1 270px;grid-template-columns:repeat(2,minmax(100px,1fr));margin:0}.liquidity-position-card header>span{align-self:flex-start}
 @media(max-width:700px){.liquidity-position-card header{align-items:stretch;flex-wrap:wrap}.liquidity-position-card header .liquidity-position-totals{order:3;flex-basis:100%;width:100%}}

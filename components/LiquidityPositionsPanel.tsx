@@ -8,7 +8,8 @@ type Position = {
   id: string; status: "active" | "closed"; token: string; symbol: string; version: 3 | 4; poolId: string;
   pair?: "ETH" | "USDG"; shape?: "flat" | "bell" | "bid_ask"; feePercent?: number; bands?: number;
   lowerMarketCapUsd?: number; upperMarketCapUsd?: number; createdAt: number; updatedAt: number; nftIds: string[];
-  feesClaimed: Array<{ symbol: string; amount: string }>;
+  feesClaimed: Array<{ symbol: string; amount: string; usd?: number }>;
+  lastClaim?: { items: Array<{ symbol: string; amount: string; usd?: number }>; claimedAt: number };
   live: null | { assets: LiveAsset[]; marketCapRangeUsd?: { lower: number; upper: number } | null; range: { inRange: boolean } };
 };
 
@@ -66,15 +67,18 @@ function liquidityQuickReplies(text: string) {
 }
 
 function liquidityGuideMessages(messages: TerminalMessageRecord[]) {
+  const builderMessages = messages.filter(message => !message.requestId?.startsWith("liquidity-management_"));
+  const latestCancellation = builderMessages.findLastIndex(message => message.role === "assistant" && /liquidity setup cancelled/i.test(message.text));
   let start = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
+  for (let index = builderMessages.length - 1; index >= 0; index -= 1) {
+    const message = builderMessages[index];
     if (message.role === "user" && /\b(?:(?:create|open|build)[\s\S]{0,100}(?:liquidity|pool|position)|claim[\s\S]{0,60}LP fees?|withdraw[\s\S]{0,60}(?:LP-|position)|(?:check|show|view)[\s\S]{0,60}(?:liquidity|LP|position))/i.test(message.text)) {
       start = index;
       break;
     }
   }
-  return start < 0 ? [] : messages.slice(start).slice(-10);
+  if (latestCancellation >= start && start >= 0) return [];
+  return start < 0 ? [] : builderMessages.slice(start).slice(-10);
 }
 
 function LiquidityMessageText({ text }: { text: string }) {
@@ -161,7 +165,7 @@ function PoolOptionDescription({ description }: { description: string }) {
 
 export function LiquidityPositionsPanel({ busy, submit, messages }: {
   busy: boolean;
-  submit: (payload: { channel: "terminal_chat"; text: string }) => Promise<void>;
+  submit: (payload: { channel: "terminal_chat"; text: string }, context?: "builder" | "management") => Promise<void>;
   messages: TerminalMessageRecord[];
   username: string;
 }) {
@@ -171,6 +175,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [acting, setActing] = useState<string>();
+  const [actingStartedAt, setActingStartedAt] = useState(0);
   const [token, setToken] = useState("");
   const [budget, setBudget] = useState("");
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
@@ -178,6 +183,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [rangeLower, setRangeLower] = useState("");
   const [rangeUpper, setRangeUpper] = useState("");
   const [canGoBack, setCanGoBack] = useState(false);
+  const [workflowMarketCapUsd, setWorkflowMarketCapUsd] = useState<number>();
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
 
@@ -203,7 +209,9 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       const response = await fetch("/api/terminal/liquidity?workflow=1", { cache: "no-store" });
       const value = await response.json();
       setCanGoBack(response.ok && value.active === true && value.canGoBack === true);
-    } catch { setCanGoBack(false); }
+      setWorkflowMarketCapUsd(response.ok && Number.isFinite(value.currentMarketCapUsd) && value.currentMarketCapUsd > 0
+        ? value.currentMarketCapUsd : undefined);
+    } catch { setCanGoBack(false); setWorkflowMarketCapUsd(undefined); }
   }, []);
   useEffect(() => { void refreshWorkflow(); }, [latestMessageKey, refreshWorkflow]);
 
@@ -230,9 +238,23 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
     setActing(`${kind}:${position.id}`);
-    await submit({ channel: "terminal_chat", text: kind === "claim" ? `claim LP fees for ${position.id}` : `withdraw ${position.id}` });
-    window.setTimeout(() => { void refresh(); setActing(undefined); }, 5_000);
+    setActingStartedAt(Date.now());
+    await submit({ channel: "terminal_chat", text: kind === "claim" ? `claim LP fees for ${position.id}` : `withdraw ${position.id}` }, "management");
+    void refresh();
   };
+  useEffect(() => {
+    if (!acting || !actingStartedAt) return;
+    const completed = [...messages].reverse().find(message => message.role === "assistant"
+      && message.requestId?.startsWith("liquidity-management_") && message.createdAt >= actingStartedAt
+      && /confirmed|failed|couldn.?t|not enough|no (?:LP )?fees|nothing (?:to )?collect|withdrawn|collected/i.test(message.text));
+    if (!completed) return;
+    void refresh().finally(() => { setActing(undefined); setActingStartedAt(0); });
+  }, [acting, actingStartedAt, messages, refresh]);
+  useEffect(() => {
+    if (!actingStartedAt) return;
+    const timer = window.setTimeout(() => { setActing(undefined); setActingStartedAt(0); void refresh(); }, 120_000);
+    return () => window.clearTimeout(timer);
+  }, [actingStartedAt, refresh]);
   const visible = positions.filter(position => position.status === tab);
   const guideMessages = liquidityGuideMessages(messages);
   const latestAssistant = [...guideMessages].reverse().find(message => message.role === "assistant");
@@ -241,7 +263,9 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const feeChoiceStep = latestAssistant ? /swap fee|fee percentage|fee tier/i.test(latestAssistant.text) : false;
   const shapeChoiceStep = latestAssistant ? /shape distribution|flat.+bell.+bid[- ]ask/is.test(latestAssistant.text) : false;
   const rangeChoiceStep = latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover/i.test(latestAssistant.text) : false;
-  const currentMarketCap = currentMarketCapFromMessages(guideMessages);
+  // The saved workflow is authoritative. Parsing rendered messages remains a
+  // fallback for a response that arrives just before the workflow-state fetch.
+  const currentMarketCap = workflowMarketCapUsd ?? currentMarketCapFromMessages(guideMessages);
   const sliderMaximum = currentMarketCap ? currentMarketCap * 2 : 0;
   const sliderLower = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeLower) ?? currentMarketCap * .5)) : 0;
   const sliderUpper = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeUpper) ?? currentMarketCap * 1.5)) : 0;
@@ -331,6 +355,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
           </dl>
           {position.status === "active" ? <footer>
             {position.live?.range.inRange === false ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p> : <span />}
+            {position.lastClaim?.items.length ? <p className="liquidity-claim-success">You claimed {position.lastClaim.items.map(fee => `${amount(fee.amount)} ${fee.symbol}${fee.usd === undefined ? "" : ` (${money(fee.usd)})`}`).join(" + ")}.</p> : null}
             <div className="liquidity-position-actions"><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? "Collecting…" : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? "Withdrawing…" : "Withdraw"}</button></div>
           </footer> : null}
         </article>;
