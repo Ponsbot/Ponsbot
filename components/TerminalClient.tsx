@@ -243,7 +243,8 @@ export function TerminalClient() {
   if (!session?.authenticated) return <section className="terminal-shell terminal-signed-out"><div className="terminal-connect-modal" role="dialog" aria-modal="true"><h2>Connect to X to use the terminal.</h2><a className="button button-dark" href="/api/auth/x/start?returnTo=/terminal">Connect X</a></div></section>;
 
   const terminalDisplayMessages = (data?.history.messages || []).filter(
-    (message) => !message.requestId?.startsWith("liquidity-builder_"),
+    (message) => !message.requestId?.startsWith("liquidity-builder_")
+      && !/^👋 Hi there, I'm Pons Bot! Try “show my wallet,” “buy \$20 of PONSBOT,” “swap \$25 of ETH to USDG,” or “launch Pons Bot, ticker PONSBOT.”\s*$/.test(message.text),
   );
 
   return <section className="terminal-shell">

@@ -83,6 +83,19 @@ function LiquidityMessageText({ text }: { text: string }) {
     : <span key={index}><a href={part.url} target="_blank" rel="noreferrer">{part.url}</a>{part.suffix}</span>)}</>;
 }
 
+function terminalLiquidityText(text: string) {
+  const cleaned = text
+    .replace(/\n\s*Your wallet:\s*https?:\/\/\S+/gi, "")
+    .replace(/\bthen reply resume\b/gi, "then click Resume")
+    .replace(/\breply resume\b/gi, "click Resume")
+    .replace(/\breply refresh\b/gi, "click Refresh")
+    .replace(/\breply next\b/gi, "click Next")
+    .replace(/\breply confirm\b/gi, "click Confirm")
+    .replace(/\breply cancel\b/gi, "click Cancel");
+  if (/^📊 What MCap range should your position cover\?/i.test(cleaned)) return "📊 What MCap range should your position cover?";
+  return cleaned;
+}
+
 function LiquidityQuoteDetails({ text }: { text: string }) {
   const sections = text.split(/\n\s*\n/).map(section => section.trim()).filter(Boolean)
     .filter(section => !/^💧 Review your liquidity quote$/i.test(section));
@@ -260,27 +273,30 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div className="liquidity-step-progress"><div><strong>Position setup</strong><span>{busy ? "Updating your setup…" : `Step ${stage} of 4`}</span></div><ol aria-label="Position setup progress">{["Basics", "Pool", "Settings", "Quote"].map((label, index) => <li key={label} className={index + 1 < stage ? "complete" : index + 1 === stage ? "active" : ""}><i>{index + 1 < stage ? "✓" : index + 1}</i><span>{label}</span></li>)}</ol></div>
       <article className="liquidity-current-step">
         <header className={quoteChoiceStep ? "quote" : ""}><span className="liquidity-step-icon">{busy ? "•••" : quoteChoiceStep ? "✓" : "◆"}</span><div><p>{quoteChoiceStep ? "Ready to review" : "Current step"}</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
-        {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={latestAssistant.text} />
-          : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={latestAssistant.text} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
+        {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={terminalLiquidityText(latestAssistant.text)} />
+          : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={terminalLiquidityText(latestAssistant.text)} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
         {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
           const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
           const shape = /bid[- ]ask/i.test(item.label) ? "bid-ask" : /bell/i.test(item.label) ? "bell" : /^flat$/i.test(item.label) ? "flat" : undefined;
           const poolOption = /^pool\s+\d+$/i.test(item.value);
-          return <button key={item.value} className={`${item.emphasis ? "primary " : ""}${poolOption ? "liquidity-pool-option" : ""}`.trim()} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{shape ? <ShapeGraphic shape={shape} /> : null}{description ? poolOption ? <PoolOptionDescription description={description} /> : <span>{description}</span> : null}<i>Choose →</i></button>;
+          const button = <button className={`${item.emphasis ? "primary " : ""}${poolOption ? "liquidity-pool-option" : ""}`.trim()} type="button" disabled={busy} onClick={() => choose(item.value)}>{!poolOption ? <strong>{item.label}</strong> : null}{shape ? <ShapeGraphic shape={shape} /> : null}{description ? poolOption ? <PoolOptionDescription description={description} /> : <span>{description}</span> : null}<i>Choose →</i></button>;
+          return poolOption ? <div className="liquidity-pool-choice" key={item.value}><strong className="liquidity-pool-label">{item.label}</strong>{button}</div> : <div className="liquidity-choice-item" key={item.value}>{button}</div>;
         })}</div> : null}
         {rangeChoiceStep ? <form className="liquidity-range-answer" onSubmit={submitRange}>
           <label>Position MCap range</label>
           {currentMarketCap ? <div className="liquidity-range-slider">
             <div className="liquidity-range-current"><span>Current MCap</span><strong>{mcap(currentMarketCap)}</strong></div>
-            <div className="liquidity-range-controls">
-              <label><span>Lower bound</span><input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} /></label>
-              <label><span>Upper bound</span><input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} /></label>
+            <div className="liquidity-dual-range">
+              <span className="liquidity-dual-range-track" />
+              <span className="liquidity-dual-range-fill" style={{ left: `${Math.min(sliderLower, sliderUpper) / sliderMaximum * 100}%`, right: `${100 - Math.max(sliderLower, sliderUpper) / sliderMaximum * 100}%` }} />
+              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} />
+              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} />
             </div>
-            <div className="liquidity-range-scale"><span>$0</span><span>{mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
+            <div className="liquidity-range-scale"><span>$0</span><span>Current MCap: {mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
             <div className="liquidity-range-selected"><span>Lower <strong>{mcap(Math.min(sliderLower, sliderUpper))}</strong></span><span>Upper <strong>{mcap(Math.max(sliderLower, sliderUpper))}</strong></span></div>
           </div> : null}
-          <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value)} placeholder="100k or 100,000" /></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value)} placeholder="250k or 250,000" /></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
-        </form> : feeChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage, such as 0.25%" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div></form> : null}
+          <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value.replace(/^\$/, ""))} placeholder="100k or 100,000" /></div></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value.replace(/^\$/, ""))} placeholder="250k or 250,000" /></div></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
+        </form> : feeChoiceStep && !poolChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div><small>{/V3/i.test(latestAssistant?.text || "") ? "V3 supports 0.01%, 0.05%, 0.3%, or 1%." : "V4 accepts a custom swap fee up to 10%."}</small></form> : null}
         <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy || !canGoBack} aria-disabled={busy || !canGoBack} onClick={() => choose("back")}>← Back</button><div><button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? "Preparing…" : "Confirm Position"}</button> : null}</div></footer>
       </article>
     </div> : <aside className="liquidity-build-preview" aria-hidden="true">

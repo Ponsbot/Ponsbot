@@ -27,7 +27,7 @@ export const LIQUIDITY_RESPONSES = {
   expired: "⌛ This setup expired. Reply with a complete new liquidity request to start again.",
   cancelled: "Liquidity setup cancelled. No funds were moved.",
   next: "➡️ Reply next to see the remaining details.",
-  failed: "⚠️ I couldn’t complete that step. Your choices are saved. Reply refresh to retry, or cancel.",
+  failed: "⚠️ A required market, wallet, or quote check didn’t finish. Your choices are saved. Reply refresh to retry, or cancel.",
   unresolved: "🔎 I couldn’t identify one matching token. Reply with its contract address.",
   position: "🔎 Which position? Provide its ID, with or without LP-. Say show my liquidity positions to see your list.",
   notOwner: "⚠️ That position doesn’t belong to your wallet.",
