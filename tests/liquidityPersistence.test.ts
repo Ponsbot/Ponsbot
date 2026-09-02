@@ -13,7 +13,7 @@ import { openRouter } from "../convex/llm";
 import { discoverLiquidityPools } from "../lib/liquidity-markets";
 import { newLiquidityDraft } from "../lib/liquidity-workflow";
 import { liquidityPoolId, liquidityPoolKey, prepareLiquidityOpen, prepareLiquidityClaim, prepareLiquidityClose } from "../lib/liquidity-contracts";
-import { recordTerminalMessage } from "../convex/wallets";
+import { consumeTerminalLiquiditySearch, recordTerminalMessage } from "../convex/wallets";
 // Test the actual Convex handlers against a small indexed in-memory store.
 // No deployment, network, AI, wallet, or X publication is involved.
 type Row = Record<string, any>; // Test-only fake database records.
@@ -54,7 +54,7 @@ async function invoke(fn: unknown, ctx: unknown, args: unknown): Promise<any> {
   (ctx as { beginCall?: () => void }).beginCall?.();
   return (fn as { _handler: (ctx: unknown, args: unknown) => unknown })._handler(ctx, args);
 }
-const base = { ownerXUserId: LIQUIDITY_TEST_OWNER, source: "terminal", scope: "terminal:web_example", requestKey: "terminal:unique-event-001", text: "create a liquidity position for PONSBOT" };
+const base = { ownerXUserId: LIQUIDITY_TEST_OWNER, source: "terminal", scope: "terminal:web_example_session_001", requestKey: "terminal:unique-event-001", text: "create a liquidity position for PONSBOT" };
 async function setup(ownerXUserId: string = LIQUIDITY_TEST_OWNER) {
   const ctx = store();
   const address = ownerXUserId === LIQUIDITY_TERMINAL_TEST_OWNER ? LIQUIDITY_TERMINAL_TEST_WALLET : LIQUIDITY_TEST_WALLET;
@@ -124,7 +124,7 @@ describe("public authenticated liquidity access", () => {
   });
 });
 function actionContext(ctx: ReturnType<typeof store>) {
-  const mutations: Record<string, unknown> = { reserveTurn, saveTurn, queueExecution };
+  const mutations: Record<string, unknown> = { reserveTurn, saveTurn, queueExecution, consumeTerminalLiquiditySearch };
   return {
     runMutation: vi.fn((ref, args) => invoke(mutations[getFunctionName(ref).split(":")[1]], ctx, args)),
     runQuery: vi.fn((ref, args) => {
