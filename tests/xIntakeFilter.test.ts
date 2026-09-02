@@ -1,18 +1,18 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { effectiveXIntakeFilters, intakeSourceTransition, restrictedXIntakeEnabled, restrictedXSearchQuery, verifiedXReadsOnly, excludedXReadCountries } from "../lib/x-intake-filter";
+import { effectiveXIntakeFilters, intakeSourceTransition, restrictedXIntakeEnabled, restrictedXSearchQuery, verifiedXReadsOnly, excludedXReadCountries, walletBalanceReadsExcluded } from "../lib/x-intake-filter";
 beforeEach(() => vi.stubEnv("X_READ_EXCLUDE_SHOW_MY_WALLET", "false"));
 afterEach(() => vi.unstubAllEnvs());
-it("ignores the retired country exclusion setting", () => {
+it("ignores the retired country setting while enforcing the code-owned Indonesia exclusion", () => {
   vi.stubEnv("X_READ_EXCLUDED_COUNTRIES", "in, BD,IN");
   vi.stubEnv("X_READ_VERIFIED_ONLY", "false"); vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false");
-  expect(excludedXReadCountries()).toEqual([]);
-  expect(restrictedXIntakeEnabled()).toBe(false);
-  expect(restrictedXSearchQuery(false, false, excludedXReadCountries())).not.toContain("place_country");
+  expect(excludedXReadCountries()).toEqual(["ID"]);
+  expect(restrictedXIntakeEnabled()).toBe(true);
+  expect(restrictedXSearchQuery(false, false, excludedXReadCountries())).toContain("-place_country:ID");
 });
-it("only enables on explicit true", () => {
+it("only enables the wallet-balance exclusion on explicit true", () => {
   vi.stubEnv("X_READ_VERIFIED_ONLY", "false");
-  vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false"); expect(restrictedXIntakeEnabled()).toBe(false);
-  vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "true"); expect(restrictedXIntakeEnabled()).toBe(true);
+  vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false"); expect(walletBalanceReadsExcluded()).toBe(false);
+  vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "true"); expect(walletBalanceReadsExcluded()).toBe(true);
 });
 it("supports independent and combined verified-only filtering", () => {
   vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false");
@@ -45,7 +45,7 @@ it("supports a standalone exact phrase filter without excluding other wallet or 
   const f = effectiveXIntakeFilters();
   expect(f.restricted).toBe(true); expect(restrictedXIntakeEnabled()).toBe(true);
   expect(restrictedXSearchQuery(f.excludeWalletBalance, f.verifiedOnly, f.countries, f.excludeShowMyWallet))
-    .toBe('(@ponsbotfamily OR to:ponsbotfamily) -"show my wallet" -is:retweet -from:ponsbotfamily');
+    .toBe('(@ponsbotfamily OR to:ponsbotfamily) -"show my wallet" -is:retweet -from:ponsbotfamily -place_country:ID');
   expect(effectiveXIntakeFilters({ excludeWalletBalance: false, verifiedOnly: false }).excludeShowMyWallet).toBe(true);
 });
 it("resets endpoint pagination when the phrase filter changes, including alongside broader restrictions", () => {

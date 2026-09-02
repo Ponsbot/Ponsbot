@@ -1,7 +1,9 @@
 export type ReplyPriority = "A" | "B" | "C";
 export const REPLY_QUEUE_WINDOW_MS = 2 * 60_000;
-export const REPLY_QUEUE_WINDOW_LIMIT = 3; // floor(1.67 * 2); never round up to four.
+export const REPLY_QUEUE_WINDOW_LIMIT = 3; // Cautious/high mode: floor(1.67 * 2).
+export const REPLY_QUEUE_NORMAL_WINDOW_LIMIT = 6;
 export const REPLY_QUEUE_C_GAP_MS = 3 * 60_000;
+export const REPLY_QUEUE_NORMAL_C_GAP_MS = 60_000;
 export const X_POST_WINDOW_15_MINUTES_MS = 15 * 60_000;
 export const X_POST_WINDOW_15_MINUTES_LIMIT = 100;
 export const X_POST_WINDOW_3_HOURS_MS = 3 * 60 * 60_000;
@@ -44,6 +46,25 @@ export function replyQueueWaitMs(attempts: QueueAttempt[], priority: ReplyPriori
     const recent = records.filter(a => a.at > now - ms);
     return recent.length >= max ? recent[recent.length - max].at + ms - now : 0;
   };
+  const threeHourAttempts = sorted.filter(a => a.at > now - X_POST_WINDOW_3_HOURS_MS);
+  const threeHourUsage = threeHourAttempts.length / X_POST_WINDOW_3_HOURS_LIMIT;
+  const normal = threeHourUsage < 0.65;
+  const high = threeHourUsage >= 0.8;
+  const critical = threeHourUsage >= 0.9;
+  const dynamicShortLimit = normal ? REPLY_QUEUE_NORMAL_WINDOW_LIMIT : REPLY_QUEUE_WINDOW_LIMIT;
+  const dynamicCGapMs = normal ? REPLY_QUEUE_NORMAL_C_GAP_MS : REPLY_QUEUE_C_GAP_MS;
+  const waitUntilBelow = (limit: number) => {
+    if (threeHourAttempts.length < limit) return 0;
+    return threeHourAttempts[threeHourAttempts.length - limit].at + X_POST_WINDOW_3_HOURS_MS - now;
+  };
+  // At 80% of the rolling three-hour allowance, preserve capacity for A/B.
+  // At 90%, preserve it for A only. Rows remain queued and resume as soon as
+  // the oldest attempts age out of the applicable rolling threshold.
+  const priorityPressureWait = critical && priority !== "A"
+    ? waitUntilBelow(Math.ceil(X_POST_WINDOW_3_HOURS_LIMIT * 0.9))
+    : high && priority === "C"
+      ? waitUntilBelow(Math.ceil(X_POST_WINDOW_3_HOURS_LIMIT * 0.8))
+      : 0;
   const lastC = sorted.filter(a => a.priority === "C").at(-1)?.at;
   // Only trusted workflow kind exempts LP replies, never priority or text.
   // Legacy attempts without a kind conservatively remain in the short window.
@@ -54,12 +75,13 @@ export function replyQueueWaitMs(attempts: QueueAttempt[], priority: ReplyPriori
   const shortWindowExempt = kind === "liquidity" || kind === "guided_reply" || kind === "guided_execution" || kind === "thread_continuation";
   const shortWait = shortWindowExempt ? 0 : windowWait(
     REPLY_QUEUE_WINDOW_MS,
-    REPLY_QUEUE_WINDOW_LIMIT,
+    dynamicShortLimit,
     sorted.filter(a => !["liquidity", "guided_reply", "guided_execution", "thread_continuation"].includes(a.kind ?? "")),
   );
   return Math.max(0, (header?.blockedUntil ?? now) - now, shortWait,
     windowWait(X_POST_WINDOW_15_MINUTES_MS, X_POST_WINDOW_15_MINUTES_LIMIT),
     windowWait(X_POST_WINDOW_3_HOURS_MS, X_POST_WINDOW_3_HOURS_LIMIT),
-    priority === "C" && lastC !== undefined ? lastC + REPLY_QUEUE_C_GAP_MS - now : 0,
+    priorityPressureWait,
+    priority === "C" && lastC !== undefined ? lastC + dynamicCGapMs - now : 0,
     header?.remaining !== undefined && header.remaining <= 0 && header.reset ? header.reset * 1_000 - now : 0);
 }

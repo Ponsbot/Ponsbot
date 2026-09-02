@@ -293,17 +293,35 @@ describe("guided help thread ownership", () => {
 });
 
 describe("pacing math", () => {
-  it("fits three, not four, into a rolling two-minute chunk", () => {
-    const now = Date.now(), attempts = [0, 10, 20].map(delta => ({ at: now + delta }));
-    expect(replyQueueWaitMs(attempts.slice(0, 2), "A", now + 30)).toBe(0);
+  it("fits six, not seven, into a rolling two-minute chunk below 65% usage", () => {
+    const now = Date.now(), attempts = [0, 10, 20, 30, 40, 50].map(delta => ({ at: now + delta }));
+    expect(replyQueueWaitMs(attempts.slice(0, 5), "A", now + 60)).toBe(0);
     expect(replyQueueWaitMs(attempts, "A", now + 119_999)).toBe(1);
     expect(replyQueueWaitMs(attempts, "A", now + 120_000)).toBe(0);
   });
-  it("prevents boundary bursts, while C shares one three-minute gap", () => {
+  it("uses a one-minute C gap below 65% usage", () => {
     const now = Date.now(), attempts = [{ at: now + 119_999, priority: "C" as const }];
-    expect(replyQueueWaitMs(attempts, "C", now + 120_000)).toBe(179_999);
+    expect(replyQueueWaitMs(attempts, "C", now + 120_000)).toBe(59_999);
     expect(replyQueueWaitMs(attempts, "A", now + 120_000)).toBe(0);
     expect(replyQueueWaitMs([], "C", 0)).toBe(0);
+  });
+  it("returns to three per two minutes and a three-minute C gap at 65% usage", () => {
+    const now = Date.now();
+    const old = Array.from({ length: 192 }, (_, index) => ({ at: now - 60 * 60_000 - index }));
+    const recent = [0, 10, 20].map(delta => ({ at: now - delta, priority: "C" as const }));
+    expect(replyQueueWaitMs([...old, ...recent], "A", now)).toBe(119_980);
+    expect(replyQueueWaitMs([...old, ...recent], "C", now)).toBe(180_000);
+  });
+  it("holds C at 80% and B/C at 90% while A remains eligible", () => {
+    const now = Date.now();
+    const attempts240 = Array.from({ length: 240 }, (_, index) => ({ at: now - 60 * 60_000 - index }));
+    expect(replyQueueWaitMs(attempts240, "C", now, undefined, "liquidity")).toBeGreaterThan(0);
+    expect(replyQueueWaitMs(attempts240, "B", now, undefined, "guided_reply")).toBe(0);
+    expect(replyQueueWaitMs(attempts240, "A", now, undefined, "liquidity")).toBe(0);
+    const attempts270 = Array.from({ length: 270 }, (_, index) => ({ at: now - 60 * 60_000 - index }));
+    expect(replyQueueWaitMs(attempts270, "B", now, undefined, "guided_reply")).toBeGreaterThan(0);
+    expect(replyQueueWaitMs(attempts270, "C", now, undefined, "liquidity")).toBeGreaterThan(0);
+    expect(replyQueueWaitMs(attempts270, "A", now, undefined, "liquidity")).toBe(0);
   });
   it("honors real X headers and three-hour capacity at rollout", () => {
     const now = Date.now();
@@ -323,8 +341,8 @@ describe("pacing math", () => {
     expect(replyQueueWaitMs(ordinary, "B", now, undefined, "guided_reply")).toBe(0);
     expect(replyQueueWaitMs(ordinary, "A", now, undefined, "guided_execution")).toBe(0);
     expect(replyQueueWaitMs(ordinary, "B", now, undefined, "thread_continuation")).toBe(0);
-    expect(replyQueueWaitMs(ordinary, "A", now, undefined, "reply")).toBe(120_000);
-    expect(replyQueueWaitMs(ordinary, "A", now, undefined, "houdini_final")).toBe(120_000);
+    expect(replyQueueWaitMs(ordinary, "A", now, undefined, "reply")).toBe(0);
+    expect(replyQueueWaitMs(ordinary, "A", now, undefined, "houdini_final")).toBe(0);
     expect(replyQueueWaitMs(ordinary.map(a => ({ ...a, kind: "liquidity" })), "A", now)).toBe(0);
   });
   it.each(["liquidity", "reply"])("counts LP attempts toward both shared windows for %s", kind => {
@@ -399,7 +417,7 @@ describe("durable queue", () => {
   });
   it("lets LP pass a throttled older A while preserving LP FIFO and ordinary pacing", async () => {
     const ctx = fixture();
-    for (let i = 0; i < 3; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
+    for (let i = 0; i < 6; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
     await add(ctx, "ordinary", "A"); expect(await take(ctx)).toBeNull();
     const oldWake = state(ctx).wakeToken;
     await add(ctx, "lp1", "A", { kind: "liquidity" }); await add(ctx, "lp2", "A", { kind: "liquidity" });
@@ -437,7 +455,7 @@ describe("durable queue", () => {
   });
   it("still checks cancellation when an LP step overtakes the short-window wait", async () => {
     const ctx = fixture();
-    for (let i = 0; i < 3; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
+    for (let i = 0; i < 6; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
     await add(ctx, "ordinary", "A"); await add(ctx, "lp", "A", { kind: "liquidity" });
     ctx.rows.xReplyInteractions.find((r: Row) => r.postId === "lp").commandKind = "operator_cancelled";
     expect(await take(ctx)).toBeNull(); expect(row(ctx, "lp").status).toBe("cancelled");
@@ -461,8 +479,6 @@ describe("durable queue", () => {
     const first = await take(ctx); expect(first.row.key).toBe("a1"); await done(ctx, first);
     const second = await take(ctx); expect(second.row.key).toBe("a2"); await done(ctx, second);
     const third = await take(ctx); expect(third.row.key).toBe("b1"); await done(ctx, third);
-    expect(await take(ctx)).toBeNull();
-    vi.setSystemTime(state(ctx).wakeAt);
     const fourth = await take(ctx); expect(fourth.row.key).toBe("b2"); await done(ctx, fourth);
     expect((await take(ctx)).row.key).toBe("c1");
     expect(ctx.runAction).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();

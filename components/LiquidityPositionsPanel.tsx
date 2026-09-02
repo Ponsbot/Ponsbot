@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { splitTerminalMessage, type TerminalMessageRecord } from "@/lib/terminal-message";
 
 type LiveAsset = { symbol: string; amount: string; usd: number | null; unclaimed: string | null; unclaimedUsd: number | null };
@@ -54,7 +54,37 @@ function LiquidityMessageText({ text }: { text: string }) {
     : <span key={index}><a href={part.url} target="_blank" rel="noreferrer">{part.url}</a>{part.suffix}</span>)}</>;
 }
 
-export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
+function liquidityStepTitle(text: string) {
+  if (/pool options|recommended|\d+\)\s+/i.test(text)) return "Choose a Pool";
+  if (/ETH or USDG|pool pair/i.test(text)) return "Choose a Pair";
+  if (/V3 or V4|Uniswap version/i.test(text)) return "Choose a Version";
+  if (/shape distribution|flat.+bell.+bid[- ]ask/is.test(text)) return "Choose a Shape";
+  if (/how many bands|number of bands|choose.*bands/i.test(text)) return "Choose Your Bands";
+  if (/market cap|MCap range|lower.+upper/is.test(text)) return "Set the Position Range";
+  if (/fee percentage|fee tier/i.test(text)) return "Choose a Fee";
+  if (/review your liquidity quote|confirm to proceed/i.test(text)) return "Review Your Position";
+  if (/not enough|add funds|reply resume/i.test(text)) return "Fund Your Wallet";
+  if (/success|position (?:is )?(?:open|created)|LP-/i.test(text)) return "Position Created";
+  return "Build Your Position";
+}
+
+function optionDescription(label: string, value: string, prompt: string) {
+  const poolNumber = value.match(/^pool\s+(\d+)$/i)?.[1];
+  if (poolNumber) return prompt.match(new RegExp(`(?:^|\\n)\\s*${poolNumber}\\)\\s*([\\s\\S]*?)(?=\\n\\s*\\d{1,2}\\)\\s|\\n\\s*(?:or\\s+)?custom pool|$)`, "i"))?.[1]?.trim();
+  const descriptions: Record<string, string> = {
+    ETH: "Pair the position with ETH.", USDG: "Pair the position with the USD stablecoin.",
+    V3: "Use a concentrated Uniswap V3 position.", V4: "Use Delta Liquidity's shaped V4 position.",
+    Flat: "Spreads liquidity evenly across the selected range.", Bell: "Concentrates more liquidity near the middle of the range.",
+    "Bid-Ask": "Places more liquidity toward both sides of the range.", "Custom Pool": "Choose each pool setting yourself.",
+    Confirm: "Create the position using the displayed quote.", "Make Changes": "Adjust one or more settings before proceeding.",
+    Cancel: "End this setup without moving funds.", Refresh: "Refresh the analysis or quote with current data.",
+    Resume: "Continue after funding your Pons Bot wallet.", Next: "Show the next page of results.",
+    "Withdraw All": "Collect LP fees and close the full position.",
+  };
+  return descriptions[label];
+}
+
+export function LiquidityPositionsPanel({ busy, submit, messages }: {
   busy: boolean;
   submit: (payload: { channel: "terminal_chat"; text: string }) => Promise<void>;
   messages: TerminalMessageRecord[];
@@ -71,7 +101,6 @@ export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
   const [pair, setPair] = useState<"ETH" | "USDG">("ETH");
   const [reply, setReply] = useState("");
-  const guideRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -89,10 +118,6 @@ export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
     const timer = window.setInterval(() => void refresh(), acting ? 5_000 : 60_000);
     return () => window.clearInterval(timer);
   }, [acting, refresh]);
-  useEffect(() => {
-    const guide = guideRef.current;
-    if (guide) guide.scrollTo({ top: guide.scrollHeight, behavior: "smooth" });
-  }, [messages.length]);
 
   const build = (event: FormEvent) => {
     event.preventDefault();
@@ -118,6 +143,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
   const guideMessages = liquidityGuideMessages(messages);
   const latestAssistant = [...guideMessages].reverse().find(message => message.role === "assistant");
   const quickReplies = latestAssistant ? liquidityQuickReplies(latestAssistant.text) : [];
+  const selections = guideMessages.filter(message => message.role === "user").slice(1).slice(-5);
   const choose = (value: string) => void submit({ channel: "terminal_chat", text: value });
 
   return <section className="liquidity-positions-shell">
@@ -126,26 +152,28 @@ export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
       <button type="button" role="tab" aria-selected={view === "positions"} className={view === "positions" ? "active" : ""} onClick={() => setView("positions")}>My Positions <span>{positions.filter(position => position.status === "active").length}</span></button>
     </div>
 
-    {view === "build" ? <div className="liquidity-positions-workspace">
-    <form className="liquidity-builder" onSubmit={build}>
+    {view === "build" ? <div className="liquidity-build-experience">
+    {!guideMessages.length ? <form className="liquidity-builder liquidity-builder-start" onSubmit={build}>
       <div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
-      <label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
-      <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><select value={unit} onChange={event => setUnit(event.target.value as "usd" | "eth")}><option value="usd">USD</option><option value="eth">ETH</option></select></div></label>
-      <label>Pool pair<select value={pair} onChange={event => setPair(event.target.value as "ETH" | "USDG")}><option>ETH</option><option>USDG</option></select></label>
+      <div className="liquidity-start-fields"><label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
+      <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><div className="liquidity-unit-toggle"><button type="button" className={unit === "usd" ? "active" : ""} onClick={() => setUnit("usd")}>USD</button><button type="button" className={unit === "eth" ? "active" : ""} onClick={() => setUnit("eth")}>ETH</button></div></div></label></div>
+      <fieldset className="liquidity-pair-picker"><legend>Choose a pool pair</legend><div><button type="button" className={pair === "ETH" ? "active" : ""} onClick={() => setPair("ETH")}><strong>ETH</strong><span>Pair your token with ETH</span></button><button type="button" className={pair === "USDG" ? "active" : ""} onClick={() => setPair("USDG")}><strong>USDG</strong><span>Pair your token with USDG</span></button></div></fieldset>
       <button className="button button-dark" disabled={busy} type="submit">Analyze Pools</button>
-    </form>
+    </form> : null}
 
-    <div className="liquidity-positions-main">
-      <div className="liquidity-guide-card">
-        <div className="liquidity-guide-head"><div><p className="eyebrow">Interactive setup</p><h2>Position Guide</h2></div>{busy ? <span>Working…</span> : null}</div>
-        <div className="liquidity-guide-history" ref={guideRef} aria-live="polite">
-          {guideMessages.map((message, index) => <div className={`liquidity-guide-message ${message.role}`} key={`${message.requestId || message.createdAt}-${index}`}><small>{message.role === "user" ? `@${username}` : "Pons Bot"}</small><p><LiquidityMessageText text={message.text} /></p></div>)}
-          {!guideMessages.length ? <div className="liquidity-guide-message assistant"><small>Pons Bot</small><p>Enter a token and budget to compare pools and build your position.</p></div> : null}
-        </div>
-        {quickReplies.length ? <div className="liquidity-quick-replies">{quickReplies.map(item => <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}>{item.label}</button>)}</div> : null}
-        <form className="liquidity-guide-reply" onSubmit={replyToGuide}><input value={reply} maxLength={500} onChange={event => setReply(event.target.value)} placeholder="Enter a choice, custom value, or question…" /><button disabled={busy || !reply.trim()} type="submit">Send</button></form>
-      </div>
-    </div>
+    {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
+      <div className="liquidity-step-progress"><div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><strong>Position setup</strong></div><span>{busy ? "Working…" : "In progress"}</span></div>
+      {selections.length ? <div className="liquidity-selection-trail">{selections.map((message, index) => <span key={`${message.requestId || message.createdAt}-${index}`}>{message.text}</span>)}</div> : null}
+      <article className="liquidity-current-step">
+        <header><span className="liquidity-step-icon">{busy ? "•••" : "◆"}</span><div><p>Current step</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
+        <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={latestAssistant.text} /> : "Pons Bot is analyzing the available liquidity pools."}</div>
+        {quickReplies.length ? <div className="liquidity-choice-cards">{quickReplies.map(item => {
+          const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
+          return <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{description ? <span>{description}</span> : null}<i>Choose →</i></button>;
+        })}</div> : null}
+        <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom answer or question</label><div><input id="liquidity-custom-answer" value={reply} maxLength={500} onChange={event => setReply(event.target.value)} placeholder="Type a value, request a change, or ask what this means…" /><button disabled={busy || !reply.trim()} type="submit">Continue</button></div></form>
+      </article>
+    </div> : null}
     </div> : <div className="liquidity-position-list">
       <div className="terminal-section-head"><div><p className="eyebrow">Your positions</p><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>

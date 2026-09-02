@@ -3,10 +3,9 @@ export function restrictedXIntakeEnabled() {
 }
 
 export function excludedXReadCountries() {
-  // Regional intake restrictions were removed. Keep this compatibility helper
-  // returning an empty list so a stale deployment environment variable cannot
-  // silently reinstate country-based filtering.
-  return [] as string[];
+  // Keep this explicit and code-owned so stale deployment environment values
+  // cannot silently broaden the geographic restriction.
+  return ["ID"];
 }
 
 export function walletBalanceReadsExcluded() {
