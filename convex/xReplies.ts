@@ -89,6 +89,7 @@ import {
   GUIDED_REASSIGN_TOKEN_PROMPT,
   withGuidedHelpCompletion,
 } from "../lib/guided-help-workflow";
+import { exceedsXReplyDepthLimit } from "../lib/x-reply-depth-policy";
 import {
   advanceGuidedLaunch,
   createGuidedLaunchState,
@@ -803,7 +804,13 @@ export const guidedHelpContext = internalQuery({
       const intent = parent.parsedIntentJson
         ? decodePersistedXWalletIntent(parent.parsedIntentJson)
         : null;
-      operation = intent?.kind === "help" && intent.topic === "capabilities" ? "root" : null;
+      // Both the general capability menu and the dedicated launch how-to
+      // response are guided entry points. The latter previously published the
+      // right copy without persisting a guided command kind, so "get started"
+      // replies had no workflow context.
+      operation = intent?.kind === "help" && ["capabilities", "launch"].includes(intent.topic)
+        ? "root"
+        : null;
     } catch {
       return null;
     }
@@ -2103,6 +2110,14 @@ export const retryInteraction = internalAction({
             postId, status: "processing", commandKind: guidedHelpCommandKind("root"),
           });
           reply = X_GENERAL_GUIDED_HELP_MESSAGE;
+        } else if (intent.topic === "launch") {
+          // A launch-help response is also the parent prompt for the guided
+          // launch flow. Persist the owner-bound root marker before queuing the
+          // response so an affirmative reply can safely start at the name step.
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId, status: "processing", commandKind: guidedHelpCommandKind("root"),
+          });
+          reply = await helpReply(ctx, intent.topic);
         } else if (guidedOperation) {
           await ctx.runMutation(internal.xReplies.updateInteraction, {
             postId, status: "processing", commandKind: guidedHelpCommandKind(guidedOperation),
@@ -3112,7 +3127,14 @@ export const pollMentions = internalAction({
         if (!workflowAdmission.allowed && !workflowAdmission.notify) continue;
         const workflowCooldownNotice = !workflowAdmission.allowed && workflowAdmission.notify;
         if (liquidityRequest && !liquidityOwnerAllowed(mention.author_id || "") && lpThread !== "redirect") continue;
-        if (replyDepth >= MAX_X_REPLY_DEPTH && !liquidityContinuation && !liquidityRequest && !guidedHelpContinuation?.allowed && !contextualGasHelp && !gasResume) continue;
+        if (exceedsXReplyDepthLimit({
+          replyDepth,
+          maximumDepth: MAX_X_REPLY_DEPTH,
+          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || liquidityContinuation),
+          liquidityRequest,
+          contextualGasHelp,
+          gasResume: Boolean(gasResume),
+        })) continue;
         if (shouldSuppressXResponse(directText)) continue;
         // Replies can inherit every participant in a long conversation and
         // consequently appear in the mentions timeline without addressing the

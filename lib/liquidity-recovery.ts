@@ -33,6 +33,26 @@ export function liquidityRecoveryDue(state: RecoveryState, now: number) {
   return !liquidityRecoveryStopped(state) && (state.nextAttemptAt ?? 0) <= now;
 }
 
+type RetryCall = { purpose: string };
+type RetryStep = { confirmed?: boolean; reverted?: boolean; transactionHash?: string };
+
+/** Return the immutable confirmed prefix that may be reused for an explicit
+ * post-funding retry. Every purchase in the signed plan must already be
+ * receipt-confirmed, and the next step may never be another purchase. */
+export function liquidityFundedRetryPrefix(plan: { operation: string; calls: RetryCall[] }, steps: RetryStep[]) {
+  if (plan.operation !== "open" || !plan.calls.length || steps.length > plan.calls.length) return null;
+  const fundingPurposes = new Set(["funding_buy", "funding_usdg_to_eth"]);
+  const fundingIndexes = plan.calls.map((call, index) => fundingPurposes.has(call.purpose) ? index : -1).filter(index => index >= 0);
+  if (!fundingIndexes.length || fundingIndexes.some(index => !steps[index]?.confirmed || !steps[index]?.transactionHash || steps[index]?.reverted)) return null;
+  const firstIncomplete = steps.findIndex(step => !step.confirmed || step.reverted);
+  const prefixLength = firstIncomplete < 0 ? steps.length : firstIncomplete;
+  const prefix = steps.slice(0, prefixLength);
+  if (prefix.some(step => !step.confirmed || !step.transactionHash || step.reverted)) return null;
+  if (steps.slice(prefixLength).some(step => step.confirmed)) return null;
+  if (prefixLength >= plan.calls.length || fundingPurposes.has(plan.calls[prefixLength]!.purpose)) return null;
+  return prefix;
+}
+
 /** HTTP diagnostics only: never retain an HTML gateway body or signer secrets. */
 export async function liquiditySignerResponse<T>(response: Response): Promise<T> {
   let result: unknown;

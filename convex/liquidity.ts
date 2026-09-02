@@ -15,7 +15,7 @@ import { liquidityStatusMessage, type LiquidityPositionStatus } from "../lib/liq
 import { liquidityNftLines } from "../lib/liquidity-nfts";
 import { formatLiquidityMarketCap } from "../lib/liquidity-market-cap";
 import { decodeFunctionData, keccak256, stringToHex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
-import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, liquidityStepIdempotencyKey, LIQUIDITY_WRITE_ATTEMPTS, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
+import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityFundedRetryPrefix, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, liquidityStepIdempotencyKey, LIQUIDITY_WRITE_ATTEMPTS, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
 import { validateLiquidityQuote, validateLiquidityEnvelope, validateLiquiditySignature, validateLiquidityFinalReceipt, validateLiquidityOpenRefresh } from "../lib/liquidity-wire";
 import { withGuidedHelpCompletion } from "../lib/guided-help-workflow";
 import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
@@ -122,6 +122,39 @@ export const reserveTurn = internalMutation({
       return { handled: true, turnId: previous._id, conversationId: previous.conversationId, publicId: conversation.publicId, revision, state: conversation.stateJson, walletId: conversation.walletId };
     }
     const parent = args.source === "x" && args.parentPostId ? await fromParent(ctx, args.parentPostId) : null;
+    const retryRequested = liquidityControl(args.text)?.kind === "retry";
+    let retryConversation = retryRequested ? parent?.conversation ?? null : null;
+    let retryExecution = retryConversation
+      ? await ctx.db.query("liquidityExecutions").withIndex("by_conversation", q => q.eq("conversationId", retryConversation!._id)).first()
+      : null;
+    if (retryRequested && args.source === "terminal" && !retryExecution) {
+      const recent = await ctx.db.query("liquidityExecutions").withIndex("by_owner_updated", q => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(20);
+      for (const candidate of recent) {
+        if (candidate.status !== "failed") continue;
+        const candidateConversation = await ctx.db.get(candidate.conversationId);
+        if (candidateConversation?.source === "terminal" && candidateConversation.scope === args.scope) {
+          retryConversation = candidateConversation; retryExecution = candidate; break;
+        }
+      }
+    }
+    if (retryRequested && retryConversation && retryExecution && retryConversation.ownerXUserId === args.ownerXUserId
+      && retryExecution.ownerXUserId === args.ownerXUserId && retryExecution.status === "failed") {
+      const retryPlan = JSON.parse(retryExecution.planJson) as LiquidityQuotePlan;
+      const retrySteps = JSON.parse(retryExecution.stepsJson) as SignedStep[];
+      const confirmedPrefix = liquidityFundedRetryPrefix(retryPlan, retrySteps);
+      if (!confirmedPrefix) return { handled: true, message: "⚠️ This request can’t be safely retried from its saved funding steps. Request a new liquidity quote." };
+      if (!liquidityExecutionWindowOpen(retryPlan, Date.now())) return { handled: true, message: "⌛ The position settings are too old to retry safely. Request a new liquidity quote. The assets already purchased remain in your wallet." };
+      const revision = retryConversation.revision + 1;
+      const turnId = await ctx.db.insert("liquidityTurns", { requestKey: args.requestKey, ownerXUserId: args.ownerXUserId,
+        conversationId: retryConversation._id, input: args.text, revision, status: "processing", createdAt: Date.now() });
+      await ctx.db.patch(retryConversation._id, { active: true, revision, currentTurnId: turnId, updatedAt: Date.now(), expiresAt: Date.now() + LIQUIDITY_CONVERSATION_MS });
+      await ctx.db.patch(retryExecution._id, { turnId, status: "running", stage: "user_retry_after_funding", stepsJson: JSON.stringify(confirmedPrefix),
+        response: undefined, diagnostic: "LP_USER_RETRY_AFTER_FUNDING", retryCount: 0, openRecoveryCount: (retryExecution.openRecoveryCount ?? 0) + 1,
+        leaseUntil: 0, nextAttemptAt: undefined, deliveryStatus: undefined, deliveryAttempts: undefined, deliveryNextAttemptAt: undefined,
+        deliveryDiagnostic: undefined, updatedAt: Date.now() });
+      await ctx.scheduler.runAfter(0, internal.liquidity.execute, { executionId: retryExecution._id });
+      return { handled: true, deferred: true, conversationId: retryConversation._id };
+    }
     if (!independentRead && args.source === "x" && args.parentPostId && !parent && await threadConversation(ctx, args.parentPostId))
       return { handled: true, message: R.stale };
     // Give simultaneous top-level status/NFT lookups separate short-lived
@@ -698,6 +731,53 @@ export const replaceOpenPlan = internalMutation({
   },
 });
 type SignedStep = { transactionHash?: string; signedTransaction?: string; toAddress: string; valueWei: string; nonce: number; confirmed?: boolean; reverted?: boolean; blockNumber?: string; received?: string[]; envelope?: { unsignedTransaction: string; toAddress: string; valueWei: string; nonce: number; envelopeProof: string } };
+
+function liquidityFundingStepLabel(plan: LiquidityQuotePlan, callIndex: number) {
+  const assetFunding = new Set(["funding_buy", "funding_usdg_to_eth", "funding_wrap"]);
+  const fundingIndexes = plan.calls.map((call, index) => assetFunding.has(call.purpose) ? index : -1).filter(index => index >= 0);
+  const ordinal = fundingIndexes.indexOf(callIndex);
+  const descriptions = plan.summary.filter(line => /^(?:Buy missing|Wrap)\b/i.test(line));
+  const description = descriptions[ordinal];
+  if (description) return description.replace(/^Buy missing\s+/i, "Buy ").replace(/:\s*/i, " using up to ");
+  const purpose = plan.calls[callIndex]?.purpose;
+  return purpose === "funding_wrap" ? "Wrap ETH into WETH" : purpose === "funding_usdg_to_eth" ? "Convert USDG into ETH" : "Funding purchase";
+}
+
+function liquidityExecutionStepLabel(plan: LiquidityQuotePlan, callIndex: number) {
+  const purpose = plan.calls[callIndex]?.purpose;
+  if (["funding_buy", "funding_usdg_to_eth", "funding_wrap"].includes(purpose)) return liquidityFundingStepLabel(plan, callIndex);
+  if (purpose === "approval" || purpose === "funding_approval") return "Token approval";
+  if (purpose === "approval_reset" || purpose === "funding_approval_reset") return "Token approval reset";
+  if (purpose === "funding_permit2") return "Trading permission";
+  if (purpose === "initialize") return "Pool initialization";
+  if (purpose === "open") return "Delta Liquidity position creation";
+  return "Liquidity transaction step";
+}
+
+function liquidityFundingFailureMessage(plan: LiquidityQuotePlan, steps: SignedStep[]) {
+  const assetFunding = new Set(["funding_buy", "funding_usdg_to_eth", "funding_wrap"]);
+  const fundingIndexes = plan.calls.map((call, index) => assetFunding.has(call.purpose) ? index : -1).filter(index => index >= 0);
+  const completed = plan.calls.map((_, index) => steps[index]?.confirmed && steps[index]?.transactionHash ? index : -1).filter(index => index >= 0);
+  const pending = fundingIndexes.filter(index => !steps[index]?.confirmed);
+  const completedLines = completed.flatMap(index => [
+    `• ${liquidityExecutionStepLabel(plan, index)}: confirmed`,
+    `  TXN: https://robinhoodchain.blockscout.com/tx/${steps[index]!.transactionHash}`,
+  ]);
+  const pendingLines = plan.calls.map((_, index) => !steps[index]?.confirmed ? `• ${liquidityExecutionStepLabel(plan, index)}: not completed` : null).filter((line): line is string => Boolean(line));
+  const allFundingComplete = pending.length === 0;
+  const safelyRetryable = Boolean(liquidityFundedRetryPrefix(plan, steps));
+  return [
+    allFundingComplete
+      ? "⚠️ Funding swaps completed, but the liquidity position did not finish."
+      : "⚠️ Part of the liquidity funding completed, but the liquidity position did not finish.",
+    "", "Completed:", ...completedLines,
+    "", "Not completed:", ...pendingLines,
+    "", "Confirmed purchases remain in your wallet.",
+    safelyRetryable
+      ? "Reply retry to form the position from those saved assets without repeating the buys."
+      : "Request a refreshed quote to continue from your current wallet balances without repeating completed purchases.",
+  ].join("\n");
+}
 export const retryRevertedOpen = internalMutation({
   args: { executionId: v.id("liquidityExecutions") },
   handler: async (ctx, args) => {
@@ -1013,8 +1093,8 @@ export const finishExecution = internalMutation({
         : successMessage
       : steps.some((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim")
         ? `⚠️ Some LP fees were collected, but the remaining request did not complete. Already-collected fees are in your wallet.\n\nCompleted collections:\n\n${steps.flatMap((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim" ? [`${plan.claimPositions?.[i]?.positionId ?? positionId ?? "LP fees"}: ${(s.received ?? []).join(", ")} TXN: https://robinhoodchain.blockscout.com/tx/${s.transactionHash}`] : []).join("\n\n")}`
-      : steps.some((s, i) => s.confirmed && ["funding_buy", "funding_usdg_to_eth"].includes(plan.calls[i]?.purpose))
-        ? "⚠️ Funding swaps completed, but the liquidity position did not finish. Purchased assets remain in your wallet unless deposited by a confirmed step. Check your wallet before requesting a new quote."
+      : steps.some((step, index) => step.confirmed && ["funding_buy", "funding_usdg_to_eth", "funding_wrap"].includes(plan.calls[index]?.purpose))
+        ? liquidityFundingFailureMessage(plan, steps)
       : steps.some(s => s.confirmed) ? "⚠️ The liquidity request stopped after some steps completed. Earlier approvals or wrapping may have succeeded; the failed step was not repeated. Check your wallet before retrying."
         : "❌ The liquidity request failed before any step confirmed. Please request a new quote.";
     const positionIds = [...new Set([

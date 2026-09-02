@@ -244,6 +244,22 @@ describe("guided help thread ownership", () => {
       .toEqual({ operation: "buy", owner: "101", allowed: false, sourceText: "what can you do", sourceExplicitMention: false });
   });
 
+  it("treats a persisted launch how-to response as an owner-bound guided entry point", async () => {
+    const ctx = fixture();
+    await ctx.db.insert("xReplyInteractions", {
+      postId: "launch-help-source", authorXUserId: "101", text: "@Ponsbotfamily how do I launch?",
+      parsedIntentJson: JSON.stringify({ kind: "help", topic: "launch" }),
+      responsePostId: "bot-launch-help-reply", status: "completed",
+      createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    expect(await invoke(replies.guidedHelpContext, ctx, {
+      ownerXUserId: "101", parentPostId: "bot-launch-help-reply",
+    })).toMatchObject({ operation: "root", owner: "101", allowed: true, sourceExplicitMention: true });
+    expect(await invoke(replies.guidedHelpContext, ctx, {
+      ownerXUserId: "202", parentPostId: "bot-launch-help-reply",
+    })).toMatchObject({ operation: "root", owner: "101", allowed: false });
+  });
+
   it("carries an owner-bound guided launch draft only through its published prompt", async () => {
     const ctx = fixture();
     const guidedHelpStateJson = JSON.stringify({ version: 1, phase: "ticker", explicitMentionAuthorized: true, draft: { name: "Green Harbor" } });

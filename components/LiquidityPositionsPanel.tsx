@@ -65,6 +65,7 @@ function liquidityQuickReplies(text: string) {
   if (/review your liquidity quote|confirm to proceed/i.test(text)) add("Confirm", "confirm", true);
   if (/reply refresh|refresh to/i.test(text)) add("Refresh", "refresh", true);
   if (/reply resume|funded.*resume/i.test(text)) add("Resume", "resume", true);
+  if (/reply retry|retry to/i.test(text)) add("Retry", "retry", true);
   if (/reply next|more \(\d+\/\d+\)/i.test(text)) add("Next", "next");
   if (/say yes to withdraw|withdraw the whole/i.test(text)) { add("Withdraw All", "yes", true); add("Cancel", "cancel"); }
   return replies.slice(0, 8);
@@ -99,7 +100,8 @@ function terminalLiquidityText(text: string) {
     .replace(/\breply refresh\b/gi, "click Refresh")
     .replace(/\breply next\b/gi, "click Next")
     .replace(/\breply confirm\b/gi, "click Confirm")
-    .replace(/\breply cancel\b/gi, "click Cancel");
+    .replace(/\breply cancel\b/gi, "click Cancel")
+    .replace(/\breply retry\b/gi, "click Retry");
   if (/^📊 What MCap range should your position cover\?/i.test(cleaned)) return "📊 What MCap range should your position cover?";
   return cleaned;
 }
@@ -167,8 +169,9 @@ function PoolOptionDescription({ description }: { description: string }) {
   </span>;
 }
 
-export function LiquidityPositionsPanel({ busy, submit, messages }: {
+export function LiquidityPositionsPanel({ busy, builderProcessing, submit, messages }: {
   busy: boolean;
+  builderProcessing: boolean;
   submit: (payload: { channel: "terminal_chat"; text: string }, context?: "builder" | "management") => Promise<void>;
   messages: TerminalMessageRecord[];
   username: string;
@@ -340,6 +343,11 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <button className="button button-dark" disabled={busy || !token.trim() || !budget.trim()} type="submit">{guideMessages.length ? "Update Quote" : "Analyze Pools"}</button>
     </form>
 
+    <div className="liquidity-build-stage">
+    {builderProcessing ? <div className="liquidity-processing-status" role="status" aria-live="polite">
+      <span className="liquidity-processing-pulse" aria-hidden="true" />
+      <div><strong>Request processing<AnimatedDots /></strong><span>Pons Bot is preparing your liquidity position. The result will appear here when ready.</span></div>
+    </div> : null}
     {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
       <div className="liquidity-step-progress"><div><strong>Position setup</strong><span>{busy ? <>Updating your setup<AnimatedDots /></> : `Step ${stage} of 4`}</span></div><ol aria-label="Position setup progress">{["Basics", "Pool", "Settings", "Quote"].map((label, index) => <li key={label} className={index + 1 < stage ? "complete" : index + 1 === stage ? "active" : ""}><i>{index + 1 < stage ? "✓" : index + 1}</i><span>{label}</span></li>)}</ol></div>
       <article className="liquidity-current-step">
@@ -376,6 +384,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div className="liquidity-preview-card"><span>2</span><div><strong>Position settings</strong><p>Choose a pool or customize the range, fee, shape, and bands.</p></div></div>
       <div className="liquidity-preview-card"><span>3</span><div><strong>Review and confirm</strong><p>Review the completed position quote before any funds move.</p></div></div>
     </aside>}
+    </div>
     </div> : <div className="liquidity-position-list">
       <div className="terminal-section-head"><div><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>

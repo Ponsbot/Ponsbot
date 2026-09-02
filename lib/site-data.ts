@@ -6,6 +6,7 @@ import { createPublicClient, formatEther, formatUnits, isAddress, parseAbi, type
 import { api } from "@/convex/_generated/api";
 import { tokenUnitPriceUsd, type MarketInfrastructure } from "@/lib/token-market-cap";
 import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
+import { coinGeckoFetch } from "@/lib/coingecko-client";
 import { reliableHttp, retryingRpcFetch } from "@/lib/rpc-http";
 import { mergeWalletTokenHoldings, parseExplorerHoldings, walletBalanceTokens, type PublicHolding, type KnownWalletToken, type RpcTokenHoldings } from "./wallet-holdings";
 export type { PublicHolding } from "./wallet-holdings";
@@ -244,9 +245,22 @@ export async function getWalletHoldings(
 
 async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSignal) {
   const enriched = holdings.map((holding) => ({ ...holding }));
-  const stockAssets = await fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })
-    .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
-    .catch(() => [] as StockAsset[]);
+  const tokenAddresses = enriched.flatMap(holding => holding.address ? [holding.address.toLowerCase()] : []).slice(0, 30);
+  const [stockAssets, geckoTokenPrices] = await Promise.all([
+    fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })
+      .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
+      .catch(() => [] as StockAsset[]),
+    tokenAddresses.length ? coinGeckoFetch(`https://api.coingecko.com/api/v3/onchain/simple/networks/robinhood/token_price/${tokenAddresses.join(",")}`, {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]), cache: "no-store",
+    }).then(async response => {
+      if (!response.ok) return new Map<string, number>();
+      const payload = await response.json() as { data?: { attributes?: { token_prices?: Record<string, string> } } };
+      return new Map(Object.entries(payload.data?.attributes?.token_prices ?? {}).flatMap(([address, raw]) => {
+        const price = Number(raw);
+        return Number.isFinite(price) && price >= 0 ? [[address.toLowerCase(), price] as const] : [];
+      }));
+    }).catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
+  ]);
   const byAddress = new Map<string, StockAsset>();
   for (const asset of stockAssets) {
     const deployment = asset.deployments?.find((item) => item.chainId === 4663);
@@ -279,6 +293,10 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
       if (ethPrice !== undefined) holding.usdValue = balance * ethPrice;
       return;
     }
+    if (holding.symbol.toUpperCase() === "USDG") {
+      holding.usdValue = balance;
+      return;
+    }
     const stock = holding.address ? byAddress.get(holding.address.toLowerCase()) : undefined;
     if (stock) {
       // Robinhood's stock-token artwork can be a generic Robinhood badge.
@@ -292,6 +310,11 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
         const price = ((Number(quote.bid) + Number(quote.ask)) / 2) * Number(stock.currentMultiplier);
         if (Number.isFinite(price) && price >= 0) holding.usdValue = balance * price;
       }
+      return;
+    }
+    const geckoPrice = holding.address ? geckoTokenPrices.get(holding.address.toLowerCase()) : undefined;
+    if (geckoPrice !== undefined) {
+      holding.usdValue = balance * geckoPrice;
       return;
     }
     if (holding.isPonsbotLaunch && holding.address) {

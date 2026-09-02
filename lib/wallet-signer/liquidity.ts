@@ -338,6 +338,12 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
   if (!["open", "claim", "withdraw"].includes(d.operation)) throw new Error("Unsupported liquidity operation");
   if (d.operation === "withdraw" && f.withdrawPercent !== 100) throw new Error("DELTA_PARTIAL_WITHDRAWAL_UNVERIFIED");
   if (!d.tokenAddress || !d.symbol || !f.version || !f.pair || !f.feePips || !f.tickSpacing) throw new Error("Incomplete position parameters");
+  // LP setup is a sequential workflow: one funding purchase can move before
+  // the next purchase is prepared. Three percent accommodates ordinary price
+  // movement while remaining bounded. The final open is repriced against the
+  // assets actually received, so a short fill reduces the formed position
+  // instead of causing another purchase or forcing the original dollar size.
+  const openSlippageBps = f.slippageBps ?? 300;
   const block = await c.getBlock(), version = f.version, token = d.tokenAddress.toLowerCase() as Address;
   // One clock for every deadline-bearing call. Reserve ten minutes after
   // confirmation for funding/approval steps; never extend signed calldata.
@@ -433,7 +439,7 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
     requestedBudgetUsd = budget;
     const max0 = parseUnits((budget * value0 / (value0 + value1) / usd0).toFixed(Math.min(decimals0, 18)), decimals0);
     const max1 = parseUnits((budget * value1 / (value0 + value1) / usd1).toFixed(Math.min(decimals1, 18)), decimals1);
-    const rungs = fundLiquidityBands(bands, sqrt, max0, max1, version === 4 ? (f.slippageBps ?? 100) : 0);
+    const rungs = fundLiquidityBands(bands, sqrt, max0, max1, version === 4 ? openSlippageBps : 0);
     const requirements: LiquidityAssetRequirement[] = [];
     const [ethBalance, usdgBalance, fees] = await Promise.all([
       c.getBalance({ address: owner, blockNumber: block.number }),
@@ -465,14 +471,14 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
     let address = pool as Address;
     if (version === 3 && address === zeroAddress) address = (await c.simulateContract({ address: A.v3Npm, abi: liquidityReadAbi, functionName: "createAndInitializePoolIfNecessary", args: [key.currency0, key.currency1, key.fee, sqrt] })).result;
     if (version === 3) pool = address;
-    calls.push(prepareLiquidityOpen({ version, pool: address, key, bands: rungs, deadline, minimumTick: tick - Math.ceil(Math.log(1 + (f.slippageBps ?? 100) / 10000) / Math.log(1.0001)), maximumTick: tick + Math.ceil(Math.log(1 + (f.slippageBps ?? 100) / 10000) / Math.log(1.0001)), slippageBps: f.slippageBps ?? 100 }));
+    calls.push(prepareLiquidityOpen({ version, pool: address, key, bands: rungs, deadline, minimumTick: tick - Math.ceil(Math.log(1 + openSlippageBps / 10000) / Math.log(1.0001)), maximumTick: tick + Math.ceil(Math.log(1 + openSlippageBps / 10000) / Math.log(1.0001)), slippageBps: openSlippageBps }));
     summary.push(marketCapRange
       ? `Current pool MCap: ${formatLiquidityMarketCap(marketCapRange.referenceUsd)}. Tick-rounded range: ${formatLiquidityMarketCap(marketCapRange.roundedLowerUsd)} to ${formatLiquidityMarketCap(marketCapRange.roundedUpperUsd)} MCap.`
       : `Range ticks ${bands[0].tickLower} to ${bands.at(-1)!.tickUpper}; ${f.bands} NFT band(s).`);
     if (marketCapRange) summary.push("MCap uses total supply and the paired asset's USD price at quote time. Later supply or paired-asset price changes affect the dollar equivalent of fixed pool ticks.");
     const funded = await planLiquidityFunding({ protectedToken: token, ethBalance, usdgBalance, requirements, positionCalls: calls }, {
-      buy: (asset, minimum) => quoteLiquidityPurchase(owner, asset, minimum, f.slippageBps ?? 100, 0, deadline),
-      convertUsdg: (minimum, maximum) => quoteLiquidityUsdgToEth(owner, token, minimum, maximum, f.slippageBps ?? 100),
+      buy: (asset, minimum) => quoteLiquidityPurchase(owner, asset, minimum, openSlippageBps, 0, deadline),
+      convertUsdg: (minimum, maximum) => quoteLiquidityUsdgToEth(owner, token, minimum, maximum, openSlippageBps),
       gasCosts: async sequence => {
         // Virtual ETH is used ONLY to measure the sequential calls. Funding
         // eligibility above uses the real ETH/USDG balances; it cannot treat
@@ -494,7 +500,7 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
   }
   if (expiresAt < Date.now() + LIQUIDITY_MINIMUM_QUOTE_LIFETIME_MS) throw new Error("LIQUIDITY_QUOTE_EXPIRED");
   const unsigned = { owner, token, symbol: d.symbol, version, poolId: pool, operation: d.operation, quoteId: keccak256(stringToHex(`${owner}:${block.number}:${JSON.stringify(calls)}`)), expiresAt, executionDeadline, calls, summary, priorLegs: input.legs,
-    ...(requestedBudgetUsd !== undefined ? { requestedBudgetUsd, minimumFillBps: 9500, slippageBps: f.slippageBps ?? 100, bandWeights,
+    ...(requestedBudgetUsd !== undefined ? { requestedBudgetUsd, minimumFillBps: 9500, slippageBps: openSlippageBps, bandWeights,
       expectedDepositUsd: requestedBudgetUsd, expectedFillBps: 10_000, partialReprice: false } : {}),
     ...(marketCapRange ? { marketCapRange } : {}) };
   return { ...unsigned, proof: proof(unsigned) };

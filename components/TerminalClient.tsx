@@ -39,6 +39,7 @@ export function TerminalClient() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [awaitingLiquidityResult, setAwaitingLiquidityResult] = useState(false);
+  const [liquidityPendingContext, setLiquidityPendingContext] = useState<"builder" | "management" | null>(null);
   const [chat, setChat] = useState("");
   const [workspace, setWorkspace] = useState<"terminal" | "houdini" | "liquidity">("terminal");
   const workspaceRestored = useRef(false);
@@ -103,6 +104,7 @@ export function TerminalClient() {
           && message.requestId?.startsWith("liquidity-result:"))) {
           liquidityPendingSince.current = 0;
           setAwaitingLiquidityResult(false);
+          setLiquidityPendingContext(null);
         }
         if (typeof next.history.updatedThrough === "number") historyCursor.current = Math.max(historyCursor.current, next.history.updatedThrough);
         if (typeof next.history.feesUpdatedThrough === "number") feeHistoryCursor.current = Math.max(feeHistoryCursor.current, next.history.feesUpdatedThrough);
@@ -238,7 +240,9 @@ export function TerminalClient() {
     // selections without affecting persistence, parsing, or execution.
     const requestEventId = eventId(displayContext === "liquidity_builder" ? "liquidity-builder_" : displayContext === "liquidity_management" ? "liquidity-management_" : "");
     if (payload.channel === "terminal_chat") appendLocalUser(payload.text, requestEventId);
+    if (displayContext) setLiquidityPendingContext(displayContext === "liquidity_builder" ? "builder" : "management");
     setBusy(true);
+    let remainsPending = false;
     try {
       const response = await fetch("/api/terminal", { method: "POST", headers: { "content-type": "application/json", "x-pons-csrf": session.csrfToken }, body: JSON.stringify({ ...payload, eventId: requestEventId }) });
       const result = await response.json().catch(() => ({ error: "The terminal request could not be completed." }));
@@ -248,11 +252,20 @@ export function TerminalClient() {
         // record also keeps fast polling enabled if an earlier result matches.
         liquidityPendingSince.current = Date.now() - 5 * 60_000;
         setAwaitingLiquidityResult(true);
+        setLiquidityPendingContext(displayContext === "liquidity_management" ? "management" : "builder");
+        remainsPending = true;
       }
       await refresh();
       void refreshHoldings();
-      if (!response.ok) appendLocalAssistant(result.message || result.error || "The terminal request could not be completed.");
-    } finally { submitInFlight.current = false; setBusy(false); }
+      if (!response.ok) appendLocalAssistant(
+        result.message || result.error || "The terminal request could not be completed.",
+        displayContext ? requestEventId : undefined,
+      );
+    } finally {
+      if (displayContext && !remainsPending) setLiquidityPendingContext(null);
+      submitInFlight.current = false;
+      setBusy(false);
+    }
   };
   const submitChat = (event: FormEvent) => { event.preventDefault(); const text = chat.trim(); if (!text) return; setChat(""); void submit({ channel: "terminal_chat", text }); };
 
@@ -261,6 +274,7 @@ export function TerminalClient() {
 
   const terminalDisplayMessages = (data?.history.messages || []).filter(
     (message) => !message.requestId?.startsWith("liquidity-builder_")
+      && !message.requestId?.startsWith("liquidity-management_")
       && !/^👋 Hi there, I'm Pons Bot! Try “show my wallet,” “buy \$20 of PONSBOT,” “swap \$25 of ETH to USDG,” or “launch Pons Bot, ticker PONSBOT.”\s*$/.test(message.text),
   );
 
@@ -283,7 +297,7 @@ export function TerminalClient() {
         <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, manage liquidity, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
       </div>
     </div> : workspace === "houdini" ? <HoudiniSwapPanel enabled={Boolean(session.houdiniPreviewEnabled)} csrfToken={session.csrfToken || ""} />
-      : <LiquidityPositionsPanel busy={busy} submit={(payload, context = "builder") => submit(payload, context === "management" ? "liquidity_management" : "liquidity_builder")} messages={data?.history.messages || []} username={session.username || "you"} />}
+      : <LiquidityPositionsPanel busy={busy} builderProcessing={liquidityPendingContext === "builder" && (busy || awaitingLiquidityResult)} submit={(payload, context = "builder") => submit(payload, context === "management" ? "liquidity_management" : "liquidity_builder")} messages={data?.history.messages || []} username={session.username || "you"} />}
     {workspace !== "liquidity" ? <><section className="terminal-holdings"><div className="terminal-section-head"><div><p className="eyebrow">Connected wallet</p><h2>Current Holdings</h2></div><CopyAddress address={session.walletAddress!} /></div><div className="terminal-holdings-grid">{(data?.holdings || []).map((holding) => {
       const tokenHref = holding.address && holding.isPonsbotLaunch ? `/launch/${holding.address}` : undefined;
       const icon = <span className="holding-icon">{holding.iconUrl ? <ExternalTokenImage src={holding.iconUrl} name={holding.name} /> : holding.symbol[0]}</span>;
@@ -308,12 +322,12 @@ export function TerminalClient() {
       : <tr key={`houdini-${entry.swap.reviewId}`}><td>{entry.swap.kind.replaceAll("_", " ")}</td><td>{entry.swap.amount} ETH</td><td><TerminalActionToken token={entry.swap.token} /></td><td>Terminal</td><td>{houdiniStatus(entry.swap)}</td><td>{new Date(entry.swap.createdAt).toLocaleString()}</td><td><div className="terminal-action-links">{entry.swap.transactionHash ? <a href={`https://robinhoodchain.blockscout.com/tx/${entry.swap.transactionHash}`} target="_blank" rel="noreferrer">Funding TXN ↗</a> : null}{entry.swap.orderId ? <a href={houdiniOrderUrl(entry.swap.orderId)} target="_blank" rel="noreferrer"><small>Order {entry.swap.orderId} ↗</small></a> : <small>Attempt recorded</small>}</div></td></tr>)}{data && !data.history.actions.length && !data.history.houdiniSwaps?.length && !data.history.feeReceipts?.length ? <tr><td colSpan={7}>No actions yet.</td></tr> : null}</tbody></table></div></section></> : null}
   </section>;
 
-  function appendLocalAssistant(text: string) {
+  function appendLocalAssistant(text: string, requestId?: string) {
     setData((current) => current ? {
       ...current,
       history: {
         ...current.history,
-        messages: [...current.history.messages, { role: "assistant", messageType: "result", text, createdAt: Date.now() }],
+        messages: [...current.history.messages, { role: "assistant", messageType: "result", text, requestId, createdAt: Date.now() }],
       },
     } : current);
   }

@@ -289,10 +289,10 @@ export function inheritLiquidityPositionFields(saved: LiquidityFields, requested
   const { amount: _amount, unit: _unit, withdrawPercent: _withdrawPercent, position: _position, allPositions: _all, ...settings } = saved;
   return liquidityFieldsSchema.parse({ ...settings, ...requested });
 }
-export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: "confirm" | "cancel" | "back" | "continue" | "next" | "refresh" | "choose" | "custom"; id?: string; option?: number } | null {
+export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: "confirm" | "cancel" | "back" | "continue" | "next" | "refresh" | "retry" | "choose" | "custom"; id?: string; option?: number } | null {
   const clean = text.trim().replace(/^(?:@[A-Za-z0-9_]+\s+)+/, "").replace(/[.!]+$/, "").trim();
-  const match = /^(confirm|approve|yes|cancel|no|back|go\s+back|previous(?:\s+step)?|continue|next|refresh|resume)(?:\s+(LQ-[A-F0-9]{8}))?$/i.exec(clean);
-  if (match) return { kind: /confirm|approve|yes/i.test(match[1]) ? "confirm" : /cancel|no/i.test(match[1]) ? "cancel" : /back|previous/i.test(match[1]) ? "back" : /resume/i.test(match[1]) ? "refresh" : match[1].toLowerCase() as "continue" | "next" | "refresh", ...(match[2] ? { id: match[2].toUpperCase() } : {}) };
+  const match = /^(confirm|approve|yes|cancel|no|back|go\s+back|previous(?:\s+step)?|continue|next|refresh|resume|retry)(?:\s+(LQ-[A-F0-9]{8}))?$/i.exec(clean);
+  if (match) return { kind: /confirm|approve|yes/i.test(match[1]) ? "confirm" : /cancel|no/i.test(match[1]) ? "cancel" : /back|previous/i.test(match[1]) ? "back" : /resume/i.test(match[1]) ? "refresh" : match[1].toLowerCase() as "continue" | "next" | "refresh" | "retry", ...(match[2] ? { id: match[2].toUpperCase() } : {}) };
   // Pool replies are often conversational, but remain tightly anchored to a
   // single option number. This accepts "Pool 1" and similarly explicit short
   // choices without treating trade amounts or multi-parameter edits as pool
