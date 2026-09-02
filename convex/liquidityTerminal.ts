@@ -9,7 +9,7 @@ import type { LiquidityQuotePlan } from "../lib/liquidity-quote";
 import type { LiquidityPositionStatus } from "../lib/liquidity-status";
 import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 import { geckoSharedFetch } from "../lib/gecko-shared";
-import { geckoMarketCap } from "../lib/market-index-policy";
+import { geckoLiquidityMarketCap } from "../lib/market-index-policy";
 
 type SignedStep = { received?: string[] };
 type TerminalPositionResult = {
@@ -120,7 +120,7 @@ export const terminalWorkflowState = action({
         );
         if (response.ok) {
           const payload = await response.json() as { data?: Array<{ attributes?: { market_cap_usd?: string | null; fdv_usd?: string | null } }> };
-          const live = (payload.data ?? []).map(pool => geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd))
+          const live = (payload.data ?? []).map(pool => geckoLiquidityMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd))
             .find(value => value !== undefined && Number.isFinite(value) && value > 0);
           if (live !== undefined) currentMarketCapUsd = live;
         }

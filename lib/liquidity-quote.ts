@@ -13,7 +13,7 @@ export const liquidityMarketCapRangeSchema = z.object({
   lowerUsd: z.number().finite().positive(), upperUsd: z.number().finite().positive(),
   referenceUsd: z.number().finite().positive(), roundedLowerUsd: z.number().finite().positive(), roundedUpperUsd: z.number().finite().positive(),
   tickLower: z.number().int().min(-887272).max(887272), tickUpper: z.number().int().min(-887272).max(887272),
-}).strict().refine(r => r.lowerUsd < r.referenceUsd && r.referenceUsd < r.upperUsd && r.tickLower < r.tickUpper
+}).strict().refine(r => r.lowerUsd < r.upperUsd && r.tickLower < r.tickUpper
   && r.roundedLowerUsd <= r.lowerUsd * (1 + 1e-10) && r.roundedUpperUsd >= r.upperUsd * (1 - 1e-10));
 
 // Shared wire type only. Keep signer/Next.js implementation dependencies out of

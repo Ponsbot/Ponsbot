@@ -3,6 +3,7 @@ import { liquidityMarketCapInput, parseLiquidityMarketCap } from "../lib/liquidi
 import { liquidityMarketCapBands, liquiditySqrtTick } from "../lib/liquidity-math";
 import { newLiquidityDraft, updateLiquidityFields, validateLiquidityReview, liquidityStepFields } from "../lib/liquidity-workflow";
 import { liquidityResponseLines } from "../lib/liquidity-responses";
+import { liquidityMarketCapRangeSchema } from "../lib/liquidity-quote";
 vi.mock("../convex/llm", () => ({ openRouter: vi.fn() }));
 import { openRouter } from "../convex/llm";
 import { extractLiquidityFields, liquidityEvidenceMatches } from "../convex/liquidityAi";
@@ -71,5 +72,6 @@ describe("absolute MCap conversion (no RPC)", () => {
     const result = liquidityMarketCapBands({ lowerUsd: 10000, upperUsd: 20000, supply: 1e6, pairedAssetUsd: 1, tokenDecimals: 18, pairDecimals: 18, tokenIs0: true, sqrt: liquiditySqrtTick(0), spacing: 60, count: 1, shape: "flat" });
     expect(result.bands).toHaveLength(1);
     expect(result.range.referenceUsd).toBeGreaterThan(result.range.upperUsd);
+    expect(() => liquidityMarketCapRangeSchema.parse(result.range)).not.toThrow();
   });
 });

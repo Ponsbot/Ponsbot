@@ -12,6 +12,16 @@ export function geckoMarketCap(marketCap: unknown, fdv: unknown) {
   return Number.isFinite(fallback) && fallback > 0 ? fallback : undefined;
 }
 
+// Liquidity bounds are converted to fixed ticks using total token supply.
+// Gecko's market_cap_usd can use circulating supply, so its FDV field is the
+// matching live valuation for this particular interface.
+export function geckoLiquidityMarketCap(marketCap: unknown, fdv: unknown) {
+  const totalSupplyValue = Number(fdv);
+  if (Number.isFinite(totalSupplyValue) && totalSupplyValue > 0) return totalSupplyValue;
+  const fallback = Number(marketCap);
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : undefined;
+}
+
 export function freshMarketCap(value: number | undefined, updatedAt: number | undefined, now: number) {
   return value !== undefined && Number.isFinite(value) && value >= 0
     && updatedAt !== undefined && now - updatedAt < CURRENT_MARKET_CAP_TTL_MS;

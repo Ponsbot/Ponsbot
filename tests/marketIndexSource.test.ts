@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATALOG_GECKO_REFRESH_MS, catalogMarketRefreshDue, CURRENT_MARKET_CAP_TTL_MS, freshMarketCap, geckoMarketCap, v4TokenTradeKind } from "../lib/market-index-policy";
+import { CATALOG_GECKO_REFRESH_MS, catalogMarketRefreshDue, CURRENT_MARKET_CAP_TTL_MS, freshMarketCap, geckoLiquidityMarketCap, geckoMarketCap, v4TokenTradeKind } from "../lib/market-index-policy";
 
 describe("market index source selection", () => {
   it("prefers a verified Gecko market cap over FDV", () => {
@@ -8,6 +8,11 @@ describe("market index source selection", () => {
 
   it("uses Gecko FDV for an unverified newly launched token", () => {
     expect(geckoMarketCap(null, "150000")).toBe(150000);
+  });
+
+  it("uses total-supply valuation for liquidity bounds", () => {
+    expect(geckoLiquidityMarketCap("210000000", "420000000")).toBe(420000000);
+    expect(geckoLiquidityMarketCap("210000000", null)).toBe(210000000);
   });
 
   it("rejects missing and invalid Gecko values", () => {
