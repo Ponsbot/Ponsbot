@@ -3119,6 +3119,14 @@ export const pollMentions = internalAction({
         const botParentAuthorized = Boolean(parentPostId && (
           directBotReply || referencedTweets.get(parentPostId)?.author_id === botUserId
         ));
+        const directOperation = straightforwardCommandOperation(directText);
+        // A same-owner reply to one of our own responses may ask for their
+        // wallet instead of following the response's suggested continuation.
+        // Treat that as an independent read-only command, even in an old/deep
+        // conversation; never replay the prior transaction unless they use a
+        // recognized resume response.
+        const ownedBotSelfWalletRequest = ownedBotReply === true
+          && (directOperation === "show_wallet" || directOperation === "show_balance");
         const workflowAdmission = guidedHelpContinuation?.allowed || liquidityContinuation || ownedBotReply
           ? await ctx.runMutation(internal.xReplies.admitWorkflowContinuation, {
               ownerXUserId: mention.author_id || "", postId: mention.id,
@@ -3133,7 +3141,12 @@ export const pollMentions = internalAction({
           guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || liquidityContinuation),
           liquidityRequest,
           contextualGasHelp,
-          gasResume: Boolean(gasResume),
+          // The parent prompt is explicitly waiting for a response. Do not
+          // apply the generic conversation-depth cutoff merely because the
+          // owner answered with a question or another valid command instead
+          // of the suggested word "resume".
+          expectedGasResumeReply: insufficientContext?.resumable === true,
+          ownedBotSelfWalletRequest,
         })) continue;
         if (shouldSuppressXResponse(directText)) continue;
         // Replies can inherit every participant in a long conversation and

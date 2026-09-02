@@ -8,7 +8,8 @@ const check = (overrides: Partial<Parameters<typeof exceedsXReplyDepthLimit>[0]>
     guidedWorkflow: false,
     liquidityRequest: false,
     contextualGasHelp: false,
-    gasResume: false,
+    expectedGasResumeReply: false,
+    ownedBotSelfWalletRequest: false,
     ...overrides,
   });
 
@@ -27,5 +28,13 @@ describe("X reply-depth policy", () => {
 
   it("allows ordinary replies below the cutoff", () => {
     expect(check({ replyDepth: 5 })).toBe(false);
+  });
+
+  it("allows a same-owner wallet request directly under a bot response without resuming the prior action", () => {
+    expect(check({ replyDepth: 50, ownedBotSelfWalletRequest: true })).toBe(false);
+  });
+
+  it("does not enforce the cutoff anywhere under an active prompt waiting for a gas-resume response", () => {
+    expect(check({ replyDepth: 50, expectedGasResumeReply: true })).toBe(false);
   });
 });

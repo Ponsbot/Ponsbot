@@ -4,7 +4,8 @@ export function exceedsXReplyDepthLimit(input: {
   guidedWorkflow: boolean;
   liquidityRequest: boolean;
   contextualGasHelp: boolean;
-  gasResume: boolean;
+  expectedGasResumeReply: boolean;
+  ownedBotSelfWalletRequest?: boolean;
 }) {
   if (input.replyDepth < input.maximumDepth) return false;
   // Owner-bound guided workflows are intentionally allowed to continue beyond
@@ -13,5 +14,6 @@ export function exceedsXReplyDepthLimit(input: {
   return !input.guidedWorkflow
     && !input.liquidityRequest
     && !input.contextualGasHelp
-    && !input.gasResume;
+    && !input.expectedGasResumeReply
+    && !input.ownedBotSelfWalletRequest;
 }
