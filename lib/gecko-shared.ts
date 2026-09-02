@@ -55,9 +55,9 @@ export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 
   await client.mutation(api.marketData.completeGecko, { secret, key, leaseId, json, ttlMs, observedAt, throttled: status === 429, paid,
     ...(retryAfter ? { retryAfter } : {}),
   }).catch(() => undefined);
-  // Live consumers retain public GeckoTerminal as a fallback if the paid
-  // endpoint is unavailable. The explicit paid mode is useful for diagnostics;
-  // lifetime volume always selects `free` and never reaches this branch.
+  // Auto consumers retain public GeckoTerminal as a fallback if the paid
+  // endpoint is unavailable. Explicit paid background accounting fails closed
+  // when its shared monthly budget is exhausted rather than escaping the cap.
   if (json === undefined && paid && provider === "auto") {
     const fallback = await geckoSharedFetch(url, ttlMs, timeoutMs, allowStale, waitForSlot, freshAfter, priority, "free").catch(() => undefined);
     if (fallback) return fallback;

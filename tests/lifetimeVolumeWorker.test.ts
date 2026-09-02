@@ -261,6 +261,7 @@ describe("worker integration without external services", () => {
     mocks.gecko.mockResolvedValue(new Response(null, { status: 429, headers: { "retry-after": "180" } }));
     await f.call("requestRefresh"); expect(await f.call("runRefreshBatch", { generation: f.state().generation })).toEqual({ checked: 0, status: "rate_limited" });
     expect(mocks.gecko).toHaveBeenCalledTimes(1); expect(f.pending()).toHaveLength(1);
+    expect(mocks.gecko.mock.calls[0][7]).toBe("paid");
     expect(f.tables.tokenLifetimeVolumes[0].confirmedVolumeUsd).toBe(100);
     expect(f.state().blockedUntil).toBe(start + 180_000); expect(f.mutations).not.toContain("site:refreshPlatformStatsCache");
   });

@@ -600,9 +600,11 @@ export const runRefreshBatch = internalAction({
         const before = requestedHistoricalPage ? candidate.backfillBeforeTimestamp : Math.floor(Date.now() / 60_000) * 60 + 1;
         const url = `https://api.geckoterminal.com/api/v2/networks/${NETWORK}/pools/${candidate.poolAddress.toLowerCase()}/ohlcv/hour?aggregate=1&before_timestamp=${before}&limit=${candleLimit}&currency=usd`;
         try {
-          // Lifetime volume intentionally remains on the public GeckoTerminal
-          // allowance and cannot consume paid CoinGecko credits.
-          const response = await geckoSharedFetch(url, 60_000, 15_000, false, true, undefined, "background", "free");
+          // Use the paid CoinGecko onchain endpoint through the shared global
+          // reservation counter. reserveGecko stops all paid consumers at the
+          // lower of the configured 90k safety cap and the account's official
+          // monthly allowance, so this background worker cannot overrun the plan.
+          const response = await geckoSharedFetch(url, 60_000, 15_000, false, true, undefined, "background", "paid");
           if (response.status === 429) {
             retryAfterMs = volumeRetryAfterMs(response.headers.get("retry-after"), Date.now());
             if (response.headers.get("x-gecko-local-deferral") === "1") {
