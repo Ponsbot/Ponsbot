@@ -547,10 +547,28 @@ export function groundedCanonicalCommand(text: string): WalletCommand | null {
   return command.kind === "unknown" ? null : validateExtractedCommand(command, command.kind, text);
 }
 
+function boundedLaunchCommandSegment(text: string) {
+  const botDirected = /(?:^|[\n.!?;])\s*@ponsbot(?:family)?\b[\s,:!-]*(?:please\s+)?((?:launch|deploy|create|make)\b[^\n.!?;]*)/i.exec(text)?.[1]?.trim();
+  if (botDirected && /\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i.test(botDirected)) return botDirected;
+  const marker = /(?:^|[\n.!?;])\s*(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:@ponsbot(?:family)?\b[\s,:!-]*)*(?:please\s+)?(?:launch|deploy|create|make)\b/gi;
+  let match: RegExpExecArray | null;
+  while ((match = marker.exec(text))) {
+    const verbOffset = match[0].search(/(?:launch|deploy|create|make)\b/i);
+    if (verbOffset < 0) continue;
+    const start = match.index + verbOffset;
+    const remainder = text.slice(start);
+    const end = remainder.search(/[\n.!?;]/);
+    const candidate = (end < 0 ? remainder : remainder.slice(0, end)).trim();
+    if (/\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i.test(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function straightforwardCommandOperation(text: string): WalletOperation | null {
   if (hasPromptInjection(text)) return null;
   if (parseFeeUpgradePhrase(text)?.kind === "upgrade_fees") return "upgrade_fees";
   if (hasNonExecutableFraming(text)) return null;
+  const embeddedLaunchSegment = boundedLaunchCommandSegment(text);
   const unquoted = withoutQuotedContent(text);
   const bare = unquoted
     .replace(/@ponsbotfamily\b/gi, " ")
@@ -560,13 +578,19 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
   if (/^(?:wallet|my wallet|show wallet|show my wallet)$/i.test(bare)) return "show_wallet";
   if (/^(?:create wallet|create my wallet)$/i.test(bare)) return "create_wallet";
   if (/^(?:balance|balances|my balance|wallet balance|holdings|my holdings|portfolio|my portfolio)$/i.test(bare)) return "show_balance";
-  if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(unquoted)) return null;
+  if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(embeddedLaunchSegment ?? unquoted)) return null;
   if (/\b(?:create|open|set\s*up|make|start)\b[\s\S]{0,20}\b(?:my\s+)?wallet\b/i.test(unquoted)
     && !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b/i.test(unquoted)) return "create_wallet";
   if (asksWhatIsInMyWallet(text)) return "show_balance";
   if (requestedOperations(text).length > 1) return null;
   if (explicitSelfWalletRequest(text)) return "show_wallet";
-  const command = groundedCanonicalCommand(text);
+  let command = groundedCanonicalCommand(text);
+  // Long posts can contain one self-contained launch instruction surrounded by
+  // unrelated narrative. Use only that bounded sentence to establish obvious
+  // intent; the normal extraction stage still receives the full post.
+  if (!command) {
+    if (embeddedLaunchSegment) command = groundedCanonicalCommand(embeddedLaunchSegment);
+  }
   if (!command || command.kind === "unknown") return null;
   const patterns: Partial<Record<WalletOperation, RegExp>> = {
     show_wallet: /\b(?:show|give|tell|what(?:'s|\s+is)|where)\b[\s\S]{0,35}\b(?:my\s+)?(?:wallet|deposit\s+address|receiving\s+address)\b/i,
@@ -648,10 +672,16 @@ export function isPromotionalLaunchReference(text: string) {
   const unquoted = withoutQuotedContent(text);
   if (!/\b(?:launch|launched|launching)\b/i.test(unquoted)) return false;
   const withoutBotMentions = unquoted.replace(/@ponsbot(?:family)?\b/gi, " ").trim();
+  // A real launch instruction may be one sentence inside a much longer post.
+  // Look for a command at a natural sentence/line boundary or immediately
+  // after the bot mention rather than requiring the entire post to begin with
+  // it. The target grammar keeps narrative uses such as "the best way to
+  // launch a project" from becoming executable authority.
+  const boundedDirective = /(?:^|[\n.!?;])\s*(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:@ponsbot(?:family)?\b[\s,:!-]*)*(?:please\s+)?(?:launch|deploy|create|make)\s+(?:(?:me|my|a|an|new|the)\s+){0,3}(?:(?:token|coin)\b|["“'‘]?[A-Za-z0-9][A-Za-z0-9 _.'’“-]{0,60}["”'’]?\s+(?:ticker|symbol|\$[A-Za-z]))/i.test(unquoted);
   const explicitDirective = /^(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:(?:pons\s+)?(?:launch|deploy|create|make)\b|(?:i\s+(?:want|wanna|would\s+like)|we\s+(?:want|would\s+like)|need\s+you|can\s+you|could\s+you|would\s+you|please)\b[\s\S]{0,24}\b(?:launch|deploy|create|make)\b)/i.test(withoutBotMentions)
     || /\b(?:please\s+(?:launch|deploy|create|make)|(?:can|could|would)\s+you\s+(?:launch|deploy|create|make))\b/i.test(unquoted)
     || /\b(?:launch|deploy|create|make)\s+(?:me\s+|a\s+|my\s+)?(?:new\s+)?(?:token|coin)\b/i.test(unquoted);
-  if (explicitDirective) return false;
+  if (explicitDirective || boundedDirective) return false;
 
   // Capability descriptions often appear in promotional feature lists and
   // contain the verb "launch" without asking the bot to launch anything now.
@@ -692,8 +722,13 @@ export function isPromotionalLaunchReference(text: string) {
     /(?:^|\s)(?:ca|contract)\s*:/i,
     /(?:^|\s)(?:tg|telegram)\s*:/i,
     /#[a-zA-Z0-9_]+/,
+    /\b(?:ath|all[-\s]?time\s+high|market\s+cap|mcap|\d+(?:\.\d+)?\s*[km]\s+mc)\b/i,
+    /\b(?:hold(?:er|ers|ing)?|conviction|bullish|ape|early|revenue|undervalued)\b/i,
+    /\b(?:best|easiest|fastest)\s+way\s+to\s+launch\b/i,
   ].reduce((count, pattern) => count + Number(pattern.test(unquoted)), 0);
-  return hasExistingAddress && promotionalSignals >= 2;
+  const discussesExistingToken = /\$[A-Za-z][A-Za-z0-9_]{1,15}\b/.test(unquoted);
+  return (hasExistingAddress && promotionalSignals >= 2)
+    || (discussesExistingToken && promotionalSignals >= 3);
 }
 
 function withoutQuotedContent(text: string) {

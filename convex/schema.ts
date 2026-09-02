@@ -78,6 +78,16 @@ export default defineSchema({
     safeError: v.optional(v.string()),
     publicationAttempted: v.optional(v.boolean()),
     publicationQueued: v.optional(v.boolean()),
+    publicationStatus: v.optional(
+      v.union(
+        v.literal("queued"),
+        v.literal("published"),
+        v.literal("suppressed"),
+        v.literal("blocked"),
+        v.literal("uncertain"),
+        v.literal("failed"),
+      ),
+    ),
     retryCount: v.optional(v.number()),
     nextRetryAt: v.optional(v.number()),
     createdAt: v.number(),

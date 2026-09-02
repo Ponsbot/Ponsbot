@@ -43,12 +43,18 @@ async function settleBindings(ctx: MutationCtx, row: QueueRow, status: "publishe
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", row.postId!)).unique();
     if (interaction && interaction.commandKind !== "operator_cancelled") {
       if (row.kind === "houdini_progress" && status === "published") {
-        await ctx.db.patch(interaction._id, { publicationQueued: false, publicationAttempted: true, updatedAt: now });
+        await ctx.db.patch(interaction._id, {
+          publicationQueued: false,
+          publicationAttempted: true,
+          publicationStatus: "published",
+          updatedAt: now,
+        });
       } else await ctx.db.patch(interaction._id, {
         status: status === "published" ? (row.ok ? "completed" : "rejected") : status === "expired" || status === "cancelled" ? "rejected" : "failed",
         // Blocked/uncertain publications retain ownership of this outcome;
         // generic recovery must never run the user's command again.
         publicationQueued: status === "blocked" || status === "uncertain", publicationAttempted: status === "published" || status === "uncertain",
+        publicationStatus: status === "published" ? "published" : status === "blocked" ? "blocked" : status === "uncertain" ? "uncertain" : "failed",
         nextRetryAt: undefined, ...(responsePostId ? { responsePostId } : {}),
         ...(status === "published" && row.ok && isGuidedHelpCompletion(row.text)
           ? { commandKind: guidedHelpCommandKind("root") }
@@ -112,7 +118,7 @@ export const enqueue = internalMutation({
     if (interaction && args.key === args.postId && ["completed", "rejected"].includes(interaction.status)) return { status: "cancelled" };
     const suppressedReason = temporaryXReplySuppressionReason(args.text);
     if (suppressedReason) {
-      if (interaction) await ctx.db.patch(interaction._id, { status: "rejected", replySuppressedReason: suppressedReason,
+      if (interaction) await ctx.db.patch(interaction._id, { status: "rejected", publicationStatus: "suppressed", replySuppressedReason: suppressedReason,
         nextRetryAt: undefined, safeError: `X response silently suppressed: ${suppressedReason}`, updatedAt: Date.now() });
       return { status: "cancelled" };
     }
@@ -148,7 +154,13 @@ export const enqueue = internalMutation({
       priority, standalone, allowLong: args.allowLong === true, ...(user?.username ? { username: user.username } : {}),
       status: "queued", readyAt: now, expiresAt: replyQueueExpiresAt(priority, now), nextAttemptAt: now, attempts: 0, updatedAt: now,
     });
-    if (interaction) await ctx.db.patch(interaction._id, { publicationQueued: true, status: "publishing", nextRetryAt: undefined, updatedAt: now });
+    if (interaction) await ctx.db.patch(interaction._id, {
+      publicationQueued: true,
+      publicationStatus: "queued",
+      status: "publishing",
+      nextRetryAt: undefined,
+      updatedAt: now,
+    });
     if (args.houdiniQuoteId) await ctx.db.patch(args.houdiniQuoteId, args.kind === "houdini_progress" ? { submissionPublicationStatus: "queued", updatedAt: now } : {
       finalPublicationStatus: "queued", finalPublicationLeaseId: undefined, finalPublicationLeaseUntil: undefined, nextPublicationAttemptAt: undefined, updatedAt: now,
     });

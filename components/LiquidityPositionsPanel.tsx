@@ -196,6 +196,7 @@ export function LiquidityPositionsPanel({ busy, builderProcessing, submit, messa
   const [workflowPhase, setWorkflowPhase] = useState<string>();
   const [builderResetAt, setBuilderResetAt] = useState(0);
   const workflowRefreshSequence = useRef(0);
+  const workflowId = useRef<string | undefined>(undefined);
   const initialLiveRetryAttempted = useRef(false);
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
@@ -234,12 +235,23 @@ export function LiquidityPositionsPanel({ busy, builderProcessing, submit, messa
       const response = await fetch("/api/terminal/liquidity?workflow=1", { cache: "no-store" });
       const value = await response.json();
       if (sequence !== workflowRefreshSequence.current) return;
+      const nextWorkflowId = response.ok && value.active === true && typeof value.workflowId === "string"
+        ? value.workflowId : undefined;
+      if (nextWorkflowId !== workflowId.current) {
+        // Range inputs belong to one quote conversation. Never carry bounds
+        // from an earlier setup into a newly analyzed token or market price.
+        setRangeLower("");
+        setRangeUpper("");
+        workflowId.current = nextWorkflowId;
+      }
       setCanGoBack(response.ok && value.active === true && value.canGoBack === true);
       setWorkflowPhase(response.ok && value.active === true && typeof value.phase === "string" ? value.phase : undefined);
       setWorkflowMarketCapUsd(response.ok && Number.isFinite(value.currentMarketCapUsd) && value.currentMarketCapUsd > 0
         ? value.currentMarketCapUsd : undefined);
     } catch {
       if (sequence !== workflowRefreshSequence.current) return;
+      workflowId.current = undefined;
+      setRangeLower(""); setRangeUpper("");
       setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined);
     }
   }, []);
@@ -320,6 +332,7 @@ export function LiquidityPositionsPanel({ busy, builderProcessing, submit, messa
   const startNewPosition = () => {
     setBuilderResetAt(Math.max(Date.now(), latestAssistant?.createdAt ?? 0));
     setToken(""); setBudget(""); setUnit("usd"); setReply(""); setRangeLower(""); setRangeUpper("");
+    workflowId.current = undefined;
     setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined);
   };
 

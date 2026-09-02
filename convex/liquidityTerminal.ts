@@ -103,9 +103,9 @@ export const terminalPositions = action({
 
 export const terminalWorkflowState = action({
   args: { secret: v.string(), ownerXUserId: v.string(), sessionIdHash: v.string(), sessionId: v.string() },
-  handler: async (ctx, args): Promise<{ active: boolean; phase?: string; canGoBack: boolean; revision?: number; currentMarketCapUsd?: number }> => {
+  handler: async (ctx, args): Promise<{ active: boolean; workflowId?: string; phase?: string; canGoBack: boolean; revision?: number; currentMarketCapUsd?: number }> => {
     if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("LP terminal authorization failed");
-    const record: { stateJson: string; revision: number } | null = await ctx.runQuery(internal.liquidity.terminalWorkflowRecord, {
+    const record: { stateJson: string; revision: number; publicId: string } | null = await ctx.runQuery(internal.liquidity.terminalWorkflowRecord, {
       ownerXUserId: args.ownerXUserId, sessionIdHash: args.sessionIdHash, sessionId: args.sessionId,
     });
     if (!record) return { active: false, canGoBack: false };
@@ -128,6 +128,7 @@ export const terminalWorkflowState = action({
     }
     return {
       active: true,
+      workflowId: record.publicId,
       phase: draft.phase,
       canGoBack: canBackLiquidityDraft(draft),
       revision: record.revision,

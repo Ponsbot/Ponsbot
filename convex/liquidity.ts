@@ -323,7 +323,7 @@ export const terminalWorkflowRecord = internalQuery({
       .withIndex("by_scope_active", q => q.eq("scope", `terminal:${args.sessionId}`).eq("active", true))
       .order("desc").first();
     if (!conversation || conversation.ownerXUserId !== args.ownerXUserId || conversation.source !== "terminal" || conversation.expiresAt <= Date.now()) return null;
-    return { stateJson: conversation.stateJson, revision: conversation.revision };
+    return { stateJson: conversation.stateJson, revision: conversation.revision, publicId: conversation.publicId };
   },
 });
 

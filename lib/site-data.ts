@@ -244,7 +244,16 @@ export async function getWalletHoldings(
 }
 
 async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSignal) {
-  const enriched = holdings.map((holding) => ({ ...holding }));
+  // Values that do not require a remote price lookup should be available even
+  // when CoinGecko or Robinhood pricing takes longer than the holdings budget.
+  const enriched = holdings.map((holding) => {
+    const copy = { ...holding };
+    if (holding.symbol.toUpperCase() === "USDG") {
+      const balance = Number(holding.balance.replace(/,/g, ""));
+      if (Number.isFinite(balance)) copy.usdValue = balance;
+    }
+    return copy;
+  });
   const tokenAddresses = enriched.flatMap(holding => holding.address ? [holding.address.toLowerCase()] : []).slice(0, 30);
   const [stockAssets, geckoTokenPrices] = await Promise.all([
     fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })

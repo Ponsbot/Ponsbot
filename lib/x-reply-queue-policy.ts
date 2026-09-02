@@ -8,9 +8,11 @@ export const X_POST_WINDOW_15_MINUTES_MS = 15 * 60_000;
 export const X_POST_WINDOW_15_MINUTES_LIMIT = 100;
 export const X_POST_WINDOW_3_HOURS_MS = 3 * 60 * 60_000;
 export const X_POST_WINDOW_3_HOURS_LIMIT = 300;
+export const REPLY_QUEUE_B_TTL_MS = 15 * 60_000;
+export const REPLY_QUEUE_C_TTL_MS = 12 * 60_000;
 
 export function replyQueueExpiresAt(priority: ReplyPriority, readyAt: number) {
-  return priority === "A" ? undefined : readyAt + (priority === "B" ? 10 : 7) * 60_000;
+  return priority === "A" ? undefined : readyAt + (priority === "B" ? REPLY_QUEUE_B_TTL_MS : REPLY_QUEUE_C_TTL_MS);
 }
 
 export function replyQueuePriority(text: string, kind?: string, ok?: boolean): ReplyPriority {

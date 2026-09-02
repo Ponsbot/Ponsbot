@@ -32,6 +32,15 @@ function eventId(prefix = "") { return `${prefix}${Date.now().toString(36)}_${cr
 function usd(value: number) { return value > 0 && value < .01 ? "<$0.01" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(value); }
 function shortContract(address?: string) { return address ? `${address.slice(0, 4)}…${address.slice(-3)}` : ""; }
 function houdiniOrderUrl(orderId: string) { return `https://app.houdiniswap.com/order-details?houdiniId=${encodeURIComponent(orderId)}`; }
+function mergeHoldingPrices(previous: Holding[], next: Holding[]) {
+  const prices = new Map(previous.flatMap((holding) => holding.usdValue === undefined ? [] : [[
+    (holding.address || holding.symbol).toLowerCase(), holding.usdValue,
+  ] as const]));
+  return next.map((holding) => holding.usdValue !== undefined ? holding : {
+    ...holding,
+    usdValue: prices.get((holding.address || holding.symbol).toLowerCase()),
+  });
+}
 
 export function TerminalClient() {
   const [session, setSession] = useState<Session | null>(null);
@@ -163,7 +172,7 @@ export function TerminalClient() {
         const next = await response.json() as TerminalData;
         if (Array.isArray(next.holdings)) {
           lastHoldingsRefreshAt.current = Date.now();
-          setData(current => current ? { ...current, holdings: next.holdings } : current);
+          setData(current => current ? { ...current, holdings: mergeHoldingPrices(current.holdings, next.holdings) } : current);
         }
       } else if (response.status === 401) await expireSession();
     } finally { holdingsRefreshing.current = false; }

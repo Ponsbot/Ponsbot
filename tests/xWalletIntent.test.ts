@@ -276,6 +276,22 @@ describe("deterministic X wallet replies", () => {
     const firstPersonLaunch = "@Ponsbotfamily I want to launch Clawpump ticker CLAWPUMP";
     expect(isPromotionalLaunchReference(firstPersonLaunch)).toBe(false);
     expect(straightforwardCommandOperation(firstPersonLaunch)).toBe("launch");
+
+    const promotionalDiscussion = "Pons is doing $900k a day revenue and the best way to launch a project using a bot is with $PONSBOT, now near 400k mcap. Hold with conviction; its ATH can be much higher. @Ponsbotfamily";
+    expect(isPromotionalLaunchReference(promotionalDiscussion)).toBe(true);
+    expect(straightforwardCommandOperation(promotionalDiscussion)).toBeNull();
+
+    const storyThenCommand = "I have been building this community for months and wanted to explain why it matters. There is a long story behind the art and the people supporting it. @Ponsbotfamily launch Story Dog ticker $STORY description \"A community token\"";
+    expect(isPromotionalLaunchReference(storyThenCommand)).toBe(false);
+    expect(groundedCanonicalCommand("launch Story Dog ticker $STORY description \"A community token\"")).toMatchObject({ kind: "launch", name: "Story Dog", symbol: "STORY" });
+    expect(straightforwardCommandOperation(storyThenCommand)).toBe("launch");
+
+    const commandThenStory = "@Ponsbotfamily launch Story Dog ticker $STORY. I have been building this community for months, and here is the long story of why it matters to us.";
+    expect(isPromotionalLaunchReference(commandThenStory)).toBe(false);
+    expect(straightforwardCommandOperation(commandThenStory)).toBe("launch");
+
+    const embeddedExampleQuestion = "Can you explain whether @Ponsbotfamily launch Story Dog ticker $STORY would work?";
+    expect(straightforwardCommandOperation(embeddedExampleQuestion)).toBeNull();
   });
 
   it("rejects targetless buyback-and-burn wording instead of treating ETH as a burn token", async () => {

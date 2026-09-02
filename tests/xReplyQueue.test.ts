@@ -348,8 +348,8 @@ describe("pacing math", () => {
   });
   it("has no A expiry; B/C expire from reply readiness", () => {
     expect(replyQueueExpiresAt("A", 0)).toBeUndefined();
-    expect(replyQueueExpiresAt("B", 0)).toBe(600_000);
-    expect(replyQueueExpiresAt("C", 0)).toBe(420_000);
+    expect(replyQueueExpiresAt("B", 0)).toBe(900_000);
+    expect(replyQueueExpiresAt("C", 0)).toBe(720_000);
   });
   it("exempts trusted workflow continuations from the short window without exempting shared limits", () => {
     const now = Date.now(), ordinary = Array.from({ length: 3 }, () => ({ at: now, priority: "A" as const }));
@@ -416,7 +416,7 @@ describe("durable queue", () => {
     const ctx = fixture();
     await source(ctx, "guided-expiry", "guided_help:buy", { parentPostId: "prior-reply" });
     await invoke(queue.enqueue, ctx, { key: "guided-expiry", postId: "guided-expiry", kind: "reply", ok: true, text: "🟢 What would you like to buy?" });
-    vi.setSystemTime(Date.now() + 10 * 60_000 + 1);
+    vi.setSystemTime(Date.now() + 15 * 60_000 + 1);
     expect(await take(ctx)).toBeNull();
     expect(row(ctx, "guided-expiry").status).toBe("expired");
     expect(ctx.rows.xReplyInteractions[0]).toMatchObject({ status: "rejected", commandKind: "guided_help:cancelled" });
@@ -613,7 +613,19 @@ describe("queue-owned completion bindings", () => {
     const progress = await take(ctx); expect(progress.row.kind).toBe("houdini_progress"); await done(ctx, progress);
     const final = await take(ctx); expect(final.row.postId).toBe("original"); await done(ctx, final);
     expect(await ctx.db.get(quoteId)).toMatchObject({ finalPublicationStatus: "published", submissionPublicationStatus: "published" });
-    expect(ctx.rows.xReplyInteractions[0]).toMatchObject({ status: "completed", publicationQueued: false });
+    expect(ctx.rows.xReplyInteractions[0]).toMatchObject({ status: "completed", publicationQueued: false, publicationStatus: "published" });
+  });
+
+  it("records successful X delivery separately from an expected command rejection", async () => {
+    const ctx = fixture(); await source(ctx, "funding", "launch");
+    expect(await invoke(queue.enqueue, ctx, { key: "funding", postId: "funding", text: "Fund your wallet, then resume.", ok: false, kind: "reply" })).toMatchObject({ status: "queued" });
+    const picked = await take(ctx); await done(ctx, picked);
+    expect(ctx.rows.xReplyInteractions[0]).toMatchObject({
+      status: "rejected",
+      publicationStatus: "published",
+      publicationQueued: false,
+      responsePostId: "reply-funding",
+    });
   });
   it("queues graduation and writes its actual post ID only on delivery", async () => {
     const ctx = fixture(); const launchId = await ctx.db.insert("tokenLaunches", { publicPublished: true, graduationAnnouncementStatus: "posting" });
