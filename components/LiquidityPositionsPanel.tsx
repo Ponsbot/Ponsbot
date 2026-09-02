@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { splitTerminalMessage, type TerminalMessageRecord } from "@/lib/terminal-message";
 
 type LiveAsset = { symbol: string; amount: string; usd: number | null; unclaimed: string | null; unclaimedUsd: number | null };
 type Position = {
@@ -16,10 +17,17 @@ const amount = (value: string) => Number(value).toLocaleString("en-US", { maximu
 const mcap = (value?: number) => value == null ? "—" : value >= 1e9 ? `$${(value / 1e9).toFixed(2)}B` : value >= 1e6 ? `$${(value / 1e6).toFixed(2)}M` : value >= 1e3 ? `$${(value / 1e3).toFixed(1)}K` : `$${value.toFixed(0)}`;
 const short = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`;
 
-export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
+function LiquidityMessageText({ text }: { text: string }) {
+  return <>{splitTerminalMessage(text).map((part, index) => typeof part === "string"
+    ? <span key={index}>{part}</span>
+    : <span key={index}><a href={part.url} target="_blank" rel="noreferrer">{part.url}</a>{part.suffix}</span>)}</>;
+}
+
+export function LiquidityPositionsPanel({ busy, submit, messages, username }: {
   busy: boolean;
   submit: (payload: { channel: "terminal_chat"; text: string }) => Promise<void>;
-  openTerminal: () => void;
+  messages: TerminalMessageRecord[];
+  username: string;
 }) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [tab, setTab] = useState<"active" | "closed">("active");
@@ -30,6 +38,8 @@ export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
   const [budget, setBudget] = useState("");
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
   const [pair, setPair] = useState<"ETH" | "USDG">("ETH");
+  const [reply, setReply] = useState("");
+  const guideRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -47,6 +57,10 @@ export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
     const timer = window.setInterval(() => void refresh(), acting ? 5_000 : 60_000);
     return () => window.clearInterval(timer);
   }, [acting, refresh]);
+  useEffect(() => {
+    const guide = guideRef.current;
+    if (guide) guide.scrollTo({ top: guide.scrollHeight, behavior: "smooth" });
+  }, [messages.length]);
 
   const build = (event: FormEvent) => {
     event.preventDefault();
@@ -54,7 +68,14 @@ export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
     const value = budget.trim();
     if (!symbol || !value) return;
     const text = `create a ${unit === "usd" ? `$${value}` : `${value} ETH`} liquidity position for ${symbol} paired with ${pair}`;
-    void submit({ channel: "terminal_chat", text }).then(openTerminal);
+    void submit({ channel: "terminal_chat", text });
+  };
+  const replyToGuide = (event: FormEvent) => {
+    event.preventDefault();
+    const text = reply.trim();
+    if (!text) return;
+    setReply("");
+    void submit({ channel: "terminal_chat", text });
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
     setActing(`${kind}:${position.id}`);
@@ -65,14 +86,23 @@ export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
 
   return <section className="liquidity-positions-workspace">
     <form className="liquidity-builder" onSubmit={build}>
-      <div><p className="eyebrow">Delta Liquidity</p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
+      <div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
       <label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
       <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><select value={unit} onChange={event => setUnit(event.target.value as "usd" | "eth")}><option value="usd">USD</option><option value="eth">ETH</option></select></div></label>
       <label>Pool pair<select value={pair} onChange={event => setPair(event.target.value as "ETH" | "USDG")}><option>ETH</option><option>USDG</option></select></label>
       <button className="button button-dark" disabled={busy} type="submit">Analyze Pools</button>
     </form>
 
-    <div className="liquidity-position-list">
+    <div className="liquidity-positions-main">
+      <div className="terminal-console liquidity-guide-console">
+        <div className="terminal-log" ref={guideRef} aria-live="polite">
+          {messages.map((message, index) => <div className={`terminal-line ${message.role}`} key={`${message.requestId || message.createdAt}-${index}`}><small>{message.role === "user" ? `@${username}` : "Pons Bot"}</small><p><LiquidityMessageText text={message.text} /></p></div>)}
+          {!messages.length ? <div className="terminal-line assistant"><small>Pons Bot</small><p>Build a position or ask me to manage your Delta Liquidity positions.</p></div> : null}
+        </div>
+        <form className="terminal-chat" onSubmit={replyToGuide}><input value={reply} maxLength={500} onChange={event => setReply(event.target.value)} placeholder="Reply to your liquidity guide…" /><button disabled={busy || !reply.trim()} type="submit">Send</button></form>
+      </div>
+
+      <div className="liquidity-position-list">
       <div className="terminal-section-head"><div><p className="eyebrow">Your positions</p><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>
       {error ? <p className="liquidity-position-error">{error}</p> : null}
@@ -96,6 +126,7 @@ export function LiquidityPositionsPanel({ busy, submit, openTerminal }: {
           {position.status === "active" ? <footer><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? "Collecting…" : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? "Withdrawing…" : "Withdraw"}</button></footer> : null}
         </article>;
       })}</div>
+      </div>
     </div>
   </section>;
 }
