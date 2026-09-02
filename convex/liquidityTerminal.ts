@@ -8,6 +8,8 @@ import type { LiquidityLeg } from "../lib/liquidity-contracts";
 import type { LiquidityQuotePlan } from "../lib/liquidity-quote";
 import type { LiquidityPositionStatus } from "../lib/liquidity-status";
 import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
+import { geckoSharedFetch } from "../lib/gecko-shared";
+import { geckoMarketCap } from "../lib/market-index-policy";
 
 type SignedStep = { received?: string[] };
 type TerminalPositionResult = {
@@ -94,12 +96,28 @@ export const terminalWorkflowState = action({
     });
     if (!record) return { active: false, canGoBack: false };
     const draft = liquidityDraftSchema.parse(JSON.parse(record.stateJson));
+    let currentMarketCapUsd = draft.currentMarketCapUsd;
+    if ((draft.phase === "range" || draft.diagnosticCode?.includes("LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP")) && draft.tokenAddress) {
+      const startedAt = Date.now();
+      try {
+        const response = await geckoSharedFetch(
+          `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${draft.tokenAddress}/pools?page=1`,
+          60_000, 8_000, true, false, startedAt, "interactive",
+        );
+        if (response.ok) {
+          const payload = await response.json() as { data?: Array<{ attributes?: { market_cap_usd?: string | null; fdv_usd?: string | null } }> };
+          const live = (payload.data ?? []).map(pool => geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd))
+            .find(value => value !== undefined && Number.isFinite(value) && value > 0);
+          if (live !== undefined) currentMarketCapUsd = live;
+        }
+      } catch { /* Retain the workflow's last validated MCap if Gecko is unavailable. */ }
+    }
     return {
       active: true,
       phase: draft.phase,
       canGoBack: canBackLiquidityDraft(draft),
       revision: record.revision,
-      ...(draft.currentMarketCapUsd ? { currentMarketCapUsd: draft.currentMarketCapUsd } : {}),
+      ...(currentMarketCapUsd ? { currentMarketCapUsd } : {}),
     };
   },
 });
