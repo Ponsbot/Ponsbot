@@ -4003,7 +4003,7 @@ export const executeCommand = internalAction({
           const resultBlocks = completed.map(item => [
             `${command.burn ? "🔥" : "🟢"} ${item.symbol}: ${significantAmount(item.amount)} ${command.burn ? "burned" : "bought"}${item.usdValue ? ` (${item.usdValue})` : ""}`,
             ponsBotTokenUrl(item.tokenAddress),
-          ].join("\n")).join("\n\n");
+          ].join("\n")).join("\n");
           const transactionLinks = completed.map(item => [
             item.symbol,
             `Buy TXN: ${transactionUrl(item.buyTransactionHash)}`,
