@@ -8,6 +8,23 @@ export const COINGECKO_PAID_REQUESTS_PER_MINUTE = 240;
 export const COINGECKO_PAID_BACKGROUND_REQUESTS_PER_MINUTE = 220;
 export type GeckoPriority = "background" | "interactive";
 
+// Background lifetime-volume work may use up to one day's pro-rated allowance
+// immediately, then must stay below the straight-line monthly budget pace.
+// Returning the first instant at which the current count is back on pace makes
+// the worker defer without consuming a CoinGecko request.
+export function coinGeckoMonthlyPaceRetryAt(periodCount: number, monthlyLimit: number, now: number) {
+  if (!Number.isFinite(periodCount) || !Number.isFinite(monthlyLimit) || monthlyLimit <= 0 || periodCount <= 0) return 0;
+  const date = new Date(now);
+  const monthStart = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
+  const nextMonth = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
+  const duration = nextMonth - monthStart;
+  const oneDay = 24 * 60 * 60_000;
+  const elapsed = Math.max(oneDay, now - monthStart);
+  const allowedNow = Math.floor(monthlyLimit * Math.min(1, elapsed / duration));
+  if (periodCount < allowedNow) return 0;
+  return Math.min(nextMonth, monthStart + Math.ceil(((periodCount + 1) / monthlyLimit) * duration));
+}
+
 /** Use the upstream cooldown globally, not just in the caller that got the 429. */
 export function geckoRetryAt(retryAfter: string | null | undefined, now: number) {
   const seconds = retryAfter?.trim() ? Number(retryAfter) : NaN;

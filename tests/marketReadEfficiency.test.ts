@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquire, complete, completeGecko, recordCoinGeckoUsage, reserveGecko } from "../convex/marketData";
-import { geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
+import { coinGeckoMonthlyPaceRetryAt, geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
 const now = 1_800_000_000_000, token = `0x${"1".repeat(40)}`;
 const handler = (fn: any) => fn._handler;
 function fixture() {
@@ -43,6 +43,28 @@ describe("small-row market refresh guard", () => {
   });
 });
 describe("global Gecko cooldown and pacing", () => {
+  it("defers lifetime volume when paid usage is ahead of its monthly pace", async () => {
+    vi.setSystemTime(Date.UTC(2027, 0, 2));
+    const pacedNow = Date.now();
+    const f = fixture();
+    await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey: "2027-01", periodCount: 4_000 });
+    const result = await f.call(reserveGecko, { key: "coingecko-paid:volume", leaseId: "volume", paid: true, workload: "lifetime_volume" });
+    expect(result).toMatchObject({ acquired: false });
+    expect(result.retryAt).toBeGreaterThan(pacedNow);
+    expect(f.tables.websiteProviderBudget[0].periodCount).toBe(4_000);
+  });
+  it("does not apply the lifetime pace gate to interactive paid requests", async () => {
+    vi.setSystemTime(Date.UTC(2027, 0, 2));
+    const f = fixture();
+    await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey: "2027-01", periodCount: 4_000 });
+    expect(await f.call(reserveGecko, { key: "coingecko-paid:interactive", leaseId: "interactive", paid: true, priority: "interactive" }))
+      .toMatchObject({ acquired: true });
+  });
+  it("calculates the first point where monthly usage returns to pace", () => {
+    const now = Date.UTC(2027, 0, 2);
+    expect(coinGeckoMonthlyPaceRetryAt(2_000, 100_000, now)).toBe(0);
+    expect(coinGeckoMonthlyPaceRetryAt(4_000, 100_000, now)).toBeGreaterThan(now);
+  });
   it("reconciles the official paid counter without lowering locally observed usage", async () => {
     const f = fixture();
     await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey: "2027-01", periodCount: 120 });
@@ -51,11 +73,11 @@ describe("global Gecko cooldown and pacing", () => {
     expect(f.tables.websiteProviderBudget[0]).toMatchObject({ periodCount: 120, officialPeriodCount: 100,
       officialPeriodLimit: 100_000, officialRemaining: 99_900, officialRateLimit: 300, officialPlan: "Basic", officialSyncedAt: now });
   });
-  it("uses a higher official counter to stop paid reservations at the configured safety limit", async () => {
+  it("uses a higher official counter to stop paid reservations at the hard monthly limit", async () => {
     const f = fixture();
     const periodKey = new Date(now).toISOString().slice(0, 7);
     await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey, periodCount: 10,
-      officialPeriodCount: 90_000, officialPeriodLimit: 100_000 });
+      officialPeriodCount: 100_000, officialPeriodLimit: 100_000 });
     expect(await f.call(reserveGecko, { key: "coingecko-paid:test", leaseId: "test", paid: true }))
       .toMatchObject({ acquired: false });
     expect(f.tables.websiteProviderBudget[0].periodCount).toBe(10);

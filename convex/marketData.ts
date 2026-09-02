@@ -3,7 +3,7 @@ import { mutation, query, internalAction, internalMutation, type MutationCtx, ty
 import { internal } from "./_generated/api";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { newerSnapshot, reserveProviderAttempt, snapshotFresh, WEBSITE_MARKET_TTL_MS, WEBSITE_REFRESH_LEASE_MS, WEBSITE_REFRESH_RETRY_MS } from "../lib/website-refresh-policy";
-import { COINGECKO_PAID_REQUESTS_PER_MINUTE, GECKO_REQUESTS_PER_MINUTE, geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
+import { COINGECKO_PAID_REQUESTS_PER_MINUTE, GECKO_REQUESTS_PER_MINUTE, coinGeckoMonthlyPaceRetryAt, geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
 import { activityDue, ACTIVITY_LEASE_MS } from "../lib/token-activity-policy";
 
 function authorize(secret: string) {
@@ -193,8 +193,8 @@ export const writeCache = mutation({
 });
 
 export const reserveGecko = mutation({
-  args: { secret: v.string(), key: v.string(), leaseId: v.string(), freshAfter: v.optional(v.number()), priority: v.optional(v.union(v.literal("background"), v.literal("interactive"))), paid: v.optional(v.boolean()) },
-  handler: async (ctx, { secret, key, leaseId, freshAfter, priority = "background", paid = false }) => {
+  args: { secret: v.string(), key: v.string(), leaseId: v.string(), freshAfter: v.optional(v.number()), priority: v.optional(v.union(v.literal("background"), v.literal("interactive"))), paid: v.optional(v.boolean()), workload: v.optional(v.literal("lifetime_volume")) },
+  handler: async (ctx, { secret, key, leaseId, freshAfter, priority = "background", paid = false, workload }) => {
     authorize(secret);
     if (!(paid ? key.startsWith("coingecko-paid:") : key.startsWith("gecko:")) || key.length > 4_000) throw new Error("invalid Gecko cache key");
     const now = Date.now();
@@ -208,15 +208,19 @@ export const reserveGecko = mutation({
     const providerKey = paid ? "coingecko-paid" : "gecko";
     const provider = await ctx.db.query("websiteProviderBudget").withIndex("by_key", q => q.eq("key", providerKey)).unique();
     const periodKey = new Date(now).toISOString().slice(0, 7);
-    const configuredMonthly = Number(process.env.COINGECKO_PAID_MONTHLY_REQUEST_LIMIT || 90_000);
-    const monthlyLimit = Number.isFinite(configuredMonthly) ? Math.min(Math.max(Math.floor(configuredMonthly), 1_000), 100_000) : 90_000;
+    // The Basic account includes 100,000 monthly calls. Keep this immutable so
+    // a deployment setting cannot accidentally raise or disable the ceiling.
+    const monthlyLimit = 100_000;
     const samePeriod = provider?.periodKey === periodKey;
     const periodCount = samePeriod ? Math.max(provider?.periodCount ?? 0, provider?.officialPeriodCount ?? 0) : 0;
     const officialLimit = samePeriod && Number.isFinite(provider?.officialPeriodLimit) ? provider!.officialPeriodLimit! : monthlyLimit;
     const effectiveMonthlyLimit = Math.min(monthlyLimit, Math.max(1, Math.floor(officialLimit)));
     const nextMonth = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() + 1, 1);
     const monthlyRetry = paid && periodCount >= effectiveMonthlyLimit ? nextMonth : 0;
-    const retryAt = Math.max(monthlyRetry, geckoBudgetRetryAt(provider?.attempts ?? [], provider?.blockedUntil, now, priority, paid), priority === "background" ? provider?.interactiveUntil ?? 0 : 0);
+    const paceRetry = paid && workload === "lifetime_volume"
+      ? coinGeckoMonthlyPaceRetryAt(periodCount, effectiveMonthlyLimit, now)
+      : 0;
+    const retryAt = Math.max(monthlyRetry, paceRetry, geckoBudgetRetryAt(provider?.attempts ?? [], provider?.blockedUntil, now, priority, paid), priority === "background" ? provider?.interactiveUntil ?? 0 : 0);
     if (retryAt > now) {
       // Short-lived priority reservation prevents a background batch repeatedly
       // winning the next slot. Abandoned callers release it by expiry; provider

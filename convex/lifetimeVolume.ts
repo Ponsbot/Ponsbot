@@ -602,9 +602,9 @@ export const runRefreshBatch = internalAction({
         try {
           // Use the paid CoinGecko onchain endpoint through the shared global
           // reservation counter. reserveGecko stops all paid consumers at the
-          // lower of the configured 90k safety cap and the account's official
+          // lower of the hardcoded 100k cap and the account's official
           // monthly allowance, so this background worker cannot overrun the plan.
-          const response = await geckoSharedFetch(url, 60_000, 15_000, false, true, undefined, "background", "paid");
+          const response = await geckoSharedFetch(url, 60_000, 15_000, false, true, undefined, "background", "paid", "lifetime_volume");
           if (response.status === 429) {
             retryAfterMs = volumeRetryAfterMs(response.headers.get("retry-after"), Date.now());
             if (response.headers.get("x-gecko-local-deferral") === "1") {

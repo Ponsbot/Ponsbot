@@ -11,7 +11,8 @@ export const GECKO_INTERACTIVE_WAIT_MS = 60_000;
 
 /** Global cache + rolling budget. Denial is a cache miss, never an unbudgeted fetch. */
 export type GeckoProvider = "auto" | "paid" | "free";
-export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 8_000, allowStale = false, waitForSlot = false, freshAfter?: number, priority: GeckoPriority = "background", provider: GeckoProvider = "auto"): Promise<Response> {
+export type GeckoWorkload = "lifetime_volume";
+export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 8_000, allowStale = false, waitForSlot = false, freshAfter?: number, priority: GeckoPriority = "background", provider: GeckoProvider = "auto", workload?: GeckoWorkload): Promise<Response> {
   if (!url.startsWith(COINGECKO_FREE_ONCHAIN_PREFIX)) throw new Error("invalid Gecko URL");
   const paid = provider !== "free" && Boolean(coinGeckoPaidKey());
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || process.env.CONVEX_URL;
@@ -20,7 +21,7 @@ export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 
   const client = new ConvexHttpClient(convexUrl);
   const key = `${paid ? "coingecko-paid" : "gecko"}:${url.slice(COINGECKO_FREE_ONCHAIN_PREFIX.length)}`;
   const leaseId = crypto.randomUUID();
-  const reservation = { secret, key, leaseId, paid, ...(freshAfter !== undefined ? { freshAfter } : {}), ...(priority === "interactive" ? { priority } : {}) };
+  const reservation = { secret, key, leaseId, paid, ...(freshAfter !== undefined ? { freshAfter } : {}), ...(priority === "interactive" ? { priority } : {}), ...(workload ? { workload } : {}) };
   const waitBudget = priority === "interactive" ? GECKO_INTERACTIVE_WAIT_MS : 6_000;
   const waitUntil = Date.now() + waitBudget;
   let reserved = await client.mutation(api.marketData.reserveGecko, reservation);
@@ -59,7 +60,7 @@ export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 
   // endpoint is unavailable. Explicit paid background accounting fails closed
   // when its shared monthly budget is exhausted rather than escaping the cap.
   if (json === undefined && paid && provider === "auto") {
-    const fallback = await geckoSharedFetch(url, ttlMs, timeoutMs, allowStale, waitForSlot, freshAfter, priority, "free").catch(() => undefined);
+    const fallback = await geckoSharedFetch(url, ttlMs, timeoutMs, allowStale, waitForSlot, freshAfter, priority, "free", workload).catch(() => undefined);
     if (fallback) return fallback;
   }
   if (json === undefined && allowStale && reserved.json !== undefined) return previous();
