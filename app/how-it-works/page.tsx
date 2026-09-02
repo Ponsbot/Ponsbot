@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { PUBLISHED_PAIR_LIST } from "@/lib/pair-catalog";
 
@@ -7,13 +8,6 @@ export const metadata: Metadata = {
   description: "Learn how to use Pons Bot to manage a Robinhood Chain wallet, trade and swap tokens, manage liquidity, claim creator fees, and launch on Pons V2.",
   alternates: { canonical: "/how-it-works" },
 };
-
-const steps = [
-  { number: "01", title: "Post or open the terminal", body: "Mention @Ponsbotfamily in a new X post or reply, or connect your X account in the website terminal. Check balances, trade, transfer assets, burn tokens, or claim fees. Launches are submitted through X posts." },
-  { number: "02", title: "Include the essentials", body: "Trades need an amount and asset. Token swaps need a dollar amount, source, and destination. Transfers also need a destination. Launches need a name; include a ticker or Pons Bot will derive one. Other launch details are optional." },
-  { number: "03", title: "Review the result", body: "Ordinary wallet commands execute directly and return the result with useful links. Liquidity creation presents a quote for confirmation first. Multi-step actions state clearly if only part of the request completed." },
-  { number: "04", title: "Return whenever you want", body: "Your wallet stays connected to your X account. Revisit its page or terminal to see holdings and recent actions." },
-];
 
 const commands = [
   { title: "Claim or view your wallet", body: "Ask for your wallet to create it or retrieve the same address later. The reply links to its public Pons Bot page, where anyone can view the address and holdings.", tips: ["No wallet address is required in your post.", "Your wallet remains associated with your X account."], example: "@Ponsbotfamily what's my wallet?" },
@@ -35,9 +29,8 @@ const commands = [
 export default function HowItWorks() {
   return <main><SiteHeader /><section className="how-page">
     <div className="section-heading"><p className="eyebrow">How it works</p><h1>One X post.<br />A world of possibilities.</h1><p className="page-lede">Pons Bot gives you a Robinhood Chain wallet you can use from X or the website terminal. Check holdings, buy, sell, swap, send, burn, manage liquidity, claim creator fees, or launch on Pons V2.</p></div>
-    <div className="steps">{steps.map((step) => <article key={step.number}><span>{step.number}</span><h3>{step.title}</h3><p>{step.body}</p></article>)}</div>
+    <div className="how-guide-links"><Link className="button button-primary" href="/how-it-works/launches">HOW TO LAUNCH →</Link><Link className="button how-guide-button" href="/how-it-works/liquidity">LIQUIDITY GUIDE →</Link></div>
     <section className="command-section"><p className="eyebrow">What you can do</p><h2>Everything you need, one request at a time.</h2><div className="command-grid">{commands.map((command) => <article key={command.title}><h3>{command.title}</h3><p>{command.body}</p><ul>{command.tips.map((tip) => <li key={tip}>{tip}</li>)}</ul><code>{command.example}</code></article>)}</div></section>
-    <section className="launch-guide"><div><p className="eyebrow">Launch on Pons V2</p><h2>Start simple. Add the details that make it yours.</h2></div><div className="launch-detail-list"><p><strong>Account eligibility</strong><span>Your current X account must be verified.</span></p><p><strong>Required details</strong><span>Choose a token name, such as Pons Bot. Include $PONSBOT as the ticker or let Pons Bot derive one from the name.</span></p><p><strong>Make it recognizable</strong><span>Artwork and a concise description are optional and can be included in the launch post.</span></p><p><strong>Connect your community</strong><span>Add an optional website, X account, and Telegram link in the format t.me/XXXXX.</span></p><p><strong>Choose the market</strong><span>Select a supported pair such as MSFT. A USD or ETH dev buy is converted into MSFT first; “dev buy 2 MSFT” spends an exact pair amount.</span></p></div></section>
     <div className="example-panel"><p className="eyebrow">Example posts</p><div><span>“What&apos;s my wallet?”</span><span>“How much $PONSBOT do I have?”</span><span>“Buy $25 of $PONSBOT”</span><span>“Swap $25 of SNDK for $PONSBOT”</span><span>“Private send $25 to WALLET ADDRESS as ASSET on CHAIN”</span><span>“Buy $100 of $PONSBOT and send it to @friend”</span><span>“Sell half my $PONSBOT”</span><span>“Send 10 $PONSBOT to @friend”</span><span>“Burn 10 $PONSBOT”</span><span>“Create a $100 liquidity position for $PONSBOT”</span><span>“Claim my fees for $PONSBOT”</span><span>“Upgrade $TICKER”</span><span>“Launch Pons Bot ticker $PONSBOT, website ponsbot.family”</span></div></div>
   </section><SiteFooter /></main>;
 }
