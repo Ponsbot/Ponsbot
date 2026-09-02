@@ -31,6 +31,8 @@ import {
   walletHelpMessage,
 } from "./xWalletIntent";
 import { formatUnits, parseTransaction } from "viem";
+import { ethUsdPrice } from "../lib/wallet-signer/pricing";
+import { claimUsdDisplay } from "../lib/vault-claim-response";
 import { canSkipUnsubmittedSweep, legacyClaimSigningKey, LEGACY_CLAIM_SUPERSEDED, LEGACY_CLAIM_VERSION, resumableLegacyClaim, storedClaimWorkflow } from "../lib/legacy-claim-workflow";
 import { walletCanLaunch } from "../lib/wallet-launch-policy";
 import { reservedLaunchTickerMessage } from "../lib/special-launch-policy";
@@ -414,11 +416,14 @@ async function transactionMessage(
     command.kind === "burn"
       ? await currentTokenUsdValue(valuationTokenAddress, tradeOutputDisplay)
       : undefined;
+  const claimedWithUsd = command.kind === "claim_fees" && compactClaimed
+    ? await addClaimUsdValue(compactClaimed)
+    : compactClaimed;
   const summary =
     command.kind === "send" && sentEth
       ? `Sent ${sentEth} to ${destinationLabel(command.recipient)}!`
-      : command.kind === "claim_fees" && compactClaimed
-      ? `Claimed ${compactClaimed} in creator fees${command.token ? ` from ${assetLabel(command.token)}${claimIncludesOtherLaunches ? " and other launches" : ""}` : ""}!`
+      : command.kind === "claim_fees" && claimedWithUsd
+      ? `Claimed ${claimedWithUsd} in creator fees${command.token ? ` from ${assetLabel(command.token)}${claimIncludesOtherLaunches ? " and other launches" : ""}` : ""}!`
       : command.kind === "burn" && compactOutput
         ? `Burned ${compactOutput}${burnValue ? ` (${burnValue})` : ""}!`
         : commandSummary(command);
@@ -431,6 +436,17 @@ async function transactionMessage(
       ? `\nReceived: ${compactOutput}`
       : "";
   return `✅ Success! ${summary}${outputLine}${tokenLine}\nYour TXN: ${transactionUrl(transactionHash)}`;
+}
+
+async function currentClaimEthUsd() {
+  return ethUsdPrice(AbortSignal.timeout(4_000)).catch(() => undefined);
+}
+
+async function addClaimUsdValue(display: string) {
+  const match = display.match(/^([0-9][0-9,.]*(?:\.[0-9]+)?)\s+ETH$/i);
+  if (!match) return display;
+  const amount = Number(match[1].replace(/,/g, ""));
+  return `${display}${claimUsdDisplay(amount, await currentClaimEthUsd())}`;
 }
 
 function fundingMessage(message: string, walletAddress: string, requestId?: string) {
@@ -2953,8 +2969,15 @@ async function reconstructConfirmedMessage(
 
 async function combineVaultClaimMessage(ctx: ActionCtx, requestId: string, command: WalletCommand, legacyMessage: string) {
   if (command.kind !== "claim_fees") return legacyMessage;
-  const result = await ctx.runQuery(internal.automatedFeeClaimInfo.requestedClaimResult, { requestId, legacyMessage });
+  const result = await ctx.runQuery(internal.automatedFeeClaimInfo.requestedClaimResult, {
+    requestId, legacyMessage, ...await claimPriceArgument(),
+  });
   return result.hasVaults ? result.message : legacyMessage;
+}
+
+async function claimPriceArgument() {
+  const ethUsd = await currentClaimEthUsd();
+  return ethUsd === undefined ? {} : { ethUsd };
 }
 
 export const persistLaunchPrediction = internalMutation({
@@ -5605,7 +5628,9 @@ export const executeCommand = internalAction({
             return { ok: true, message: "", pending: true, deferred: true };
           }
           if (/no claimable creator fees/i.test(rawMessage) && (!command.token || resolvedClaimToken)) {
-            const vaultClaim = await ctx.runQuery(internal.automatedFeeClaimInfo.requestedClaimResult, { requestId });
+            const vaultClaim = await ctx.runQuery(internal.automatedFeeClaimInfo.requestedClaimResult, {
+              requestId, ...await claimPriceArgument(),
+            });
             if (vaultClaim.hasVaults && !vaultClaim.pending) {
               const vaultMessage = vaultClaim.noFees
                 ? withClaimLpFeeOffer(vaultClaim.message)

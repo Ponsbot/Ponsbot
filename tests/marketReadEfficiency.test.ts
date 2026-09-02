@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { acquire, complete, completeGecko, reserveGecko } from "../convex/marketData";
+import { acquire, complete, completeGecko, recordCoinGeckoUsage, reserveGecko } from "../convex/marketData";
 import { geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
 const now = 1_800_000_000_000, token = `0x${"1".repeat(40)}`;
 const handler = (fn: any) => fn._handler;
@@ -43,6 +43,23 @@ describe("small-row market refresh guard", () => {
   });
 });
 describe("global Gecko cooldown and pacing", () => {
+  it("reconciles the official paid counter without lowering locally observed usage", async () => {
+    const f = fixture();
+    await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey: "2027-01", periodCount: 120 });
+    await handler(recordCoinGeckoUsage)(f.ctx, { periodKey: "2027-01", count: 100, limit: 100_000,
+      remaining: 99_900, rateLimit: 300, plan: "Basic", observedAt: now });
+    expect(f.tables.websiteProviderBudget[0]).toMatchObject({ periodCount: 120, officialPeriodCount: 100,
+      officialPeriodLimit: 100_000, officialRemaining: 99_900, officialRateLimit: 300, officialPlan: "Basic", officialSyncedAt: now });
+  });
+  it("uses a higher official counter to stop paid reservations at the configured safety limit", async () => {
+    const f = fixture();
+    const periodKey = new Date(now).toISOString().slice(0, 7);
+    await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey, periodCount: 10,
+      officialPeriodCount: 90_000, officialPeriodLimit: 100_000 });
+    expect(await f.call(reserveGecko, { key: "coingecko-paid:test", leaseId: "test", paid: true }))
+      .toMatchObject({ acquired: false });
+    expect(f.tables.websiteProviderBudget[0].periodCount).toBe(10);
+  });
   it("reserves the last three global slots for interactive requests without increasing the cap", async () => {
     const f = fixture();
     for (let i = 0; i < 21; i++) {

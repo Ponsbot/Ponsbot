@@ -1,5 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { mutation, query, internalAction, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { newerSnapshot, reserveProviderAttempt, snapshotFresh, WEBSITE_MARKET_TTL_MS, WEBSITE_REFRESH_LEASE_MS, WEBSITE_REFRESH_RETRY_MS } from "../lib/website-refresh-policy";
 import { COINGECKO_PAID_REQUESTS_PER_MINUTE, GECKO_REQUESTS_PER_MINUTE, geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
@@ -209,9 +210,12 @@ export const reserveGecko = mutation({
     const periodKey = new Date(now).toISOString().slice(0, 7);
     const configuredMonthly = Number(process.env.COINGECKO_PAID_MONTHLY_REQUEST_LIMIT || 90_000);
     const monthlyLimit = Number.isFinite(configuredMonthly) ? Math.min(Math.max(Math.floor(configuredMonthly), 1_000), 100_000) : 90_000;
-    const periodCount = provider?.periodKey === periodKey ? provider.periodCount ?? 0 : 0;
+    const samePeriod = provider?.periodKey === periodKey;
+    const periodCount = samePeriod ? Math.max(provider?.periodCount ?? 0, provider?.officialPeriodCount ?? 0) : 0;
+    const officialLimit = samePeriod && Number.isFinite(provider?.officialPeriodLimit) ? provider!.officialPeriodLimit! : monthlyLimit;
+    const effectiveMonthlyLimit = Math.min(monthlyLimit, Math.max(1, Math.floor(officialLimit)));
     const nextMonth = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth() + 1, 1);
-    const monthlyRetry = paid && periodCount >= monthlyLimit ? nextMonth : 0;
+    const monthlyRetry = paid && periodCount >= effectiveMonthlyLimit ? nextMonth : 0;
     const retryAt = Math.max(monthlyRetry, geckoBudgetRetryAt(provider?.attempts ?? [], provider?.blockedUntil, now, priority, paid), priority === "background" ? provider?.interactiveUntil ?? 0 : 0);
     if (retryAt > now) {
       // Short-lived priority reservation prevents a background batch repeatedly
@@ -229,6 +233,60 @@ export const reserveGecko = mutation({
     const fields = { key, leaseId, leaseUntil: now + 20_000, expiresAt: row?.expiresAt ?? now };
     if (row) await ctx.db.patch(row._id, fields); else await ctx.db.insert("websiteReadCache", fields);
     return { acquired: true, ...previous };
+  },
+});
+
+export const recordCoinGeckoUsage = internalMutation({
+  args: {
+    periodKey: v.string(), count: v.number(), limit: v.number(), remaining: v.number(),
+    rateLimit: v.number(), plan: v.string(), observedAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    if (!/^\d{4}-\d{2}$/.test(args.periodKey) || !Number.isInteger(args.count) || args.count < 0
+      || !Number.isInteger(args.limit) || args.limit < 1 || !Number.isFinite(args.remaining) || args.remaining < 0
+      || !Number.isFinite(args.rateLimit) || args.rateLimit < 1 || args.plan.length > 100
+      || args.observedAt > Date.now() + 30_000 || args.observedAt < Date.now() - 10 * 60_000) throw new Error("invalid CoinGecko usage snapshot");
+    const key = "coingecko-paid";
+    const row = await ctx.db.query("websiteProviderBudget").withIndex("by_key", q => q.eq("key", key)).unique();
+    const localCount = row?.periodKey === args.periodKey ? row.periodCount ?? 0 : 0;
+    const values = {
+      periodKey: args.periodKey, periodCount: Math.max(localCount, args.count),
+      officialPeriodCount: args.count, officialPeriodLimit: args.limit,
+      officialRemaining: args.remaining, officialRateLimit: args.rateLimit,
+      officialPlan: args.plan, officialSyncedAt: args.observedAt,
+    };
+    if (row) await ctx.db.patch(row._id, values);
+    else await ctx.db.insert("websiteProviderBudget", { key, attempts: [], ...values });
+  },
+});
+
+export const syncCoinGeckoUsage = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const key = process.env.COINGECKO_PRO_API_KEY?.trim();
+    if (!key) return { status: "not_configured" as const };
+    try {
+      const response = await fetch("https://pro-api.coingecko.com/api/v3/key", {
+        headers: { accept: "application/json", "x-cg-pro-api-key": key, "user-agent": "PonsBot/1.0" },
+        cache: "no-store", signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) return { status: "unavailable" as const, httpStatus: response.status };
+      const value = await response.json() as Record<string, unknown>;
+      const count = Number(value.api_key_current_total_monthly_calls ?? value.current_total_monthly_calls);
+      const limit = Number(value.api_key_monthly_call_credit ?? value.monthly_call_credit);
+      const remaining = Number(value.current_remaining_monthly_calls ?? Math.max(0, limit - count));
+      const rateLimit = Number(value.api_key_rate_limit_request_per_minute ?? value.rate_limit_request_per_minute);
+      const plan = typeof value.plan === "string" ? value.plan : "unknown";
+      if (![count, limit, remaining, rateLimit].every(Number.isFinite)) return { status: "invalid_response" as const };
+      const observedAt = Date.now();
+      await ctx.runMutation(internal.marketData.recordCoinGeckoUsage, {
+        periodKey: new Date(observedAt).toISOString().slice(0, 7), count: Math.floor(count), limit: Math.floor(limit),
+        remaining: Math.max(0, remaining), rateLimit, plan, observedAt,
+      });
+      return { status: "synchronized" as const, count: Math.floor(count), limit: Math.floor(limit) };
+    } catch {
+      return { status: "unavailable" as const };
+    }
   },
 });
 export const completeGecko = mutation({

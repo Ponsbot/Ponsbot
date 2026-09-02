@@ -9,7 +9,16 @@ export type VaultClaimOutcome = {
   state: "paid" | "no_fees" | "operator" | "unavailable" | "pending";
 };
 
-export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolean, legacyMessage?: string) {
+export function claimUsdDisplay(ethAmount: number, ethUsd?: number) {
+  if (!Number.isFinite(ethAmount) || ethAmount < 0 || !Number.isFinite(ethUsd) || !ethUsd || ethUsd <= 0) return "";
+  const usd = ethAmount * ethUsd;
+  const formatted = usd >= 0.01
+    ? usd.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 })
+    : `$${usd.toLocaleString("en-US", { maximumSignificantDigits: 3 })}`;
+  return ` (${formatted})`;
+}
+
+export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolean, legacyMessage?: string, ethUsd?: number) {
   const lines: string[] = [];
   // Bound response size for claim-all without mixing ETH and paired assets or
   // clipping the payout figures/reminder. Full per-vault receipts stay stored.
@@ -26,7 +35,7 @@ export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolea
     if (outcome.state === "paid") {
       const total = group.reduce((sum, o) => sum + BigInt(o.amount), 0n);
       const value = Number(formatUnits(total, outcome.assetDecimals));
-      const display = `${value.toLocaleString("en-US", { maximumSignificantDigits: 6 })} ${outcome.assetSymbol}`;
+      const display = `${value.toLocaleString("en-US", { maximumSignificantDigits: 6 })} ${outcome.assetSymbol}${outcome.assetSymbol.toUpperCase() === "ETH" ? claimUsdDisplay(value, ethUsd) : ""}`;
       const burned = group.reduce((sum, o) => sum + BigInt(o.ponsbotBurned ?? "0"), 0n);
       const burnedDisplay = Number(formatUnits(burned, 18)).toLocaleString("en-US", { maximumSignificantDigits: 6 });
       lines.push(`✅ Claimed ${display} from ${token} and burned ${burnedDisplay} $PONSBOT.`);

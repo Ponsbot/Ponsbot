@@ -205,6 +205,14 @@ describe("confirmed net claim responses", () => {
     const text = vaultClaimResponse([{ tokenSymbol: "TEST", assetSymbol: "cbBTC", assetDecimals: 8, amount: "19000", state: "paid" }], false);
     expect(text).toContain("0.00019 cbBTC"); expect(text).not.toContain("ETH");
   });
+  it("shows the USD value beside successful ETH claims without valuing paired assets as ETH", () => {
+    const eth = vaultClaimResponse([{ tokenSymbol: "TEST", assetSymbol: "ETH", assetDecimals: 18,
+      amount: "1900000000000000", state: "paid" }], false, undefined, 2_000);
+    const paired = vaultClaimResponse([{ tokenSymbol: "TEST", assetSymbol: "USDG", assetDecimals: 6,
+      amount: "1900000", state: "paid" }], false, undefined, 2_000);
+    expect(eth).toContain("0.0019 ETH ($3.80)");
+    expect(paired).toContain("1.9 USDG"); expect(paired).not.toContain("$3,800");
+  });
   it("keeps many vault payouts compact without losing totals or mixing assets", () => {
     const outcomes = Array.from({ length: 100 }, (_, i) => ({ tokenSymbol: `TOKEN${i}`, assetSymbol: "ETH", assetDecimals: 18,
       amount: net, state: "paid" as const, transactionHash: h(i + 1) }));
@@ -298,7 +306,7 @@ describe("wallet action integration without X or wallet transactions", () => {
     vi.stubGlobal("fetch", fetcher);
     const result = await f.execute(); expect(result).toMatchObject({ pending: true, deferred: true, message: "" });
     expect(f.rows.automatedFeeClaimRequests).toHaveLength(1);
-    expect(fetcher.mock.calls.some(([, o]) => JSON.parse(o.body).method === "eth_getBalance")).toBe(false);
+    expect(fetcher.mock.calls.some(([, o]) => o?.body && JSON.parse(o.body).method === "eth_getBalance")).toBe(false);
     expect(f.rows.walletRateLimits[0].count).toBe(1);
     await f.execute(); expect(f.rows.walletRateLimits[0].count).toBe(1); expect(f.rows.automatedFeeClaimRequests).toHaveLength(1);
   });
@@ -307,7 +315,8 @@ describe("wallet action integration without X or wallet transactions", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "no claimable creator fees are available in ETH" }), { status: 400 })));
     const result = await f.execute(); expect(result.ok).toBe(true); expect(result.message).toContain("0.0019 ETH");
     expect(result.message).toContain(VAULT_CLAIM_REMINDER); expect(f.request.status).toBe("confirmed");
-    const again = await f.execute(); expect(again.message).toBe(result.message); expect(fetch).toHaveBeenCalledTimes(1);
+    const callsAfterConfirmation = vi.mocked(fetch).mock.calls.length;
+    const again = await f.execute(); expect(again.message).toBe(result.message); expect(fetch).toHaveBeenCalledTimes(callsAfterConfirmation);
   });
   it("does not turn an unresolved specific token into claim-all", async () => {
     const f = fixture(); f.request.normalizedJson = JSON.stringify({ kind: "claim_fees", token: "NOTFOUND" });

@@ -14,6 +14,7 @@ crons.interval("value creator fees at historical ETH prices", { hours: 1 }, inte
 crons.interval("refresh lifetime trading volume", { hours: 3 }, internal.lifetimeVolume.requestRefresh);
 crons.interval("clean market viewer rate limits", { hours: 1 }, internal.site.cleanupMarketViewerRateLimits);
 crons.interval("clean expired website market cache", { hours: 1 }, internal.marketData.cleanup);
+crons.interval("reconcile CoinGecko account usage", { hours: 6 }, internal.marketData.syncCoinGeckoUsage);
 crons.interval("reconcile interrupted Houdini x402 audits", { minutes: 5 }, internal.site.reconcileStaleHoudiniX402Payments);
 crons.interval("reconcile interrupted X Houdini swaps", { minutes: 1 }, internal.xHoudini.reconcileInterrupted);
 crons.interval("reconcile free launch sponsorships", { minutes: 1 }, internal.wallets.reconcileFreeLaunchSponsorships);

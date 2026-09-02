@@ -862,6 +862,9 @@ export default defineSchema({
   websiteProviderBudget: defineTable({
     key: v.string(), attempts: v.array(v.number()), blockedUntil: v.optional(v.number()),
     interactiveUntil: v.optional(v.number()), periodKey: v.optional(v.string()), periodCount: v.optional(v.number()),
+    officialPeriodCount: v.optional(v.number()), officialPeriodLimit: v.optional(v.number()),
+    officialRemaining: v.optional(v.number()), officialRateLimit: v.optional(v.number()),
+    officialPlan: v.optional(v.string()), officialSyncedAt: v.optional(v.number()),
   }).index("by_key", ["key"]),
 
   marketIndexState: defineTable({

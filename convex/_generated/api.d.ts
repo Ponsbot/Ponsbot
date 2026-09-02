@@ -24,6 +24,7 @@ import type * as lib_xReplyQueueSchema from "../lib/xReplyQueueSchema.js";
 import type * as lifetimeVolume from "../lifetimeVolume.js";
 import type * as liquidity from "../liquidity.js";
 import type * as liquidityAi from "../liquidityAi.js";
+import type * as liquidityTerminal from "../liquidityTerminal.js";
 import type * as llm from "../llm.js";
 import type * as marketData from "../marketData.js";
 import type * as ponsV2 from "../ponsV2.js";
@@ -65,6 +66,7 @@ declare const fullApi: ApiFromModules<{
   lifetimeVolume: typeof lifetimeVolume;
   liquidity: typeof liquidity;
   liquidityAi: typeof liquidityAi;
+  liquidityTerminal: typeof liquidityTerminal;
   llm: typeof llm;
   marketData: typeof marketData;
   ponsV2: typeof ponsV2;

@@ -119,7 +119,7 @@ export async function attachRequestedClaims(ctx: MutationCtx, p: Doc<"automatedF
 }
 
 export const requestedClaimResult = internalQuery({
-  args: { requestId: v.string(), legacyMessage: v.optional(v.string()) },
+  args: { requestId: v.string(), legacyMessage: v.optional(v.string()), ethUsd: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const request = await ctx.db.query("walletRequests").withIndex("by_request_id", q => q.eq("requestId", args.requestId)).unique();
     const claims = await ctx.db.query("automatedFeeClaimRequests").withIndex("by_request", q => q.eq("requestId", args.requestId)).collect();
@@ -148,7 +148,7 @@ export const requestedClaimResult = internalQuery({
     const noFees = outcomes.length > 0 && outcomes.every(o => o.state === "no_fees");
     const pairNote = individualPairs ? "Non-ETH-paired tokens must be claimed individually." : "";
     const message = vaultClaimResponse(outcomes, request?.vaultClaimOnlyV2 === true,
-      [args.legacyMessage, pairNote].filter(Boolean).join("\n") || undefined);
+      [args.legacyMessage, pairNote].filter(Boolean).join("\n") || undefined, args.ethUsd);
     return { hasVaults: claims.length > 0, pending, noFees, paid: outcomes.some(o => o.state === "paid"),
       unavailable: outcomes.some(o => o.state === "unavailable"), message,
       transactionHash: outcomes.find(o => o.transactionHash)?.transactionHash };

@@ -3,6 +3,7 @@ import { mapLiquidityBounded } from "../lib/liquidity-concurrency";
 import { inheritLiquidityPositionFields, isIndependentLiquidityRead, isOrdinaryWalletCommand, liquidityThreadRedirect, liquidityWalletAllowed, liquidityNftSelection, liquidityStatusSelection, normalizeLiquidityTokenAliases } from "../lib/liquidity-workflow";
 import { action, internalAction, internalMutation, internalQuery, mutation, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { applyLiquidityBandDefault, applyLiquiditySpacingDefault, isLiquidityMessage, liquidityControl, liquidityDraftSchema, liquidityFieldsSchema, liquidityNextPhase, liquidityOwnerAllowed, liquidityReviewHash, newLiquidityDraft, selectLiquidityPool, updateLiquidityFields, validateLiquidityReview, LIQUIDITY_CONVERSATION_MS, type LiquidityDraft } from "../lib/liquidity-workflow";
 import { liquidityFundingMessage, liquidityResponseLines, liquidityStepExample, liquidityCompletionGuidance, liquidityOpenedDetails, paginateLiquidityResponse, LIQUIDITY_RESPONSES as R } from "../lib/liquidity-responses";
 import { discoverLiquidityPools } from "../lib/liquidity-markets";
@@ -249,6 +250,23 @@ export const resolveContext = internalQuery({
       claimPositions: claimMatches.map(p => liquidityClaimPositionSchema.parse({ positionId: p.publicId, token: p.token, symbol: p.symbol, version: p.version, poolId: p.poolId, fields: JSON.parse(p.fieldsJson), legs: JSON.parse(p.legsJson) })), nextCursor: page && !page.isDone ? page.continueCursor : undefined };
   },
 });
+
+export const terminalPositionRecords = internalQuery({
+  args: { ownerXUserId: v.string(), sessionIdHash: v.string() },
+  handler: async (ctx, args): Promise<{ wallet: Doc<"cryptoWallets">; positions: Doc<"liquidityManagedPositions">[]; executions: Doc<"liquidityExecutions">[] }> => {
+    const session = await ctx.runQuery(internal.wallets.webSessionRecord, { sessionIdHash: args.sessionIdHash });
+    if (!session || session.ownerXUserId !== args.ownerXUserId || session.revokedAt || session.expiresAt <= Math.floor(Date.now() / 1_000))
+      throw new Error("LP terminal session is not active");
+    const user = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", q => q.eq("xUserId", args.ownerXUserId)).unique();
+    const wallet = user?.walletId ? await ctx.db.get(user.walletId) : null;
+    if (!wallet || wallet.status !== "active" || wallet.ownerXUserId !== args.ownerXUserId || !liquidityWalletAllowed(args.ownerXUserId, wallet.address))
+      throw new Error("LP wallet is not active");
+    const positions = await ctx.db.query("liquidityManagedPositions").withIndex("by_owner", q => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(200);
+    const executions = await ctx.db.query("liquidityExecutions").withIndex("by_owner_updated", q => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(500);
+    return { wallet, positions: positions.filter(position => position.walletId === wallet._id), executions };
+  },
+});
+
 async function signer<T>(path: string, body: unknown, timeout = 120_000): Promise<T> {
   const base = process.env.WALLET_SIGNER_URL?.trim() || `${process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "")}/api/wallet-signer`;
   if (!base.startsWith("https://") || !process.env.WALLET_SIGNER_TOKEN) throw new Error("Signer not configured");

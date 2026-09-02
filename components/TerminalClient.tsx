@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CopyAddress } from "@/components/CopyAddress";
 import { ExternalTokenImage } from "@/components/ExternalTokenImage";
 import { HoudiniSwapPanel } from "@/components/HoudiniSwapPanel";
+import { LiquidityPositionsPanel } from "@/components/LiquidityPositionsPanel";
 import { CreatorFeeReceiptRow } from "@/components/CreatorFeeReceiptRow";
 import { TerminalActionToken } from "@/components/TerminalActionToken";
 import { mergeTerminalFeeReceipts, type TerminalFeeReceipt } from "@/lib/terminal-fee-receipt";
@@ -39,7 +40,7 @@ export function TerminalClient() {
   const [busy, setBusy] = useState(false);
   const [awaitingLiquidityResult, setAwaitingLiquidityResult] = useState(false);
   const [chat, setChat] = useState("");
-  const [workspace, setWorkspace] = useState<"terminal" | "houdini">("terminal");
+  const [workspace, setWorkspace] = useState<"terminal" | "houdini" | "liquidity">("terminal");
   const logRef = useRef<HTMLDivElement>(null);
   const refreshing = useRef(false);
   const pendingCatalogRefresh = useRef(false);
@@ -238,7 +239,7 @@ export function TerminalClient() {
   if (!session?.authenticated) return <section className="terminal-shell terminal-signed-out"><div className="terminal-connect-modal" role="dialog" aria-modal="true"><h2>Connect to X to use the terminal.</h2><a className="button button-dark" href="/api/auth/x/start?returnTo=/terminal">Connect X</a></div></section>;
 
   return <section className="terminal-shell">
-    <header className="terminal-heading"><div><p className="eyebrow">Pons Bot Terminal</p><h1>Welcome, @{session.username}</h1><p>{workspace === "houdini" ? "Cross-chain and private swaps from your Pons Bot wallet." : "Buy, sell, swap, send, burn, claim creator fees, and manage Delta Liquidity positions directly from your connected wallet."}</p></div><div className="terminal-heading-actions">{session.houdiniPreviewEnabled ? <div className="terminal-workspace-toggle" aria-label="Terminal workspace"><button type="button" className={workspace === "terminal" ? "active" : ""} onClick={() => setWorkspace("terminal")}>Terminal</button><button type="button" className={workspace === "houdini" ? "active" : ""} onClick={() => setWorkspace("houdini")}>Multi-Chain and Private Swaps</button></div> : null}<Link className="button button-quiet" href={`/wallet/${session.walletAddress}`}>View Wallet</Link></div></header>
+    <header className="terminal-heading"><div><p className="eyebrow">Pons Bot Terminal</p><h1>Welcome, @{session.username}</h1><p>{workspace === "houdini" ? "Cross-chain and private swaps from your Pons Bot wallet." : workspace === "liquidity" ? "Build and manage Delta Liquidity positions from your Pons Bot wallet." : "Buy, sell, swap, send, burn, claim creator fees, and manage Delta Liquidity positions directly from your connected wallet."}</p></div><div className="terminal-heading-actions"><div className="terminal-workspace-toggle" aria-label="Terminal workspace"><button type="button" className={workspace === "terminal" ? "active" : ""} onClick={() => setWorkspace("terminal")}>Terminal</button>{session.houdiniPreviewEnabled ? <button type="button" className={workspace === "houdini" ? "active" : ""} onClick={() => setWorkspace("houdini")}>Multi-Chain and Private Swaps</button> : null}<button type="button" className={workspace === "liquidity" ? "active" : ""} onClick={() => setWorkspace("liquidity")}>Liquidity Positions</button></div><Link className="button button-quiet" href={`/wallet/${session.walletAddress}`}>View Wallet</Link></div></header>
     {workspace === "terminal" ? <div className="terminal-layout">
       <div className="terminal-tools"><DirectActionForms busy={busy} holdings={data?.holdings || []} launches={data?.history.launches || []} tokenCatalog={data?.history.tokenCatalog || []} submit={submit} /></div>
       <div className="terminal-console">
@@ -248,7 +249,8 @@ export function TerminalClient() {
         </div>
         <form className="terminal-chat" onSubmit={submitChat}><input value={chat} maxLength={500} onChange={(event) => setChat(event.target.value)} placeholder="Ask me to buy, sell, swap, send, burn, claim fees, manage liquidity, or check a balance!" /><button disabled={busy || !chat.trim()} type="submit">Send</button></form>
       </div>
-    </div> : <HoudiniSwapPanel enabled={Boolean(session.houdiniPreviewEnabled)} csrfToken={session.csrfToken || ""} />}
+    </div> : workspace === "houdini" ? <HoudiniSwapPanel enabled={Boolean(session.houdiniPreviewEnabled)} csrfToken={session.csrfToken || ""} />
+      : <LiquidityPositionsPanel busy={busy} submit={submit} openTerminal={() => setWorkspace("terminal")} />}
     <section className="terminal-holdings"><div className="terminal-section-head"><div><p className="eyebrow">Connected wallet</p><h2>Current Holdings</h2></div><CopyAddress address={session.walletAddress!} /></div><div className="terminal-holdings-grid">{(data?.holdings || []).map((holding) => {
       const tokenHref = holding.address && holding.isPonsbotLaunch ? `/launch/${holding.address}` : undefined;
       const icon = <span className="holding-icon">{holding.iconUrl ? <ExternalTokenImage src={holding.iconUrl} name={holding.name} /> : holding.symbol[0]}</span>;

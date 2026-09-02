@@ -8,6 +8,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "project:health": "node --use-system-ca --env-file-if-exists=.env.local scripts/check-project-resources.mjs",
     "convex:dev": "convex dev",
     "x:authorize": "node scripts/authorize-x.mjs",
     "free-launch:sponsor-wallet": "node --env-file-if-exists=.env.local scripts/setup-free-launch-sponsor.mjs",
