@@ -271,6 +271,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const sliderMaximum = currentMarketCap ? currentMarketCap * 2 : 0;
   const sliderLower = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeLower) ?? currentMarketCap * .5)) : 0;
   const sliderUpper = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeUpper) ?? currentMarketCap * 1.5)) : 0;
+  const lowerHandle = currentMarketCap ? Math.min(sliderLower, currentMarketCap) : 0;
+  const upperHandle = currentMarketCap ? Math.max(sliderUpper, currentMarketCap) : 0;
   const quoteChoiceStep = latestAssistant ? /review your liquidity quote|confirm to proceed/i.test(latestAssistant.text) : false;
   const stage = liquidityStage(latestAssistant?.text);
   const choose = (value: string) => void submit({ channel: "terminal_chat", text: value });
@@ -314,12 +316,13 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
             <div className="liquidity-range-current"><span>Current MCap</span><strong>{mcap(currentMarketCap)}</strong></div>
             <div className="liquidity-dual-range">
               <span className="liquidity-dual-range-track" />
-              <span className="liquidity-dual-range-fill" style={{ left: `${Math.min(sliderLower, sliderUpper) / sliderMaximum * 100}%`, right: `${100 - Math.max(sliderLower, sliderUpper) / sliderMaximum * 100}%` }} />
-              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} />
-              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} />
+              <span className="liquidity-dual-range-fill" style={{ left: `${lowerHandle / sliderMaximum * 100}%`, right: `${100 - upperHandle / sliderMaximum * 100}%` }} />
+              <span className="liquidity-current-mcap-marker" style={{ left: `${currentMarketCap / sliderMaximum * 100}%` }}><i /><b>Current</b></span>
+              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={lowerHandle} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), currentMarketCap, upperHandle)))} />
+              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={upperHandle} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), currentMarketCap, lowerHandle)))} />
             </div>
             <div className="liquidity-range-scale"><span>$0</span><span>Current MCap: {mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
-            <div className="liquidity-range-selected"><span>Lower <strong>{mcap(Math.min(sliderLower, sliderUpper))}</strong></span><span>Upper <strong>{mcap(Math.max(sliderLower, sliderUpper))}</strong></span></div>
+            <div className="liquidity-range-selected"><span>Lower <strong>{mcap(lowerHandle)}</strong></span><span>Upper <strong>{mcap(upperHandle)}</strong></span></div>
           </div> : null}
           <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value.replace(/^\$/, ""))} placeholder="100k or 100,000" /></div></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value.replace(/^\$/, ""))} placeholder="250k or 250,000" /></div></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
         </form> : feeChoiceStep && !poolChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div><small>{/V3/i.test(latestAssistant?.text || "") ? "V3 supports 0.01%, 0.05%, 0.3%, or 1%." : "V4 accepts a custom swap fee up to 10%."}</small></form> : null}
