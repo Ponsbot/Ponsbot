@@ -41,6 +41,10 @@ function ShapeGraphic({ shape }: { shape: "flat" | "bell" | "bid-ask" }) {
   </span>;
 }
 
+function AnimatedDots() {
+  return <span className="animated-waiting-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span>;
+}
+
 function liquidityQuickReplies(text: string) {
   const replies: Array<{ label: string; value: string; emphasis?: boolean }> = [];
   const add = (label: string, value = label, emphasis = false) => {
@@ -176,6 +180,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [error, setError] = useState("");
   const [acting, setActing] = useState<string>();
   const [actingStartedAt, setActingStartedAt] = useState(0);
+  const [withdrawalCards, setWithdrawalCards] = useState<Record<string, Position>>({});
+  const [withdrawalResults, setWithdrawalResults] = useState<Record<string, string>>({});
   const [token, setToken] = useState("");
   const [budget, setBudget] = useState("");
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
@@ -185,6 +191,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [canGoBack, setCanGoBack] = useState(false);
   const [workflowMarketCapUsd, setWorkflowMarketCapUsd] = useState<number>();
   const [workflowPhase, setWorkflowPhase] = useState<string>();
+  const [builderResetAt, setBuilderResetAt] = useState(0);
   const workflowRefreshSequence = useRef(0);
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
@@ -245,6 +252,14 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     void submit({ channel: "terminal_chat", text: `${lower} to ${upper}` }).then(refreshWorkflow);
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
+    if (kind === "withdraw") {
+      setWithdrawalCards(current => ({ ...current, [position.id]: position }));
+      setWithdrawalResults(current => {
+        const next = { ...current };
+        delete next[position.id];
+        return next;
+      });
+    }
     setActing(`${kind}:${position.id}`);
     setActingStartedAt(Date.now());
     await submit({ channel: "terminal_chat", text: kind === "claim" ? `claim LP fees for ${position.id}` : `withdraw ${position.id}` }, "management");
@@ -256,6 +271,18 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       && message.requestId?.startsWith("liquidity-management_") && message.createdAt >= actingStartedAt
       && /confirmed|failed|couldn.?t|not enough|no (?:LP )?fees|nothing (?:to )?collect|withdrawn|collected/i.test(message.text));
     if (!completed) return;
+    if (acting.startsWith("withdraw:")) {
+      const positionId = acting.slice("withdraw:".length);
+      if (/position withdrawn|withdrawal confirmed/i.test(completed.text)) {
+        setWithdrawalResults(current => ({ ...current, [positionId]: completed.text }));
+      } else {
+        setWithdrawalCards(current => {
+          const next = { ...current };
+          delete next[positionId];
+          return next;
+        });
+      }
+    }
     void refresh().finally(() => { setActing(undefined); setActingStartedAt(0); });
   }, [acting, actingStartedAt, messages, refresh]);
   useEffect(() => {
@@ -263,8 +290,13 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     const timer = window.setTimeout(() => { setActing(undefined); setActingStartedAt(0); void refresh(); }, 120_000);
     return () => window.clearTimeout(timer);
   }, [actingStartedAt, refresh]);
-  const visible = positions.filter(position => position.status === tab);
-  const guideMessages = liquidityGuideMessages(messages);
+  const visible = tab === "closed"
+    ? positions.filter(position => position.status === "closed")
+    : [...positions.filter(position => position.status === "active"),
+      ...Object.values(withdrawalCards).filter(position => !positions.some(current => current.status === "active" && current.id === position.id))];
+  const guideMessages = liquidityGuideMessages(builderResetAt
+    ? messages.filter(message => message.createdAt > builderResetAt)
+    : messages);
   const latestAssistant = [...guideMessages].reverse().find(message => message.role === "assistant");
   const quickReplies = latestAssistant ? liquidityQuickReplies(latestAssistant.text) : [];
   const poolChoiceStep = quickReplies.some(item => /^pool\s+\d+$/i.test(item.value));
@@ -284,8 +316,16 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const lowerHandle = Math.min(sliderLower, sliderUpper);
   const upperHandle = Math.max(sliderLower, sliderUpper);
   const quoteChoiceStep = latestAssistant ? /review your liquidity quote|confirm to proceed/i.test(latestAssistant.text) : false;
+  const positionCreatedStep = latestAssistant
+    ? /✅\s+LP-[A-F0-9]{8}:\s*Delta Liquidity position opened!/i.test(latestAssistant.text)
+    : false;
   const stage = liquidityStage(latestAssistant?.text);
   const choose = (value: string) => void submit({ channel: "terminal_chat", text: value }).then(refreshWorkflow);
+  const startNewPosition = () => {
+    setBuilderResetAt(Math.max(Date.now(), latestAssistant?.createdAt ?? 0));
+    setToken(""); setBudget(""); setUnit("usd"); setReply(""); setRangeLower(""); setRangeUpper("");
+    setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined);
+  };
 
   useEffect(() => {
     if (!rangeChoiceStep || !currentMarketCap) return;
@@ -308,9 +348,9 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     </form>
 
     {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
-      <div className="liquidity-step-progress"><div><strong>Position setup</strong><span>{busy ? "Updating your setup…" : `Step ${stage} of 4`}</span></div><ol aria-label="Position setup progress">{["Basics", "Pool", "Settings", "Quote"].map((label, index) => <li key={label} className={index + 1 < stage ? "complete" : index + 1 === stage ? "active" : ""}><i>{index + 1 < stage ? "✓" : index + 1}</i><span>{label}</span></li>)}</ol></div>
+      <div className="liquidity-step-progress"><div><strong>Position setup</strong><span>{busy ? <>Updating your setup<AnimatedDots /></> : `Step ${stage} of 4`}</span></div><ol aria-label="Position setup progress">{["Basics", "Pool", "Settings", "Quote"].map((label, index) => <li key={label} className={index + 1 < stage ? "complete" : index + 1 === stage ? "active" : ""}><i>{index + 1 < stage ? "✓" : index + 1}</i><span>{label}</span></li>)}</ol></div>
       <article className="liquidity-current-step">
-        <header className={quoteChoiceStep ? "quote" : ""}><span className="liquidity-step-icon">{busy ? "•••" : quoteChoiceStep ? "✓" : "◆"}</span><div><p>{quoteChoiceStep ? "Ready to review" : "Current step"}</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
+        <header className={quoteChoiceStep ? "quote" : ""}><span className="liquidity-step-icon">{busy ? <AnimatedDots /> : quoteChoiceStep ? "✓" : "◆"}</span><div><p>{quoteChoiceStep ? "Ready to review" : "Current step"}</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
         {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={terminalLiquidityText(latestAssistant.text)} />
           : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={terminalLiquidityText(latestAssistant.text)} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
         {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}${poolChoiceStep ? " pool-options" : ""}`}>{quickReplies.map(item => {
@@ -336,7 +376,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
           </div> : null}
           <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value.replace(/^\$/, ""))} placeholder="100k or 100,000" /></div></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><div className="liquidity-money-input"><b>$</b><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value.replace(/^\$/, ""))} placeholder="250k or 250,000" /></div></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
         </form> : feeChoiceStep && !poolChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div><small>{/V3/i.test(latestAssistant?.text || "") ? "V3 supports 0.01%, 0.05%, 0.3%, or 1%." : "V4 accepts a custom swap fee up to 10%."}</small></form> : null}
-        <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy || !canGoBack} aria-disabled={busy || !canGoBack} onClick={() => choose("back")}>← Back</button><div><button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? "Preparing…" : "Confirm Position"}</button> : null}</div></footer>
+        <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy || !canGoBack || positionCreatedStep} aria-disabled={busy || !canGoBack || positionCreatedStep} onClick={() => choose("back")}>← Back</button><div>{positionCreatedStep ? <button type="button" className="confirm" disabled={busy} onClick={startNewPosition}>New position</button> : <button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>}{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? <>Preparing<AnimatedDots /></> : "Confirm Position"}</button> : null}</div></footer>
       </article>
     </div> : <aside className="liquidity-build-preview" aria-hidden="true">
       <div className="liquidity-preview-card"><span>1</span><div><strong>Pool analysis</strong><p>Matching ETH and USDG pool options will appear here.</p></div></div>
@@ -344,12 +384,13 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div className="liquidity-preview-card"><span>3</span><div><strong>Review and confirm</strong><p>Review the completed position quote before any funds move.</p></div></div>
     </aside>}
     </div> : <div className="liquidity-position-list">
-      <div className="terminal-section-head"><div><p className="eyebrow">Your positions</p><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
+      <div className="terminal-section-head"><div><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>
       {error ? <p className="liquidity-position-error">{error}</p> : null}
-      {loading ? <p className="terminal-empty">Loading your Delta Liquidity positions…</p> : null}
+      {loading ? <p className="terminal-empty">Loading your Delta Liquidity positions<AnimatedDots /></p> : null}
       {!loading && !visible.length ? <p className="terminal-empty">No {tab} liquidity positions.</p> : null}
       <div className="liquidity-position-cards">{visible.map(position => {
+        const withdrawalResult = withdrawalResults[position.id];
         const range = position.live?.marketCapRangeUsd ?? (position.lowerMarketCapUsd && position.upperMarketCapUsd ? { lower: position.lowerMarketCapUsd, upper: position.upperMarketCapUsd } : null);
         const liveFees = position.live?.assets.filter(asset => asset.unclaimed !== null) ?? [];
         const valuedAssets = position.live?.assets.filter(asset => asset.usd !== null && Number.isFinite(asset.usd)) ?? [];
@@ -368,10 +409,10 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
             <div><dt>{position.status === "closed" ? "Closed" : "Opened"}</dt><dd>{new Date(position.status === "closed" ? position.updatedAt : position.createdAt).toLocaleString()}</dd></div>
             <div><dt>NFTs</dt><dd>{position.nftIds.map(id => <a key={id} href={`https://robinhoodchain.blockscout.com/token/0x58daec3116aae6d93017baaea7749052e8a04fa7/instance/${id}`} target="_blank" rel="noreferrer">#{id} ↗</a>)}</dd></div>
           </dl>
-          {position.status === "active" ? <footer>
+          {withdrawalResult ? <footer className="liquidity-withdrawal-result"><p className="liquidity-claim-success"><LiquidityMessageText text={terminalLiquidityText(withdrawalResult)} /></p></footer> : position.status === "active" ? <footer>
             {position.live?.range.inRange === false ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p> : <span />}
             {position.lastClaim?.items.length ? <p className="liquidity-claim-success">You claimed {position.lastClaim.items.map(fee => `${amount(fee.amount)} ${fee.symbol}${fee.usd === undefined ? "" : ` (${money(fee.usd)})`}`).join(" + ")}.</p> : null}
-            <div className="liquidity-position-actions"><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? "Collecting…" : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? "Withdrawing…" : "Withdraw"}</button></div>
+            <div className="liquidity-position-actions"><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? <>Collecting<AnimatedDots /></> : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? <>Withdrawing<AnimatedDots /></> : "Withdraw"}</button></div>
           </footer> : null}
         </article>;
       })}</div>
