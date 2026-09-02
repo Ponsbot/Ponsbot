@@ -306,6 +306,7 @@ export const handle = internalAction({
     let d = liquidityDraftSchema.parse(JSON.parse(reservation.state));
     let preservedSetup: LiquidityDraft | undefined;
     let message: string | undefined, active = true, analyzedThisTurn = false, walletAddress: string | undefined;
+    let terminalSearchWarning: string | undefined;
     try {
       const inputText = normalizeLiquidityTokenAliases(args.text);
       const control = liquidityControl(inputText, d.phase);
@@ -473,6 +474,14 @@ export const handle = internalAction({
                   // Preserve the draft and skip expensive market discovery
                   // until the user funds the wallet and explicitly resumes.
                 } else {
+                if (args.source === "terminal") {
+                  const sessionId = args.scope.startsWith("terminal:") ? args.scope.slice("terminal:".length) : "";
+                  const searchLimit = await ctx.runMutation(internal.wallets.consumeTerminalLiquiditySearch, {
+                    ownerXUserId: args.ownerXUserId, sessionId,
+                  });
+                  if (!searchLimit.allowed) throw new Error("LP_TERMINAL_SEARCH_LIMIT");
+                  if (searchLimit.warn) terminalSearchWarning = `⚠️ You’ve used 10 of today’s 15 terminal liquidity pool searches. You have ${searchLimit.remaining} remaining.`;
+                }
                 const discovered = await discoverLiquidityPools(context.tokenAddress as `0x${string}`, d.fields.unit === "usd" ? Number(d.fields.amount) : undefined, undefined, { fresh: true, fields: d.fields });
                 d.symbol = discovered.symbol;
                 d.currentMarketCapUsd = discovered.currentMarketCapUsd;
@@ -541,6 +550,7 @@ export const handle = internalAction({
         : code === "LP_NEW_POOL_PRICE_UNVERIFIED" ? "⚠️ I couldn’t independently verify a reliable current price to initialize this new pool. No funds were moved. Reply refresh shortly, or choose an existing pool."
         : code === "LP_REFERENCE_PRICE_DISAGREEMENT" ? "⚠️ Independent price sources disagree too much to safely initialize this pool. No funds were moved. Reply refresh later, or choose an existing pool."
         : code === "LP_NO_CLAIMABLE_FEES" ? "ℹ️ That position does not currently have LP fees worth collecting, so no gas was spent."
+        : code === "LP_TERMINAL_SEARCH_LIMIT" ? "⏳ You’ve reached today’s limit of 15 terminal liquidity pool searches. You can search again tomorrow."
         : code.includes("LP_INVALID_MCAP_RANGE") ? "⚠️ Enter a positive lower and upper dollar MCap, with the lower value first. No funds were moved. Example: $50k to $150k"
         : code.includes("LP_MCAP_RANGE_OUTSIDE_PRICE") ? `⚠️ This range does not surround the current pool MCap${d.currentMarketCapUsd ? ` of ${formatLiquidityMarketCap(d.currentMarketCapUsd)}` : ""}. Choose a lower MCap below it and an upper MCap above it. No funds were moved. Example: $50k to $150k`
         : code.includes("LP_INSUFFICIENT_GAS") ? liquidityFundingMessage(d, walletAddress, true)
@@ -555,6 +565,7 @@ export const handle = internalAction({
         : code.includes("LP_REFERENCE_PRICE") ? "⚠️ I couldn’t verify a reliable price for this pool. Choose another established pool or retry later; no funds were moved."
         : /DELTA_.*UNVERIFIED/.test(code) ? R.blocked : R.failed;
     }
+    if (terminalSearchWarning && message) message += `\n\n${terminalSearchWarning}`;
     if (active && message && !message.includes("Example:") && !["token", "budget", "pair", "review"].includes(d.phase)) {
       const hint = d.remainingPages.length || d.explanationPages.length || d.positionInquiry ? "" : liquidityStepExample(d, reservation.publicId);
       if (hint) message += `\n${hint}`;

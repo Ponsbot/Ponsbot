@@ -224,3 +224,32 @@
 .liquidity-guide-console a{color:var(--lime);overflow-wrap:anywhere}
 .delta-powered-link{color:inherit;text-decoration:none}
 .delta-powered-link:hover{text-decoration:underline}
+.liquidity-positions-shell{display:grid;gap:14px}
+.liquidity-section-tabs{display:flex;gap:6px;padding:5px;border:1px solid var(--line);border-radius:14px;background:var(--soft)}
+.liquidity-section-tabs button{flex:1;min-height:46px;padding:10px 16px;border:1px solid transparent;border-radius:10px;background:transparent;color:var(--muted);font:800 12px Arial;cursor:pointer}
+.liquidity-section-tabs button.active{border-color:var(--ink);background:var(--ink);color:#fff;box-shadow:0 5px 14px rgba(23,24,19,.14)}
+.liquidity-section-tabs button span{display:inline-grid;min-width:22px;height:22px;margin-left:7px;padding:0 6px;place-items:center;border-radius:999px;background:rgba(23,24,19,.1);font-size:10px}
+.liquidity-section-tabs button.active span{background:rgba(255,255,255,.16)}
+.liquidity-guide-card{min-height:430px;display:grid;grid-template-rows:auto minmax(180px,1fr) auto auto;border:1px solid var(--line);border-radius:20px;background:var(--card);overflow:hidden}
+.liquidity-guide-head{display:flex;align-items:center;justify-content:space-between;gap:15px;padding:22px 24px;border-bottom:1px solid var(--line)}
+.liquidity-guide-head h2{margin:7px 0 0;font-size:28px;letter-spacing:-.04em}
+.liquidity-guide-head>span{padding:7px 10px;border-radius:999px;background:var(--lime);font-size:10px;font-weight:850}
+.liquidity-guide-history{max-height:440px;overflow:auto;padding:20px 24px;background:linear-gradient(180deg,#fffdf7,#f6f5ed)}
+.liquidity-guide-message{max-width:88%;margin-bottom:14px}
+.liquidity-guide-message.user{margin-left:auto}
+.liquidity-guide-message small{display:block;margin:0 0 5px;color:var(--muted);font-size:9px;font-weight:850;text-transform:uppercase;letter-spacing:.06em}
+.liquidity-guide-message.user small{text-align:right}
+.liquidity-guide-message p{margin:0;padding:12px 14px;border:1px solid var(--line);border-radius:13px;background:#fff;white-space:pre-wrap;font-size:12px;line-height:1.55;box-shadow:0 3px 10px rgba(23,24,19,.035)}
+.liquidity-guide-message.user p{border-color:#afd83f;background:#eaffb7}
+.liquidity-guide-message a{color:var(--green);font-weight:750;text-decoration:underline;overflow-wrap:anywhere}
+.liquidity-quick-replies{display:flex;flex-wrap:wrap;gap:7px;padding:14px 24px;border-top:1px solid var(--line);background:#fff}
+.liquidity-quick-replies button{padding:10px 14px;border:1px solid #bfc5b4;border-radius:999px;background:#fff;color:var(--ink);font:800 11px Arial;cursor:pointer;transition:.15s}
+.liquidity-quick-replies button:hover:not(:disabled){border-color:var(--green);background:var(--soft);transform:translateY(-1px)}
+.liquidity-quick-replies button.primary{border-color:var(--ink);background:var(--ink);color:#fff}
+.liquidity-quick-replies button:disabled{opacity:.45;cursor:default}
+.liquidity-guide-reply{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:14px 18px;border-top:1px solid var(--line);background:#fff}
+.liquidity-guide-reply input{min-width:0;padding:13px;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--ink);font:14px Arial;outline:none}
+.liquidity-guide-reply input:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(28,93,61,.08)}
+.liquidity-guide-reply button{padding:0 18px;border:0;border-radius:9px;background:var(--lime);color:var(--ink);font-weight:850;cursor:pointer}
+.liquidity-guide-reply button:disabled{opacity:.45}
+@media(max-width:600px){.liquidity-section-tabs button{padding:9px 7px}.liquidity-guide-head,.liquidity-guide-history{padding-left:16px;padding-right:16px}.liquidity-quick-replies{padding:12px 16px}.liquidity-guide-message{max-width:95%}.liquidity-guide-reply{grid-template-columns:1fr}.liquidity-guide-reply button{min-height:42px}}

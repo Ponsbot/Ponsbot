@@ -5967,6 +5967,39 @@ export const consumeTerminalLimit = internalMutation({
   },
 });
 
+/**
+ * Pool discovery is substantially more expensive than an ordinary terminal
+ * message. Limit user-visible searches per user per UTC day;
+ * returned pool count and quote-time safety refreshes do not consume slots.
+ */
+export const consumeTerminalLiquiditySearch = internalMutation({
+  args: { ownerXUserId: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId)) return { allowed: false, remaining: 0, warn: false };
+    // executeTerminalCommand validates the live authenticated session before
+    // the internal liquidity action can reach this mutation.
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    const key = `liquidity_search:${args.ownerXUserId}`;
+    const record = await ctx.db.query("terminalRateLimits")
+      .withIndex("by_key", q => q.eq("key", key)).unique();
+    const sameDay = record?.utcDay === day;
+    const used = sameDay ? record!.dailyCount : 0;
+    if (used >= 15) return { allowed: false, remaining: 0, warn: false };
+    const nextCount = used + 1;
+    const value = {
+      utcDay: day,
+      dailyCount: nextCount,
+      windowStartedAt: sameDay ? record!.windowStartedAt : now,
+      windowCount: nextCount,
+      updatedAt: now,
+    };
+    if (record) await ctx.db.patch(record._id, value);
+    else await ctx.db.insert("terminalRateLimits", { key, ...value });
+    return { allowed: true, remaining: 15 - nextCount, warn: nextCount === 10 };
+  },
+});
+
 export const listTerminalHistory = internalQuery({
   args: {
     ownerXUserId: v.string(),
