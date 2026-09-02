@@ -535,8 +535,7 @@ export const handle = internalAction({
                   // already chose a pool and review must not choose a new one.
                   d.analysis = comparison.analysis; d.candidates = comparison.candidates; d.currentMarketCapUsd = comparison.currentMarketCapUsd ?? d.currentMarketCapUsd;
                   if (d.selected && !comparison.selected) throw new Error(
-                    comparison.analysis.diagnostics.includes("SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP") ? "LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP"
-                      : comparison.analysis.diagnostics.includes("SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE") ? "LP_SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE"
+                    comparison.analysis.diagnostics.includes("SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE") ? "LP_SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE"
                         : comparison.analysis.diagnostics.includes("SELECTED_POOL_SETTINGS_INCOMPATIBLE") ? "LP_POOL_SETTINGS_INCOMPATIBLE"
                           : "LP_SELECTED_POOL_UNAVAILABLE",
                   );
@@ -569,7 +568,7 @@ export const handle = internalAction({
       if (!preservedSetup && code.includes("INVALID_BANDS")) {
         d.phase = "bands"; d.remainingPages = []; d.quoteSummary = [];
       }
-      if (!preservedSetup && /LP_INVALID_MCAP_RANGE|LP_MCAP_RANGE_OUTSIDE_PRICE|LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP/.test(code)) d.phase = "range";
+      if (!preservedSetup && /LP_INVALID_MCAP_RANGE/.test(code)) d.phase = "range";
       // A failed standalone lookup can create a brand-new draft before its
       // token/status lookup throws. Do not leave that empty draft looking like
       // an active setup. Preserve every draft that contains actual user input.
@@ -582,13 +581,11 @@ export const handle = internalAction({
         : code === "LP_NO_CLAIMABLE_FEES" ? "ℹ️ That position does not currently have LP fees worth collecting, so no gas was spent."
         : code === "LP_TERMINAL_SEARCH_LIMIT" ? "⏳ You’ve reached today’s limit of 15 terminal liquidity pool searches. You can search again tomorrow."
         : code.includes("LP_INVALID_MCAP_RANGE") ? "⚠️ Enter a positive lower and upper dollar MCap, with the lower value first. No funds were moved. Example: $50k to $150k"
-        : code.includes("LP_MCAP_RANGE_OUTSIDE_PRICE") ? `⚠️ This range does not surround the current pool MCap${d.currentMarketCapUsd ? ` of ${formatLiquidityMarketCap(d.currentMarketCapUsd)}` : ""}. Choose a lower MCap below it and an upper MCap above it. No funds were moved. Example: $50k to $150k`
         : code.includes("LP_INSUFFICIENT_GAS") ? liquidityFundingMessage(d, walletAddress, true)
         : /LP_(?:PRECHECK_)?INSUFFICIENT_(?:FUNDS|FUNDING)/.test(code) || code === "INSUFFICIENT_FUNDS" ? liquidityFundingMessage(d, walletAddress)
         : code.includes("LP_CLAIM_TOO_MANY") ? R.claimTooMany : code.includes("LP_CLAIM_AMBIGUOUS") ? R.ambiguousClaim
         : code.includes("DELTA_NATIVE_ADD_UNVERIFIED") ? R.addUnavailable
         : code.includes("LP_POSITION_SETTINGS_CONFLICT") ? R.settingsConflict : code.includes("LP_POSITION_CAPACITY") ? R.capacity
-        : code.includes("LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP") ? `⚠️ Your selected pool's current MCap${d.currentMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.currentMarketCapUsd)}` : ""}, and your requested range${d.fields.lowerMarketCapUsd && d.fields.upperMarketCapUsd ? ` is ${formatLiquidityMarketCap(d.fields.lowerMarketCapUsd)} to ${formatLiquidityMarketCap(d.fields.upperMarketCapUsd)}` : " does not leave enough room around it"}. Although the raw MCap is inside that range, Delta Liquidity must align the range to this pool's band spacing, and the aligned bands do not leave a valid boundary on both sides of the current price. Widen the range or use fewer bands, then review a new quote. Reply refresh to recheck the pool and current MCap. No funds were moved.`
         : code.includes("LP_SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE") ? `⚠️ Your selected pool cannot fit ${d.fields.bands ?? "the requested number of"} bands inside that MCap range because of the pool's price spacing. Use fewer bands or a wider range, then review a new quote. No funds were moved.`
         : code.includes("LP_POOL_SETTINGS_INCOMPATIBLE") ? "⚠️ Your selected pool cannot represent that MCap range and band layout. Use fewer bands, widen the range, or choose another pool, then review a new quote. No funds were moved."
         : code.includes("LP_SELECTED_POOL_UNAVAILABLE") ? "⚠️ I couldn’t verify your selected pool just now. No different pool was substituted and no funds were moved. Reply refresh to retry, or choose custom pool."

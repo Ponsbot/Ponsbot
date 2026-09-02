@@ -78,9 +78,9 @@ describe("context-aware LP explanations", () => {
   it.each(["token", "budget", "pool", "pair", "version", "fee", "spacing", "range", "shape", "bands", "position", "percentage", "compound", "review"] as const)("has contextual help at the %s step", phase => {
     const topic = liquidityStepTopic(draft(phase)); expect(topic).not.toBe("step"); expect(LIQUIDITY_HELP_TOPICS).toContain(topic);
   });
-  it("does not advertise unimplemented management or one-sided setup", () => {
+  it("does not advertise unimplemented management and accurately explains one-sided setup", () => {
     expect(LIQUIDITY_EXPLANATIONS.management.join(" ")).toContain("not available");
-    expect(LIQUIDITY_EXPLANATIONS.one_sided.join(" ")).toContain("not offered yet");
+    expect(LIQUIDITY_EXPLANATIONS.one_sided.join(" ")).toContain("begins one-sided");
     expect(LIQUIDITY_EXPLANATIONS.risk.join(" ")).toContain("pool itself can exchange");
   });
 });

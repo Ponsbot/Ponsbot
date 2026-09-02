@@ -45,6 +45,7 @@ export function TerminalClient() {
   const logRef = useRef<HTMLDivElement>(null);
   const refreshing = useRef(false);
   const pendingCatalogRefresh = useRef(false);
+  const pendingHistoryRefresh = useRef(false);
   const holdingsRefreshing = useRef(false);
   const lastHoldingsRefreshAt = useRef(0);
   const signingOut = useRef(false);
@@ -83,6 +84,7 @@ export function TerminalClient() {
   const refresh = useCallback(async (includeCatalog = false) => {
     if (document.visibilityState === "hidden") return;
     if (refreshing.current) {
+      pendingHistoryRefresh.current = true;
       pendingCatalogRefresh.current ||= includeCatalog;
       return;
     }
@@ -142,9 +144,11 @@ export function TerminalClient() {
       } else if (response.status === 401) await expireSession();
     } finally {
       refreshing.current = false;
+      const pendingHistory = pendingHistoryRefresh.current;
       const pendingCatalog = pendingCatalogRefresh.current;
+      pendingHistoryRefresh.current = false;
       pendingCatalogRefresh.current = false;
-      if (pendingCatalog) window.setTimeout(() => void refresh(true), 0);
+      if (pendingHistory || pendingCatalog) window.setTimeout(() => void refresh(pendingCatalog), 0);
     }
   }, [expireSession]);
 

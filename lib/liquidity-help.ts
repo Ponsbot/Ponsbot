@@ -5,7 +5,7 @@ export const LIQUIDITY_HELP_TOPICS = ["step", "basics", "shape", "bands", "range
 export type LiquidityHelpTopic = typeof LIQUIDITY_HELP_TOPICS[number];
 
 // Keep explanations consistent with implemented features:
-// no promised returns, unsupported one-sided/partial/compound operations, or
+// no promised returns or unsupported partial/compound operations, or
 // assumption that a pool's entire trader fee belongs to ordinary LPs.
 export const LIQUIDITY_EXPLANATIONS: Record<Exclude<LiquidityHelpTopic, "step">, readonly string[]> = {
   basics: [
@@ -25,7 +25,7 @@ export const LIQUIDITY_EXPLANATIONS: Record<Exclude<LiquidityHelpTopic, "step">,
   ],
   range: [
     "💡 Your range is entered as dollar market caps, for example $50k to $150k MCap. These are not deposit amounts. Supply and the paired asset’s USD price convert them into pool boundaries.",
-    "Choose a lower and upper MCap around the current pool market cap. The quote shows tick-rounded boundaries. Refreshing preserves your requested dollar targets.",
+    "Choose lower and upper MCap boundaries. The current MCap may be inside or outside them. Refreshing preserves your requested dollar targets.",
     "Inside the range, eligible trades can earn fees. Outside it, the position becomes one-sided and stops earning new trading fees until price re-enters.",
     "A narrow range concentrates capital but can go out of range sooner. A wider range covers more prices but spreads your liquidity more thinly.",
     "The actual boundaries are prices in the paired asset. Its USD price can change the range’s dollar equivalent after opening, especially with ETH pairs.",
@@ -33,7 +33,7 @@ export const LIQUIDITY_EXPLANATIONS: Record<Exclude<LiquidityHelpTopic, "step">,
   price: [
     "💡 Price is the value of one token. MCap here is that price multiplied by total token supply. The dollar range is not your deposit budget or a guaranteed sale price.",
     "An existing pool keeps its current price. A new pool is initialized from the verified market reference shown in the quote. The lower range bound does not set the starting price.",
-    "Choose lower and upper dollar MCap bounds around the current market. Your range decides where liquidity is available, not where the market must trade. Example: $50k to $150k MCap.",
+    "Choose lower and upper dollar MCap bounds. Your range decides where liquidity is available, not where the market must trade. Example: $50k to $150k MCap.",
   ],
   fees: [
     "💡 Traders pay a swap fee. Eligible LP fees are shared according to active liquidity, not simply the total dollars in each wallet or position.",
@@ -91,7 +91,7 @@ export const LIQUIDITY_EXPLANATIONS: Record<Exclude<LiquidityHelpTopic, "step">,
   ],
   one_sided: [
     "💡 Token-only liquidity sits above the current price, while ETH-only liquidity sits below it. These positions start earning only if trading reaches their ranges.",
-    "Trading through the range can convert the deposit into the other asset. This guided workflow uses dollar MCap bounds around the current pool market cap; one-sided setup is not offered yet.",
+    "Trading through the range can convert the deposit into the other asset. A range entirely above or below the current MCap begins one-sided and earns fees only after trading enters it.",
   ],
   review: [
     "💡 Opening a position requires a quote and explicit confirmation. It lists position settings, assets, funding swaps, and gas. Withdrawals and LP fee claims execute directly instead; questions never authorize them.",

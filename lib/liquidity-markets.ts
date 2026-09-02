@@ -335,14 +335,12 @@ export async function discoverLiquidityPools(token: Address, budgetUsd?: number,
           const f = options.fields;
           const completeRange = f?.lowerMarketCapUsd !== undefined && f.upperMarketCapUsd !== undefined
             || f?.downPercent !== undefined && f.upPercent !== undefined;
-          const impossible = error instanceof Error && ["INVALID_BANDS", "LP_MCAP_RANGE_OUTSIDE_PRICE"].includes(error.message);
+          const impossible = error instanceof Error && error.message === "INVALID_BANDS";
           if (completeRange && impossible) {
             const key = descriptorKey(descriptor);
             incompatibleSettings.add(key);
             diagnostics.add("POOL_SETTINGS_INCOMPATIBLE");
-            if (key === selectedDescriptorKey) diagnostics.add(error.message === "LP_MCAP_RANGE_OUTSIDE_PRICE"
-              ? "SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP"
-              : "SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE");
+            if (key === selectedDescriptorKey) diagnostics.add("SELECTED_POOL_RANGE_BANDS_INCOMPATIBLE");
             return null;
           }
           diagnostics.add("SOME_RANGES_NOT_COMPARABLE");

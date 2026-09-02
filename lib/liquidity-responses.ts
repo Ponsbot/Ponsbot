@@ -178,7 +178,7 @@ function responseLines(d: LiquidityDraft): string[] {
       f.version === 3 ? "Choose 0.01%, 0.05%, 0.3%, or 1%." : "Choose a percentage up to 10%."];
     // Legacy drafts remain readable, but new setups do not ask this question.
     case "spacing": return ["💧 Tick spacing is chosen automatically. Reply refresh to continue."];
-    case "range": return ["📊 What MCap range should your position cover? Provide a lower and upper value around the current MCap.",
+    case "range": return ["📊 What MCap range should your position cover? Provide a lower and upper value.",
       ...(d.currentMarketCapUsd ? ["", `Current MCap: ${formatLiquidityMarketCap(d.currentMarketCapUsd)}`] : []), "",
       "A narrow range concentrates liquidity; a wider range covers more prices. Your liquidity only gathers fees when MCap is inside this range."];
     case "shape": return ["💧 What shape distribution would you like for your liquidity?", "",

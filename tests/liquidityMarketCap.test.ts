@@ -67,7 +67,9 @@ describe("absolute MCap conversion (no RPC)", () => {
     const input = { lowerUsd: 500000, upperUsd: 1500000, supply: 1e6, pairedAssetUsd: 1, tokenDecimals: 18, pairDecimals: 18, tokenIs0: true, sqrt: liquiditySqrtTick(0), spacing: 60, count: 1, shape: "flat" as const };
     expect(() => liquidityMarketCapBands({ ...input, ...patch })).toThrow();
   });
-  it("does not silently create a one-sided position when the market moves beyond the bounds", () => {
-    expect(() => liquidityMarketCapBands({ lowerUsd: 10000, upperUsd: 20000, supply: 1e6, pairedAssetUsd: 1, tokenDecimals: 18, pairDecimals: 18, tokenIs0: true, sqrt: liquiditySqrtTick(0), spacing: 60, count: 1, shape: "flat" })).toThrow("LP_MCAP_RANGE_OUTSIDE_PRICE");
+  it("supports a one-sided position when the market is outside the requested bounds", () => {
+    const result = liquidityMarketCapBands({ lowerUsd: 10000, upperUsd: 20000, supply: 1e6, pairedAssetUsd: 1, tokenDecimals: 18, pairDecimals: 18, tokenIs0: true, sqrt: liquiditySqrtTick(0), spacing: 60, count: 1, shape: "flat" });
+    expect(result.bands).toHaveLength(1);
+    expect(result.range.referenceUsd).toBeGreaterThan(result.range.upperUsd);
   });
 });

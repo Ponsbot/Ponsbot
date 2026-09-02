@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { splitTerminalMessage, type TerminalMessageRecord } from "@/lib/terminal-message";
 
 type LiveAsset = { symbol: string; amount: string; usd: number | null; unclaimed: string | null; unclaimedUsd: number | null };
@@ -185,6 +185,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [canGoBack, setCanGoBack] = useState(false);
   const [workflowMarketCapUsd, setWorkflowMarketCapUsd] = useState<number>();
   const [workflowPhase, setWorkflowPhase] = useState<string>();
+  const workflowRefreshSequence = useRef(0);
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
 
@@ -206,14 +207,19 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   }, [acting, refresh]);
 
   const refreshWorkflow = useCallback(async () => {
+    const sequence = ++workflowRefreshSequence.current;
     try {
       const response = await fetch("/api/terminal/liquidity?workflow=1", { cache: "no-store" });
       const value = await response.json();
+      if (sequence !== workflowRefreshSequence.current) return;
       setCanGoBack(response.ok && value.active === true && value.canGoBack === true);
       setWorkflowPhase(response.ok && value.active === true && typeof value.phase === "string" ? value.phase : undefined);
       setWorkflowMarketCapUsd(response.ok && Number.isFinite(value.currentMarketCapUsd) && value.currentMarketCapUsd > 0
         ? value.currentMarketCapUsd : undefined);
-    } catch { setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined); }
+    } catch {
+      if (sequence !== workflowRefreshSequence.current) return;
+      setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined);
+    }
   }, []);
   useEffect(() => { void refreshWorkflow(); }, [latestMessageKey, refreshWorkflow]);
 
@@ -223,20 +229,20 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     const value = budget.trim();
     if (!symbol || !value) return;
     const text = `create a ${unit === "usd" ? `$${value}` : `${value} ETH`} liquidity position for ${symbol}`;
-    void submit({ channel: "terminal_chat", text });
+    void submit({ channel: "terminal_chat", text }).then(refreshWorkflow);
   };
   const replyToGuide = (event: FormEvent) => {
     event.preventDefault();
     const text = reply.trim();
     if (!text) return;
     setReply("");
-    void submit({ channel: "terminal_chat", text });
+    void submit({ channel: "terminal_chat", text }).then(refreshWorkflow);
   };
   const submitRange = (event: FormEvent) => {
     event.preventDefault();
     const lower = rangeLower.trim(), upper = rangeUpper.trim();
     if (!lower || !upper) return;
-    void submit({ channel: "terminal_chat", text: `${lower} to ${upper}` });
+    void submit({ channel: "terminal_chat", text: `${lower} to ${upper}` }).then(refreshWorkflow);
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
     setActing(`${kind}:${position.id}`);
@@ -271,11 +277,11 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const sliderMaximum = currentMarketCap ? currentMarketCap * 2 : 0;
   const sliderLower = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeLower) ?? currentMarketCap * .5)) : 0;
   const sliderUpper = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeUpper) ?? currentMarketCap * 1.5)) : 0;
-  const lowerHandle = currentMarketCap ? Math.min(sliderLower, currentMarketCap) : 0;
-  const upperHandle = currentMarketCap ? Math.max(sliderUpper, currentMarketCap) : 0;
+  const lowerHandle = Math.min(sliderLower, sliderUpper);
+  const upperHandle = Math.max(sliderLower, sliderUpper);
   const quoteChoiceStep = latestAssistant ? /review your liquidity quote|confirm to proceed/i.test(latestAssistant.text) : false;
   const stage = liquidityStage(latestAssistant?.text);
-  const choose = (value: string) => void submit({ channel: "terminal_chat", text: value });
+  const choose = (value: string) => void submit({ channel: "terminal_chat", text: value }).then(refreshWorkflow);
 
   useEffect(() => {
     if (!rangeChoiceStep || !currentMarketCap) return;
@@ -318,8 +324,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
               <span className="liquidity-dual-range-track" />
               <span className="liquidity-dual-range-fill" style={{ left: `${lowerHandle / sliderMaximum * 100}%`, right: `${100 - upperHandle / sliderMaximum * 100}%` }} />
               <span className="liquidity-current-mcap-marker" style={{ left: `${currentMarketCap / sliderMaximum * 100}%` }}><i /><b>Current</b></span>
-              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={lowerHandle} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), currentMarketCap, upperHandle)))} />
-              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={upperHandle} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), currentMarketCap, lowerHandle)))} />
+              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={lowerHandle} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), upperHandle)))} />
+              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={upperHandle} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), lowerHandle)))} />
             </div>
             <div className="liquidity-range-scale"><span>$0</span><span>Current MCap: {mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
             <div className="liquidity-range-selected"><span>Lower <strong>{mcap(lowerHandle)}</strong></span><span>Upper <strong>{mcap(upperHandle)}</strong></span></div>

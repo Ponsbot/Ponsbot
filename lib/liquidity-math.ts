@@ -58,9 +58,6 @@ export function liquidityMarketCapBands(input: {
   const capAtRatio = (ratio: number) => (tokenIs0 ? ratio : 1 / ratio) / decimalScale * pairedAssetUsd * supply;
   const referenceUsd = capAtRatio((Number(sqrt) / 2 ** 96) ** 2);
   if (!Number.isFinite(referenceUsd) || referenceUsd <= 0) throw new Error("LP_INVALID_MCAP_RANGE");
-  // Preserve the current two-sided workflow; do not silently turn a position
-  // into a one-sided order when price is outside the requested range.
-  if (lowerUsd >= referenceUsd || upperUsd <= referenceUsd) throw new Error("LP_MCAP_RANGE_OUTSIDE_PRICE");
   const lowerRatio = rawRatio(tokenIs0 ? lowerUsd : upperUsd), upperRatio = rawRatio(tokenIs0 ? upperUsd : lowerUsd);
   if (![lowerRatio, upperRatio].every(n => Number.isFinite(n) && n > 0)) throw new Error("LP_INVALID_MCAP_RANGE");
   const tickLower = Math.floor(Math.log(lowerRatio) / Math.log(1.0001) / spacing) * spacing;
