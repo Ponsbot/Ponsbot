@@ -166,7 +166,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   username: string;
 }) {
   const [positions, setPositions] = useState<Position[]>([]);
-  const [view, setView] = useState<"build" | "positions">("build");
+  const [view, setView] = useState<"build" | "positions">("positions");
   const [tab, setTab] = useState<"active" | "closed">("active");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -257,8 +257,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
 
   return <section className="liquidity-positions-shell">
     <div className="liquidity-section-tabs" role="tablist" aria-label="Liquidity positions">
-      <button type="button" role="tab" aria-selected={view === "build"} className={view === "build" ? "active" : ""} onClick={() => setView("build")}>Build a Position</button>
       <button type="button" role="tab" aria-selected={view === "positions"} className={view === "positions" ? "active" : ""} onClick={() => setView("positions")}>My Positions <span>{positions.filter(position => position.status === "active").length}</span></button>
+      <button type="button" role="tab" aria-selected={view === "build"} className={view === "build" ? "active" : ""} onClick={() => setView("build")}>Build a Position</button>
     </div>
 
     {view === "build" ? <div className="liquidity-build-experience liquidity-build-workspace">
@@ -275,7 +275,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
         <header className={quoteChoiceStep ? "quote" : ""}><span className="liquidity-step-icon">{busy ? "•••" : quoteChoiceStep ? "✓" : "◆"}</span><div><p>{quoteChoiceStep ? "Ready to review" : "Current step"}</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
         {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={terminalLiquidityText(latestAssistant.text)} />
           : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={terminalLiquidityText(latestAssistant.text)} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
-        {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
+        {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}${poolChoiceStep ? " pool-options" : ""}`}>{quickReplies.map(item => {
           const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
           const shape = /bid[- ]ask/i.test(item.label) ? "bid-ask" : /bell/i.test(item.label) ? "bell" : /^flat$/i.test(item.label) ? "flat" : undefined;
           const poolOption = /^pool\s+\d+$/i.test(item.value);
@@ -318,14 +318,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
         const valuedFees = liveFees.filter(asset => asset.unclaimedUsd !== null && Number.isFinite(asset.unclaimedUsd));
         const unclaimedFeesUsd = valuedFees.length ? valuedFees.reduce((total, asset) => total + asset.unclaimedUsd!, 0) : liveFees.length ? null : 0;
         return <article key={position.id} className="liquidity-position-card">
-          <header><div><strong>{position.id}</strong><h3><span>${position.symbol}</span></h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
-          <div className="liquidity-position-totals">
-            <div><span>Total position</span><strong>{money(positionUsd)}</strong></div>
-            <div><span>Unclaimed LP fees</span><strong>{money(unclaimedFeesUsd)}</strong></div>
-          </div>
-          {position.status === "active" && position.live?.range.inRange === false
-            ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p>
-            : null}
+          <header><div className="liquidity-position-identity"><strong>{position.id}</strong><h3><span>${position.symbol}</span></h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><div className="liquidity-position-totals"><div><span>Total position</span><strong>{money(positionUsd)}</strong></div><div><span>Unclaimed LP fees</span><strong>{money(unclaimedFeesUsd)}</strong></div></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
           <dl>
             <div><dt>Position assets</dt><dd>{position.live?.assets.map(asset => `${amount(asset.amount)} ${asset.symbol} (${money(asset.usd)})`).join(" + ") || "Live value unavailable"}</dd></div>
             <div><dt>Unclaimed fee assets</dt><dd>{liveFees.length ? liveFees.map(asset => `${amount(asset.unclaimed!)} ${asset.symbol} (${money(asset.unclaimedUsd)})`).join(" + ") : position.status === "closed" ? "—" : "None currently"}</dd></div>
@@ -336,7 +329,10 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
             <div><dt>{position.status === "closed" ? "Closed" : "Opened"}</dt><dd>{new Date(position.status === "closed" ? position.updatedAt : position.createdAt).toLocaleString()}</dd></div>
             <div><dt>NFTs</dt><dd>{position.nftIds.map(id => <a key={id} href={`https://robinhoodchain.blockscout.com/token/0x58daec3116aae6d93017baaea7749052e8a04fa7/instance/${id}`} target="_blank" rel="noreferrer">#{id} ↗</a>)}</dd></div>
           </dl>
-          {position.status === "active" ? <footer><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? "Collecting…" : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? "Withdrawing…" : "Withdraw"}</button></footer> : null}
+          {position.status === "active" ? <footer>
+            {position.live?.range.inRange === false ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p> : <span />}
+            <div className="liquidity-position-actions"><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? "Collecting…" : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? "Withdrawing…" : "Withdraw"}</button></div>
+          </footer> : null}
         </article>;
       })}</div>
     </div>}
