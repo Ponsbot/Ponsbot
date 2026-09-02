@@ -12,10 +12,10 @@ export const metadata: Metadata = {
 const launchDetails = [
   { title: "Start from X", body: "Launches must come from a new X post or an eligible reply that explicitly mentions @Ponsbotfamily. The posting account must be verified." },
   { title: "Choose a name and ticker", body: "A token name is required. Include a ticker, or Pons Bot can derive one from the name. PONS and PONSBOT cannot be launched again." },
-  { title: "Add optional details", body: "You can attach artwork and include a description, website, X profile, and Telegram link. Telegram links must use the t.me/XXXXX format. Invalid optional links are omitted rather than blocking an otherwise valid launch." },
-  { title: "Select a paired asset", body: `ETH is the default. Published alternatives are: ${PUBLISHED_PAIR_LIST}. Company and asset names are accepted where supported, and the selected asset is verified when the launch is requested.` },
+  { title: "Add optional details", body: "You can attach artwork and include a description, website, X profile, and Telegram link. Telegram links must use the t.me/XXXXX format." },
+  { title: "Select a paired asset", body: `ETH is the default. Published alternatives are: ${PUBLISHED_PAIR_LIST}. Company and asset names are accepted where supported.` },
   { title: "Add a developer buy", body: "A dev buy is optional. Enter it in USD, ETH, or the exact paired asset. For non-ETH pairs, USD and ETH funding is converted to the paired asset before the launch." },
-  { title: "Choose where creator fees go", body: "By default, creator fees go to the launcher. Use the exact phrase assign fees to followed by an X handle or wallet address, or use holder fee sharing. Pons Bot V2 routes 95% of automated creator-fee claims to the assigned recipient and uses 5% to buy and burn $PONSBOT." },
+  { title: "Choose where creator fees go", body: "By default, creator fees go to the launcher. Use the exact phrase assign fees to followed by an X handle or wallet address, or use holder fee sharing. For eligible Pons Bot V2 creator-fee payouts, 95% goes to the assigned recipient and 5% buys and burns $PONSBOT. Holder fee sharing distributes fees to holders instead." },
 ];
 
 export default function LaunchGuidePage() {
