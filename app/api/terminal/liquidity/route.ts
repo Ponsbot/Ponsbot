@@ -15,6 +15,13 @@ export async function GET(request: NextRequest) {
   if (!secret || !session) return NextResponse.json({ error: "Connect X to use the terminal" }, { status: 401 });
   if (!convexUrl) return NextResponse.json({ error: "Liquidity positions are not configured" }, { status: 503 });
   try {
+    if (request.nextUrl.searchParams.get("workflow") === "1") {
+      const workflow = await new ConvexHttpClient(convexUrl).action(api.liquidityTerminal.terminalWorkflowState, {
+        secret, ownerXUserId: session.xUserId, sessionId: session.sessionId,
+        sessionIdHash: createHash("sha256").update(session.sessionId).digest("hex"),
+      });
+      return NextResponse.json(workflow, { headers: { "cache-control": "no-store" } });
+    }
     const positions = await new ConvexHttpClient(convexUrl).action(api.liquidityTerminal.terminalPositions, {
       secret, ownerXUserId: session.xUserId,
       sessionIdHash: createHash("sha256").update(session.sessionId).digest("hex"),

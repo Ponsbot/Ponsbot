@@ -29,6 +29,7 @@ describe("guided X launch workflow", () => {
     "launch", "launch a token", "create a coin", "I want to launch a token", "I want to create a token", "help me launch",
     "start", "please start", "get started", "please get started", "lets get start", "let's get started", "let’s get this started",
     "launch on Pons", "launch on Pons V2",
+    "yes", "Yeah!", "yep", "sure", "okay", "go ahead", "proceed", "do it", "let's do it",
   ])("starts only from a short launch selection: %s", text => {
     expect(guidedLaunchRequested(text)).toBe(true);
   });
@@ -77,9 +78,9 @@ describe("guided X launch workflow", () => {
 
   it("accepts no or none for every optional field", () => {
     let state = reachOptionalFields();
-    for (const phase of ["artwork", "description", "website", "twitter", "telegram", "pair", "dev_buy", "fees"] as const) {
+    for (const phase of ["artwork", "description", "socials", "pair", "dev_buy", "fees"] as const) {
       expect(state.phase).toBe(phase);
-      state = answer(state, phase === "website" ? "none" : "no");
+      state = answer(state, "no");
     }
     expect(state.phase).toBe("confirm");
     expect(state.draft).toMatchObject({ name: "Green Harbor", symbol: "GHRB" });
@@ -97,21 +98,45 @@ describe("guided X launch workflow", () => {
     let state = reachOptionalFields();
     state = answer(state, "no");
     state = answer(state, "A community token");
-    state = answer(state, "greenharbor.example");
-    state = answer(state, "@greenharbor");
-    const telegram = prompt(advanceGuidedLaunch(state, "@not-a-link"));
-    expect(telegram.state.phase).toBe("pair");
-    expect(telegram.message).toContain("omitted");
-    expect(telegram.state.draft).toMatchObject({
+    const links = prompt(advanceGuidedLaunch(state, "Website: greenharbor.example, X: @greenharbor, Telegram: @not-a-link"));
+    expect(links.state.phase).toBe("pair");
+    expect(links.message).toContain("omitted");
+    expect(links.state.draft).toMatchObject({
       website: "https://greenharbor.example",
       twitter: "https://x.com/greenharbor",
     });
-    expect(telegram.state.draft.telegram).toBeUndefined();
+    expect(links.state.draft.telegram).toBeUndefined();
   });
+
+  it("collects all project links in one step", () => {
+    let state = reachOptionalFields();
+    state = answer(state, "no");
+    state = answer(state, "no");
+    expect(state.phase).toBe("socials");
+    state = answer(state, "Website: example.com X: @example Telegram: https://t.me/example");
+    expect(state).toMatchObject({ phase: "pair", draft: {
+      website: "https://example.com", twitter: "https://x.com/example", telegram: "https://t.me/example",
+    } });
+  });
+
+  it.each(["What paired assets can I use?", "Which assets are available for pairing?", "What can I pair it with?", "List the supported paired assets"])(
+    "answers a paired-assets question and resumes the current step: %s",
+    question => {
+      let state = reachOptionalFields();
+      for (let index = 0; index < 3; index += 1) state = answer(state, "no");
+      expect(state.phase).toBe("pair");
+      const result = prompt(advanceGuidedLaunch(state, question));
+      expect(result.state).toEqual(state);
+      expect(result.message).toContain("Supported Pons V2 pairing assets are");
+      expect(result.message).toContain("ETH");
+      expect(result.message).toContain(guidedLaunchPrompt("pair"));
+      expect(result.message).not.toMatch(/\bETH, ETH\b/);
+    },
+  );
 
   it("normalizes pairing aliases and developer buys", () => {
     let state = reachOptionalFields();
-    for (let index = 0; index < 5; index += 1) state = answer(state, "no");
+    for (let index = 0; index < 3; index += 1) state = answer(state, "no");
     state = answer(state, "Microsoft");
     expect(state).toMatchObject({ phase: "dev_buy", draft: { pairToken: "MSFT" } });
     state = answer(state, "5 MSFT");
@@ -122,7 +147,7 @@ describe("guided X launch workflow", () => {
     "accepts a natural pair choice: %s",
     choice => {
       let state = reachOptionalFields();
-      for (let index = 0; index < 5; index += 1) state = answer(state, "no");
+      for (let index = 0; index < 3; index += 1) state = answer(state, "no");
       state = answer(state, choice);
       expect(state).toMatchObject({ phase: "dev_buy", draft: { pairToken: "MSFT" } });
     },
@@ -130,7 +155,7 @@ describe("guided X launch workflow", () => {
 
   it("keeps unsupported pair values at the pair step", () => {
     let state = reachOptionalFields();
-    for (let index = 0; index < 5; index += 1) state = answer(state, "no");
+    for (let index = 0; index < 3; index += 1) state = answer(state, "no");
     const result = prompt(advanceGuidedLaunch(state, "FAKEPAIR"));
     expect(result.state.phase).toBe("pair");
     expect(result.message).toContain("not currently supported");
@@ -143,7 +168,7 @@ describe("guided X launch workflow", () => {
     ["share with holders", { holderFeeSharing: true }],
   ] as const)("collects the final creator-fee choice: %s", (choice, expected) => {
     let state = reachOptionalFields();
-    for (let index = 0; index < 7; index += 1) state = answer(state, "no");
+    for (let index = 0; index < 5; index += 1) state = answer(state, "no");
     state = answer(state, choice);
     expect(state.phase).toBe("confirm");
     expect(state.draft).toMatchObject(expected);
@@ -160,9 +185,7 @@ describe("guided X launch workflow", () => {
     let state = reachOptionalFields();
     state = answer(state, "no");
     state = answer(state, "A community token");
-    state = answer(state, "greenharbor.example");
-    state = answer(state, "@greenharbor");
-    state = answer(state, "t.me/greenharbor");
+    state = answer(state, "Website: greenharbor.example, X: @greenharbor, Telegram: t.me/greenharbor");
     state = answer(state, "ETH");
     state = answer(state, "$25");
     state = answer(state, "holders");
@@ -190,7 +213,7 @@ describe("guided X launch workflow", () => {
 
   it("accepts polite punctuation around launch controls", () => {
     let state = reachOptionalFields();
-    for (let index = 0; index < 8; index += 1) state = answer(state, "No, thanks!");
+    for (let index = 0; index < 6; index += 1) state = answer(state, "No, thanks!");
     expect(state.phase).toBe("confirm");
     expect(advanceGuidedLaunch(state, "Yes please!").kind).toBe("execute");
   });

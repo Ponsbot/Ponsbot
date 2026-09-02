@@ -341,6 +341,14 @@ export function backLiquidityDraft(draft: LiquidityDraft): LiquidityDraft {
   d.phase = liquidityNextPhase(d);
   return d;
 }
+
+/** Whether Back can actually rewind the persisted opening workflow. Keep this
+ * in the shared workflow module so terminal controls cannot drift from the
+ * state transition enforced by Convex. */
+export function canBackLiquidityDraft(draft: LiquidityDraft): boolean {
+  if (draft.operation !== "open") return false;
+  return (["budget", "analysis", "pool", "pair", "version", "fee", "spacing", "range", "shape", "bands", "review"] as LiquidityPhase[]).includes(draft.phase);
+}
 /** A short answer inherits meaning only from the question currently displayed. */
 export function liquidityStepFields(text: string, draft?: LiquidityDraft): LiquidityFields | null {
   if (!draft) return null;

@@ -43,6 +43,7 @@ import {
 } from "../lib/address-normalization";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { assertBuyTarget } from "../lib/buy-target-policy";
+import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
 import { EmptyNativeGasBalanceError, requireWalletNativeGas } from "../lib/wallet-native-gas";
 import { confirmedAllEthDisplay } from "../lib/native-send-display";
@@ -5255,10 +5256,14 @@ export const executeCommand = internalAction({
             workflowStage,
             clearErrorState: true,
           });
+          const enrollmentPairToken = String(operation.pairToken || "0x0000000000000000000000000000000000000000");
+          const automatedPairSupported = /^0x0{40}$/i.test(enrollmentPairToken)
+            || AUTOMATED_FEE_PAIR_ROUTES.some((route) => route.pairAsset.toLowerCase() === enrollmentPairToken.toLowerCase());
           if (
             process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true" &&
             process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true" &&
-            !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing
+            !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing &&
+            automatedPairSupported
           ) {
             const controllerAddress = String(operation.creatorFeeRecipient || wallet.address);
             const ponsFactoryAddress = registry.contracts.pons_v2_factory;

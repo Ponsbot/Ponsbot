@@ -1,5 +1,5 @@
 import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
-import { ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
 import { PUBLISHED_PAIR_LIST } from "../lib/pair-catalog";
@@ -50,7 +50,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     cross_chain: "🌐 Send Robinhood Chain ETH cross-chain with “Send $25 to WALLET ADDRESS as ASSET on CHAIN.” Add “private” or “privately” for private routing. Pons Bot processes the route immediately and posts the result when it finishes. Ask me for available chains and assets!",
     cross_chain_assets: "🌐 Available routes: ETH on Ethereum, Base, Robinhood, Arbitrum, or Optimism; SOL on Solana; BTC on Bitcoin; USDC on Ethereum, Base, Arbitrum, or Solana; USDT on Ethereum or Tron; BNB on BNB Chain; AVAX on Avalanche; POL on Polygon.",
     burn: "🔥 Say burn, the amount, and the ticker or contract. To purchase and immediately burn what you receive, say buy or purchase plus burn: buy $25 of PONSBOT and burn it.",
-    launch: "🚀 Verified X accounts can launch on Pons V2 from a post that explicitly mentions @Ponsbotfamily! Give me a name and ticker. Artwork, description, links, dev buy, and pair are optional. Use “assign fees to @user” or “holder fee sharing” for fee options.",
+    launch: "🚀 Verified accounts can post “@Ponsbotfamily launch NAME $TICKER” to launch! Add an image, and optional description, social links, dev buy, and paired asset. Or, reply “get started” to this post and I’ll walk you through the process!",
     pairs: `🔗 Pairing sets the asset used for trades and creator fees. Options: ${PUBLISHED_PAIR_LIST}.`,
     fees: "💸 Pons Bot V2 payouts are automatic: 95% goes to the assigned wallet or holders, and 5% buys and burns $PONSBOT. Say “claim my fees” to request a V2 cycle and claim legacy ETH fees. Reassign with “Reassign $TICKER fees to @user” or “Reassign $TICKER fees to holders.”",
   };
@@ -443,7 +443,7 @@ ${operation === "buy" || operation === "buy_and_send" || operation === "buy_and_
 
 Respect grammatical roles, not mere presence. A dollar sign immediately before the spend amount always means unit usd, including "$5 of ETH". For "AMOUNT PAIR of TOKEN", PAIR is pairAsset and TOKEN is the purchased token; never reverse them. For a strict token swap, SOURCE is between "of" and the connector "to" or "for"; DESTINATION follows that connector. Do not turn an unrelated second operation into a parameter of the selected operation.
 
-Supported tokenized stocks and RWAs may be referenced by ticker or ordinary company/asset name. Normalize a recognized name to its indexed ticker in token, pairAsset, pairToken, fromToken, or toToken fields; examples include Microsoft to MSFT, NVIDIA to NVDA, Apple to AAPL, SpaceX to SPCX, Google/Alphabet to GOOGL, Amazon to AMZN, Tesla to TSLA, Coinbase to COIN, Palantir to PLTR, Reddit to RDDT, S&P 500 to SPY, Hims or Hims & Hers to HIMS, BlackBerry to BB, and Gold or SPDR Gold Trust to GLD. For launch pairToken only, normalize BTC, Bitcoin, Coinbase Bitcoin, Coinbase Wrapped Bitcoin, or Wrapped Bitcoin to cbBTC and always refer to it as cbBTC. Do not apply this conversion to a new token's launch name or description.
+Supported tokenized stocks and RWAs may be referenced by ticker or ordinary company/asset name. Normalize a recognized name to its indexed ticker in token, pairAsset, pairToken, fromToken, or toToken fields; examples include Microsoft to MSFT, NVIDIA to NVDA, Apple to AAPL, SpaceX to SPCX, Google/Alphabet to GOOGL, Amazon to AMZN, Tesla to TSLA, Coinbase to COIN, Palantir to PLTR, Reddit to RDDT, S&P 500 to SPY, Hims or Hims & Hers to HIMS, BlackBerry to BB, Gold or SPDR Gold Trust to GLD, Dell to DELL, WhiteFiber to WYFI, SK hynix to SKHY, Taiwan Semiconductor or TSMC to TSM, United States Oil Fund to USO, Eli Lilly to LLY, and Roblox to RBLX. For launch pairToken only, normalize BTC, Bitcoin, Coinbase Bitcoin, Coinbase Wrapped Bitcoin, or Wrapped Bitcoin to cbBTC and always refer to it as cbBTC. Do not apply this conversion to a new token's launch name or description.
 
 Ignore conversational framing and politeness outside the operative request. A trailing "please", "thanks", "thank you", or "if you can" is never part of an asset, recipient, ticker, name, or other parameter and never invalidates an otherwise complete request. Remove commas from numeric strings. Preserve contract and recipient addresses exactly. Tickers may lose only a leading $. Do not use context outside the direct post. Attached image present: ${hasImage ? "yes" : "no"}.`;
 }
@@ -523,6 +523,10 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
       || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
     const pairRaw = explicitPair || command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
     command = { ...command, ...(quotedName ? { name: quotedName.trim() } : {}), ...(quotedDescription ? { description: quotedDescription.trim() } : {}), ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: canonicalPairIdentifier(pairRaw) } : {}) };
+    // Creator-fee authority is deliberately grounded from the literal post,
+    // never trusted from model output. Do this before returning the intent so
+    // the X layer knows it must resolve an @recipient before wallet execution.
+    try { command = normalizeLaunchFeeOptions(command, text); } catch { return null; }
   }
   const statedPairRoles = command?.kind === "buy" && command.unit === "pair" ? pairSpendRoles(text) : undefined;
   const exactPairBuy = Boolean(command?.kind === "buy" && statedPairRoles
@@ -788,6 +792,20 @@ export function explicitInformationalTopic(text: string): WalletHelpTopic | null
   return "capabilities";
 }
 
+function isDirectLaunchHelpRequest(text: string) {
+  const clean = withoutQuotedContent(text)
+    .replace(/@ponsbot(?:family)?\b/gi, " ")
+    .replace(/^(?:(?:hey|hi|hello|yo|please)[,!]?\s+)+/i, "")
+    .replace(/[.!?]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // A supplied ticker, symbol, or concrete named token belongs to the launch
+  // command pipeline. This matcher is only for questions and incomplete
+  // statements that are asking to be shown how launching works.
+  if (/\b(?:ticker|symbol|name(?:d)?|called)\b|\$[a-zA-Z][a-zA-Z0-9]{0,15}\b/i.test(clean)) return false;
+  return /^(?:how\s+(?:do|can|would)\s+i\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|how\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|i(?:\s+(?:want|would\s+like)|['’]d\s+like)\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|can\s+you\s+(?:show|tell|teach)\s+me\s+how\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin))?)$/i.test(clean);
+}
+
 function isDirectCapabilitiesRequest(text: string) {
   const clean = withoutQuotedContent(text)
     .replace(/@ponsbot(?:family)?\b/gi, " ")
@@ -996,6 +1014,8 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   // High-confidence non-authority framing wins before either AI call. Complete
   // commands appearing in examples, corrections, translations, or explicit
   // negations are data, not transaction authority.
+  if (!hasPromptInjection(operativeText) && isDirectLaunchHelpRequest(operativeText))
+    return finish({ kind: "help", topic: "launch" }, "deterministic_guard");
   if (hasNonExecutableFraming(operativeText)) return finish({ kind: "irrelevant" }, "deterministic_guard");
   if (!hasPromptInjection(operativeText) && isDirectCapabilitiesRequest(operativeText))
     return finish({ kind: "help", topic: "capabilities" }, "deterministic_guard");

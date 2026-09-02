@@ -113,6 +113,13 @@ const STOCK_ICON_DOMAINS: Record<string, string> = {
   HIMS: "hims.com",
   BB: "blackberry.com",
   GLD: "spdrgoldshares.com",
+  DELL: "dell.com",
+  WYFI: "whitefiber.com",
+  SKHY: "skhynix.com",
+  TSM: "tsmc.com",
+  USO: "uscfinvestments.com",
+  LLY: "lilly.com",
+  RBLX: "roblox.com",
 };
 
 function stockIconUrl(symbol: string) {

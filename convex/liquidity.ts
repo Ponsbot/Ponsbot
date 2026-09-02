@@ -267,6 +267,20 @@ export const terminalPositionRecords = internalQuery({
   },
 });
 
+export const terminalWorkflowRecord = internalQuery({
+  args: { ownerXUserId: v.string(), sessionIdHash: v.string(), sessionId: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.runQuery(internal.wallets.webSessionRecord, { sessionIdHash: args.sessionIdHash });
+    if (!session || session.ownerXUserId !== args.ownerXUserId || session.revokedAt || session.expiresAt <= Math.floor(Date.now() / 1_000))
+      throw new Error("LP terminal session is not active");
+    const conversation = await ctx.db.query("liquidityConversations")
+      .withIndex("by_scope_active", q => q.eq("scope", `terminal:${args.sessionId}`).eq("active", true))
+      .order("desc").first();
+    if (!conversation || conversation.ownerXUserId !== args.ownerXUserId || conversation.source !== "terminal" || conversation.expiresAt <= Date.now()) return null;
+    return { stateJson: conversation.stateJson, revision: conversation.revision };
+  },
+});
+
 async function signer<T>(path: string, body: unknown, timeout = 120_000): Promise<T> {
   const base = process.env.WALLET_SIGNER_URL?.trim() || `${process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "")}/api/wallet-signer`;
   if (!base.startsWith("https://") || !process.env.WALLET_SIGNER_TOKEN) throw new Error("Signer not configured");

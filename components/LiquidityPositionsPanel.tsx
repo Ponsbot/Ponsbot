@@ -130,6 +130,22 @@ function optionDescription(label: string, value: string, prompt: string) {
   return descriptions[label];
 }
 
+function PoolOptionDescription({ description }: { description: string }) {
+  const lines = description.split("\n").map(line => line.trim()).filter(Boolean);
+  const totalLiquidityIndex = lines.findIndex(line => /^Total pool liquidity:/i.test(line));
+  return <span className="liquidity-pool-option-description">
+    {lines.flatMap((line, index) => {
+      const swapAndDepth = line.match(/^(Swap fee\s+[^•]+)\s*•\s*(Active depth[\s\S]*)$/i);
+      if (swapAndDepth) return [
+        <span key={`${index}-fee`} className="liquidity-pool-metric swap-fee">{swapAndDepth[1].trim()}</span>,
+        <span key={`${index}-depth`} className="liquidity-pool-metric active-depth">{swapAndDepth[2].trim()}</span>,
+      ];
+      const recommendation = totalLiquidityIndex >= 0 && index > totalLiquidityIndex;
+      return <span key={index} className={`${index === 0 ? "liquidity-pool-summary" : "liquidity-pool-line"}${recommendation ? " liquidity-pool-recommendation" : ""}`}>{line}</span>;
+    })}
+  </span>;
+}
+
 export function LiquidityPositionsPanel({ busy, submit, messages }: {
   busy: boolean;
   submit: (payload: { channel: "terminal_chat"; text: string }) => Promise<void>;
@@ -148,6 +164,9 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [reply, setReply] = useState("");
   const [rangeLower, setRangeLower] = useState("");
   const [rangeUpper, setRangeUpper] = useState("");
+  const [canGoBack, setCanGoBack] = useState(false);
+  const latestMessage = messages.at(-1);
+  const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
 
   const refresh = useCallback(async () => {
     try {
@@ -165,6 +184,15 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     const timer = window.setInterval(() => void refresh(), acting ? 5_000 : 60_000);
     return () => window.clearInterval(timer);
   }, [acting, refresh]);
+
+  const refreshWorkflow = useCallback(async () => {
+    try {
+      const response = await fetch("/api/terminal/liquidity?workflow=1", { cache: "no-store" });
+      const value = await response.json();
+      setCanGoBack(response.ok && value.active === true && value.canGoBack === true);
+    } catch { setCanGoBack(false); }
+  }, []);
+  useEffect(() => { void refreshWorkflow(); }, [latestMessageKey, refreshWorkflow]);
 
   const build = (event: FormEvent) => {
     event.preventDefault();
@@ -237,7 +265,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
         {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
           const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
           const shape = /bid[- ]ask/i.test(item.label) ? "bid-ask" : /bell/i.test(item.label) ? "bell" : /^flat$/i.test(item.label) ? "flat" : undefined;
-          return <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{shape ? <ShapeGraphic shape={shape} /> : null}{description ? <span>{description}</span> : null}<i>Choose →</i></button>;
+          const poolOption = /^pool\s+\d+$/i.test(item.value);
+          return <button key={item.value} className={`${item.emphasis ? "primary " : ""}${poolOption ? "liquidity-pool-option" : ""}`.trim()} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{shape ? <ShapeGraphic shape={shape} /> : null}{description ? poolOption ? <PoolOptionDescription description={description} /> : <span>{description}</span> : null}<i>Choose →</i></button>;
         })}</div> : null}
         {rangeChoiceStep ? <form className="liquidity-range-answer" onSubmit={submitRange}>
           <label>Position MCap range</label>
@@ -252,7 +281,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
           </div> : null}
           <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value)} placeholder="100k or 100,000" /></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value)} placeholder="250k or 250,000" /></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
         </form> : feeChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage, such as 0.25%" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div></form> : null}
-        <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy} onClick={() => choose("back")}>← Back</button><div><button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? "Preparing…" : "Confirm Position"}</button> : null}</div></footer>
+        <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy || !canGoBack} aria-disabled={busy || !canGoBack} onClick={() => choose("back")}>← Back</button><div><button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? "Preparing…" : "Confirm Position"}</button> : null}</div></footer>
       </article>
     </div> : <aside className="liquidity-build-preview" aria-hidden="true">
       <div className="liquidity-preview-card"><span>1</span><div><strong>Pool analysis</strong><p>Matching ETH and USDG pool options will appear here.</p></div></div>
@@ -270,11 +299,20 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
         const liveFees = position.live?.assets.filter(asset => asset.unclaimed !== null) ?? [];
         const valuedAssets = position.live?.assets.filter(asset => asset.usd !== null && Number.isFinite(asset.usd)) ?? [];
         const positionUsd = valuedAssets.length ? valuedAssets.reduce((total, asset) => total + asset.usd!, 0) : null;
+        const valuedFees = liveFees.filter(asset => asset.unclaimedUsd !== null && Number.isFinite(asset.unclaimedUsd));
+        const unclaimedFeesUsd = valuedFees.length ? valuedFees.reduce((total, asset) => total + asset.unclaimedUsd!, 0) : liveFees.length ? null : 0;
         return <article key={position.id} className="liquidity-position-card">
-          <header><div><strong>{position.id}</strong><h3><span>${position.symbol}</span><em>{money(positionUsd)}</em></h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
+          <header><div><strong>{position.id}</strong><h3><span>${position.symbol}</span></h3><a href={`https://robinhoodchain.blockscout.com/token/${position.token}`} target="_blank" rel="noreferrer">{short(position.token)} ↗</a></div><span className={position.live?.range.inRange === false ? "out" : position.status}>{position.status === "closed" ? "Closed" : position.live?.range.inRange === false ? "Out of range" : "Active"}</span></header>
+          <div className="liquidity-position-totals">
+            <div><span>Total position</span><strong>{money(positionUsd)}</strong></div>
+            <div><span>Unclaimed LP fees</span><strong>{money(unclaimedFeesUsd)}</strong></div>
+          </div>
+          {position.status === "active" && position.live?.range.inRange === false
+            ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p>
+            : null}
           <dl>
-            <div><dt>Position value</dt><dd>{position.live?.assets.map(asset => `${amount(asset.amount)} ${asset.symbol} (${money(asset.usd)})`).join(" + ") || "Live value unavailable"}</dd></div>
-            <div><dt>Unclaimed LP fees</dt><dd>{liveFees.length ? liveFees.map(asset => `${amount(asset.unclaimed!)} ${asset.symbol} (${money(asset.unclaimedUsd)})`).join(" + ") : position.status === "closed" ? "—" : "None currently"}</dd></div>
+            <div><dt>Position assets</dt><dd>{position.live?.assets.map(asset => `${amount(asset.amount)} ${asset.symbol} (${money(asset.usd)})`).join(" + ") || "Live value unavailable"}</dd></div>
+            <div><dt>Unclaimed fee assets</dt><dd>{liveFees.length ? liveFees.map(asset => `${amount(asset.unclaimed!)} ${asset.symbol} (${money(asset.unclaimedUsd)})`).join(" + ") : position.status === "closed" ? "—" : "None currently"}</dd></div>
             <div><dt>Fees claimed so far</dt><dd>{position.feesClaimed.length ? position.feesClaimed.map(fee => `${amount(fee.amount)} ${fee.symbol}`).join(" + ") : "None"}</dd></div>
             <div><dt>MCap range</dt><dd>{range ? `${mcap(range.lower)} to ${mcap(range.upper)}` : "—"}</dd></div>
             <div><dt>Pool settings</dt><dd>V{position.version} · {position.pair || "—"} · {position.feePercent === undefined ? "—" : `${position.feePercent}% fee`} · {position.shape?.replace("_", "-") || "—"}{position.bands ? ` · ${position.bands} bands` : ""}</dd></div>

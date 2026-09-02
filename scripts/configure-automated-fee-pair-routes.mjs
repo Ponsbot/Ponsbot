@@ -74,8 +74,8 @@ if (activeFlags.length > 0) {
 
 const rawCatalog = JSON.parse(await readFile(new URL("../lib/pons-pair-catalog.json", import.meta.url), "utf8"));
 if (!Array.isArray(rawCatalog) || rawCatalog.length === 0) throw new Error("reviewed pair-route catalog is empty");
-const routes = rawCatalog.map((entry, index) => {
-  if (!entry || typeof entry !== "object" || typeof entry.symbol !== "string" || !entry.route) {
+const routes = rawCatalog.filter((entry) => entry?.route).map((entry, index) => {
+  if (!entry || typeof entry !== "object" || typeof entry.symbol !== "string") {
     throw new Error(`pair-route catalog entry ${index + 1} is malformed`);
   }
   if (!isAddress(entry.address, { strict: false }) || !isAddress(entry.route.hook, { strict: false })) {

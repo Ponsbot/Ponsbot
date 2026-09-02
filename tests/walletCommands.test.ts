@@ -18,6 +18,8 @@ describe("X wallet commands", () => {
       ["HIMS", "HIMS"], ["$HIMS", "HIMS"], ["Hims", "HIMS"], ["Hims & Hers", "HIMS"], ["Hims and Hers Health", "HIMS"],
       ["BB", "BB"], ["$BB", "BB"], ["BlackBerry", "BB"], ["blackberry", "BB"],
       ["GLD", "GLD"], ["$GLD", "GLD"], ["Gold", "GLD"], ["SPDR Gold", "GLD"], ["SPDR Gold Trust", "GLD"],
+      ["Dell", "DELL"], ["WhiteFiber", "WYFI"], ["SK hynix", "SKHY"], ["TSMC", "TSM"],
+      ["United States Oil Fund", "USO"], ["Eli Lilly", "LLY"], ["Roblox", "RBLX"],
     ] as const;
     for (const [alias, pairToken] of cases) {
       expect(parseWalletCommand(`launch Market Test ticker PTEST pair with ${alias}`), alias).toMatchObject({

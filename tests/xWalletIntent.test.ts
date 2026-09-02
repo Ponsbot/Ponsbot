@@ -12,8 +12,8 @@ describe("deterministic X wallet replies", () => {
     expect(groundedCanonicalCommand("buy $1 of BITCOIN")).toMatchObject({ kind: "buy", token: "BITCOIN" });
   });
 
-  it("grounds the new HIMS, BB, and GLD pair aliases", () => {
-    for (const [alias, pairToken] of [["Hims & Hers", "HIMS"], ["BlackBerry", "BB"], ["Gold", "GLD"], ["SPDR Gold Trust", "GLD"]] as const) {
+  it("grounds supported pair aliases", () => {
+    for (const [alias, pairToken] of [["Hims & Hers", "HIMS"], ["BlackBerry", "BB"], ["Gold", "GLD"], ["SPDR Gold Trust", "GLD"], ["Dell", "DELL"], ["WhiteFiber", "WYFI"], ["SK hynix", "SKHY"], ["TSMC", "TSM"], ["United States Oil Fund", "USO"], ["Eli Lilly", "LLY"], ["Roblox", "RBLX"]] as const) {
       expect(groundedCanonicalCommand(`launch Market Test ticker PTEST pair with ${alias}`), alias).toMatchObject({
         kind: "launch", name: "Market Test", symbol: "PTEST", pairToken,
       });
@@ -120,6 +120,15 @@ describe("deterministic X wallet replies", () => {
     }
   });
 
+  it("keeps launch fee instructions out of names and grounds the bot recipient", () => {
+    expect(groundedCanonicalCommand("@Ponsbotfamily launch SeptemberBullRun ticker $SBR assign fees to @Ponsbotfamily"))
+      .toMatchObject({ kind: "launch", name: "SeptemberBullRun", symbol: "SBR", feeRecipient: "@Ponsbotfamily" });
+    expect(groundedCanonicalCommand("@Ponsbotfamily launch token named Aurora Signal assign fees to @Ponsbotfamily"))
+      .toMatchObject({ kind: "launch", name: "Aurora Signal", symbol: "AURORASIGNAL", feeRecipient: "@Ponsbotfamily" });
+    expect(groundedCanonicalCommand("@Ponsbotfamily launch $SBR assign fees to @Ponsbotfamily"))
+      .toMatchObject({ kind: "launch", name: "SBR", symbol: "SBR", feeRecipient: "@Ponsbotfamily" });
+  });
+
   it("accepts a direct contract address as the buy target", () => {
     expect(parseWalletCommand("@Ponsbotfamily buy $20 of 0x1111111111111111111111111111111111111111")).toMatchObject({
       kind: "buy", amount: "20", unit: "usd", token: "0x1111111111111111111111111111111111111111",
@@ -170,6 +179,21 @@ describe("deterministic X wallet replies", () => {
   it("routes narrow educational questions to their specific help topics", () => {
     expect(explicitInformationalTopic("how do I burn tokens?")).toBe("burn");
     expect(explicitInformationalTopic("Which assets can I use as launch pairs?")).toBe("pairs");
+  });
+
+  it("returns launch help for natural launch questions and incomplete requests", async () => {
+    for (const text of [
+      "@Ponsbotfamily how do I launch?",
+      "How can I launch a token?",
+      "how to launch on Pons",
+      "@Ponsbotfamily I want to launch",
+      "I'd like to launch a token",
+      "Can you show me how to launch a coin?",
+    ]) {
+      await expect(parseXWalletIntent(text, false), text).resolves.toEqual({ kind: "help", topic: "launch" });
+    }
+    await expect(parseXWalletIntent("@Ponsbotfamily I want to launch Clawpump ticker CLAWPUMP", false))
+      .resolves.toMatchObject({ kind: "command", command: { kind: "launch", name: "Clawpump", symbol: "CLAWPUMP" } });
   });
 
   it("documents worth-of buy syntax", () => {

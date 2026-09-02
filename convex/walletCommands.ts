@@ -49,6 +49,13 @@ const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ["Hims & Hers", "HIMS"], ["Hims and Hers", "HIMS"], ["Hims", "HIMS"],
   ["SPDR Gold Trust", "GLD"], ["SPDR Gold", "GLD"], ["Gold", "GLD"],
   ["BlackBerry", "BB"],
+  ["Dell Technologies", "DELL"], ["Dell", "DELL"],
+  ["WhiteFiber", "WYFI"], ["White Fiber", "WYFI"],
+  ["SK hynix", "SKHY"], ["SK Hynix", "SKHY"],
+  ["Taiwan Semiconductor Manufacturing", "TSM"], ["Taiwan Semiconductor", "TSM"], ["TSMC", "TSM"],
+  ["United States Oil Fund", "USO"], ["US Oil Fund", "USO"],
+  ["Eli Lilly and Company", "LLY"], ["Eli Lilly", "LLY"],
+  ["Roblox Corporation", "RBLX"], ["Roblox", "RBLX"],
   ["SPDR S&P 500 ETF Trust", "SPY"], ["S&P 500 ETF", "SPY"], ["S&P 500", "SPY"],
   ["Take-Two Interactive Software", "TTWO"], ["Take Two Interactive", "TTWO"], ["Take-Two", "TTWO"],
   ["Trump Media & Technology Group", "DJT"], ["Trump Media and Technology Group", "DJT"], ["Trump Media", "DJT"],
@@ -360,8 +367,8 @@ export function extractGroundedLaunchName(text: string) {
   // The boundary after `name` is essential: without it, the `name` branch can
   // consume only the first four letters of `named`, leaving the trailing `d`
   // attached to the actual value (for example, `d Tesladog`).
-  const labeled = text.match(/\b(?:(?:full|token)\s+name|name)\b\s*(?:is|=|:)?\s+([^,;|/]{1,48}?)(?=\s*(?:[.,;|/]|(?:and\s+the\s+)?(?:with\s+)?(?:ticker|symbol|pair)\b|$))/i)?.[1];
-  const named = text.match(/\b(?:called|named|call\s+it)\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|using\b|dev\s*buy\b|website\b|site\b|description\b|desc\b|$))/i)?.[1];
+  const labeled = text.match(/\b(?:(?:full|token)\s+name|name)\b\s*(?:is|=|:)?\s+([^,;|/]{1,48}?)(?=\s*(?:[.,;|/]|(?:and\s+the\s+)?(?:with\s+)?(?:ticker|symbol|pair)\b|assign\s+fees\s+to\b|holder\s+fee\s+sharing\b|share\s+with\s+holders\b|$))/i)?.[1];
+  const named = text.match(/\b(?:called|named|call\s+it)\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|using\b|dev\s*buy\b|website\b|site\b|description\b|desc\b|assign\s+fees\s+to\b|holder\s+fee\s+sharing\b|share\s+with\s+holders\b|$))/i)?.[1];
   // A ticker immediately after launch syntax is also the name when no name
   // was supplied. Anchor to the launch clause, never a pair or social field.
   const tickerOnlyPrefix = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?(?:with\s+)?(?:ticker|symbol)\b\s*(?:is\b|=|:)?\s*/i);
@@ -373,7 +380,7 @@ export function extractGroundedLaunchName(text: string) {
   }
   const cashtagOnly = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
   if (cashtagOnly && !quoted && !labeled && !named && !/\b(?:ticker|symbol)\b/i.test(text)) return cleanSymbol(cashtagOnly);
-  const prefixed = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:new\s+)?(?:(?:token|coin)\s*:?)?\s*([^,;|]{1,48}?)(?=\s+\$[A-Z][A-Z0-9]{0,11}\b|\s+(?:with\s+)?(?:ticker|symbol)\b|\s+(?:and\s+)?paired?\s+(?:(?:it\s+)?with|against)\b|\s+(?:and\s+)?pair\s+(?:it\s+)?with\b|\s+with\s+\$?[A-Z][A-Z0-9]{0,11}\s+as\s+(?:the\s+)?(?:ticker|symbol)\b|\s*\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)|\s*[,;|]|$)/i)?.[1];
+  const prefixed = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:new\s+)?(?:(?:token|coin)\s*:?)?\s*([^,;|]{1,48}?)(?=\s+\$[A-Z][A-Z0-9]{0,11}\b|\s+(?:with\s+)?(?:ticker|symbol)\b|\s+(?:and\s+)?paired?\s+(?:(?:it\s+)?with|against)\b|\s+(?:and\s+)?pair\s+(?:it\s+)?with\b|\s+with\s+\$?[A-Z][A-Z0-9]{0,11}\s+as\s+(?:the\s+)?(?:ticker|symbol)\b|\s+assign\s+fees\s+to\b|\s+holder\s+fee\s+sharing\b|\s+share\s+with\s+holders\b|\s*\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)|\s*[,;|]|$)/i)?.[1];
   const candidate = cleanLaunchNameEdges(quoted || labeled || named || prefixed || "")
     .replace(/^name\s*(?:is|=|:)?\s*/i, "")
     .replace(/\s+(?:and\s+the\s+)?(?:ticker|symbol)\b[\s\S]*$/i, "")

@@ -18,4 +18,9 @@ describe("indexed Uniswap V4 routes", () => {
   it("does not redirect unrelated indexed assets into the cbBTC pool", () => {
     expect(indexedNativeV4Pools("0xCceE82fE024c36fA15E1005edE3E9e4787e23D09")).toEqual([]);
   });
+
+  it("indexes the verified native TSM and RBLX pools", () => {
+    expect(indexedNativeV4Pools("0x58FfE4a942d3885bAa22D7520691F611EF09e7AA")[0]).toMatchObject({ fee: 100_000, tickSpacing: 200 });
+    expect(indexedNativeV4Pools("0xF0C4BF4C582cb3836e98394b1d4e7B7281101bE8")[0]).toMatchObject({ fee: 920_090, tickSpacing: 200 });
+  });
 });

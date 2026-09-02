@@ -195,7 +195,7 @@ function responseLines(d: LiquidityDraft): string[] {
       return liquiditySections(
         ["💧 Review your liquidity quote"],
         [`Token: $${d.symbol || f.token}${d.tokenAddress ? ` (${d.tokenAddress.slice(0, 6)}...${d.tokenAddress.slice(-4)})` : ""}`,
-          ...(f.amount ? [`Total spend: ${f.unit === "usd" ? liquidityQuoteUsd(f.amount) : `${liquidityQuoteAmount(f.amount)} ETH`}`] : [])],
+          ...(f.amount ? [`Position budget: ${f.unit === "usd" ? liquidityQuoteUsd(f.amount) : `${liquidityQuoteAmount(f.amount)} ETH`}`] : [])],
         [`V${f.version} • ${f.pair} • Fee: ${f.feePips! / 10000}%`,
         ...(f.lowerMarketCapUsd !== undefined && f.upperMarketCapUsd !== undefined
           ? [`MCap range: ${formatLiquidityMarketCap(f.lowerMarketCapUsd)} to ${formatLiquidityMarketCap(f.upperMarketCapUsd)}`]

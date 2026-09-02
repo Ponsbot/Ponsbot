@@ -13,6 +13,9 @@ export type GuidedLaunchPhase =
   | "ticker"
   | "artwork"
   | "description"
+  | "socials"
+  // Retained so launch guides created before the combined-links rollout can
+  // finish without losing their place.
   | "website"
   | "twitter"
   | "telegram"
@@ -89,7 +92,7 @@ function isQuestion(text: string, phase: GuidedLaunchPhase) {
 
 export function guidedLaunchRequested(text: string) {
   const value = clean(text).replace(/[.!?]+$/, "");
-  return /^(?:launch|launch on pons(?: v2)?|start|please start|(?:please )?get started|let(?:'|’)?s start|let(?:'|’)?s get (?:start|started)|let(?:'|’)?s get this started|launch a token|launch a coin|create a token|create a coin|deploy a token|deploy a coin|i (?:want|would like) to (?:launch|create|deploy)(?: a token| a coin)?(?: on pons(?: v2)?)?|help me (?:launch|create|deploy)(?: a token| a coin)?(?: on pons(?: v2)?)?)$/i.test(value);
+  return /^(?:launch|launch on pons(?: v2)?|start|please start|(?:please )?get started|let(?:'|’)?s start|let(?:'|’)?s get (?:start|started)|let(?:'|’)?s get this started|launch a token|launch a coin|create a token|create a coin|deploy a token|deploy a coin|i (?:want|would like) to (?:launch|create|deploy)(?: a token| a coin)?(?: on pons(?: v2)?)?|help me (?:launch|create|deploy)(?: a token| a coin)?(?: on pons(?: v2)?)?|yes|yeah|yep|sure|ok(?:ay)?|go ahead|proceed|do it|let(?:'|’)?s do it)$/i.test(value);
 }
 
 export function createGuidedLaunchState(explicitMentionAuthorized: boolean): GuidedLaunchState {
@@ -102,6 +105,7 @@ export function decodeGuidedLaunchState(value?: string): GuidedLaunchState | nul
     const parsed = JSON.parse(value) as GuidedLaunchState;
     if (parsed.version !== 1 || ![
       "name", "ticker", "artwork", "description", "website", "twitter", "telegram", "pair", "dev_buy", "fees", "confirm",
+      "socials",
     ].includes(parsed.phase) || !parsed.draft || typeof parsed.draft !== "object") return null;
     return parsed;
   } catch {
@@ -115,6 +119,7 @@ export function guidedLaunchPrompt(phase: GuidedLaunchPhase) {
     ticker: "🏷️ Now provide the token ticker. You can include or omit the $.",
     artwork: "🖼️ Would you like to add artwork? Attach one image in your reply, or reply “no.”",
     description: "📝 Would you like to add a description? Reply with it, or say “no.”",
+    socials: "🌐 Add a website, X profile, and/or Telegram link. Label each one as Website:, X:, or Telegram:, or say “no.”",
     website: "🌐 Would you like to add a website? Reply with the URL, or say “no.”",
     twitter: "𝕏 Would you like to add an X profile? Reply with the X handle or profile URL, or say “no.”",
     telegram: "✈️ Would you like to add Telegram? Reply with a t.me/XXXXX link, or say “no.”",
@@ -132,6 +137,7 @@ function explanation(phase: GuidedLaunchPhase) {
     ticker: "The ticker is the short symbol shown with the token. It can contain up to 16 letters or numbers.",
     artwork: "Artwork is optional website imagery for the token. Attach it directly to this reply; it is not required for launch.",
     description: "The description is optional text shown with the token and can contain up to 280 characters.",
+    socials: "Project links are optional. Websites are normalized to HTTPS, X must be an @handle or profile URL, and Telegram must use a t.me/XXXXX link.",
     website: "The optional website must be a public web address. It will be normalized to HTTPS.",
     twitter: "The optional X link must identify one X profile, either as @user or an x.com profile URL.",
     telegram: "The optional Telegram link must use the t.me/XXXXX format. A bare @handle is not accepted.",
@@ -141,6 +147,47 @@ function explanation(phase: GuidedLaunchPhase) {
     confirm: "Confirmation submits the launch using the details shown. A launch is an on-chain action and cannot be undone.",
   };
   return explanations[phase];
+}
+
+function pairedAssetsQuestion(text: string) {
+  const value = clean(text);
+  return /^(?:(?:what|which|list|show|give)\b[\s\S]{0,45}\b(?:pair(?:ed|ing)?\s+assets?|assets?\s+(?:can\s+i\s+)?(?:use\s+)?(?:for\s+)?pairing)\b|(?:what|which)\s+can\s+i\s+pair\s+(?:it\s+)?with\b|what\s+are\s+the\s+(?:pair(?:ed|ing)?\s+)?options\b)/i.test(value);
+}
+
+function pairedAssetsAnswer(phase: GuidedLaunchPhase) {
+  return `🔗 Supported Pons V2 pairing assets are ${PUBLISHED_PAIR_SYMBOLS.join(", ")}.\n\n${guidedLaunchPrompt(phase)}`;
+}
+
+function parseGuidedSocials(text: string) {
+  const value = unwrap(text);
+  const websiteRaw = value.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
+  const twitterRaw = value.match(/\b(?:x|twitter)(?:\s+profile|\s+link)?\s*(?:is|=|:)?\s*(@[a-zA-Z0-9_]{1,15}|(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/[a-zA-Z0-9_]{1,15}\/?)/i)?.[1];
+  const telegramRaw = value.match(/\b(?:telegram|tg)(?:\s+link)?\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?t\.me\/[a-zA-Z0-9_]{1,64}|@[^\s,;]+|[^\s,;]+)/i)?.[1];
+  const hasWebsiteLabel = /\b(?:website|site)\s*(?:is|=|:)/i.test(value);
+  const hasXLabel = /\b(?:x|twitter)(?:\s+profile|\s+link)?\s*(?:is|=|:)/i.test(value);
+  const hasTelegramLabel = /\b(?:telegram|tg)(?:\s+link)?\s*(?:is|=|:)/i.test(value);
+  let website: string | undefined, twitter: string | undefined, telegram: string | undefined;
+  try { if (websiteRaw) website = normalizeWebsiteUrl(websiteRaw); }
+  catch { return { error: "⚠️ That website URL is not valid. Correct it, remove it, or say “no.”" }; }
+  try { if (twitterRaw) twitter = normalizeXUrl(twitterRaw); }
+  catch { return { error: "⚠️ That X profile is not valid. Use @user or an x.com profile URL." }; }
+  if (hasWebsiteLabel && !websiteRaw) return { error: "⚠️ That website URL is not valid. Correct it, remove it, or say “no.”" };
+  if (hasXLabel && !twitterRaw) return { error: "⚠️ That X profile is not valid. Use @user or an x.com profile URL." };
+  if (telegramRaw) telegram = normalizeOptionalTelegramUrl(telegramRaw);
+  const telegramOmitted = hasTelegramLabel && !telegram;
+
+  // A single unlabeled link remains convenient while multiple values require
+  // labels so one social cannot be stored in another field.
+  if (!website && !twitter && !telegram && !hasWebsiteLabel && !hasXLabel && !hasTelegramLabel) {
+    if (/^@[a-zA-Z0-9_]{1,15}$/.test(value) || /^(?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/[a-zA-Z0-9_]{1,15}\/?$/i.test(value)) {
+      try { twitter = normalizeXUrl(value); } catch { /* handled below */ }
+    } else if (/^(?:https?:\/\/)?(?:www\.)?t\.me\/[a-zA-Z0-9_]{1,64}\/?$/i.test(value)) telegram = normalizeOptionalTelegramUrl(value);
+    else {
+      try { website = normalizeWebsiteUrl(value); } catch { /* handled below */ }
+    }
+  }
+  if (!website && !twitter && !telegram && !telegramOmitted) return { error: "⚠️ Add at least one valid Website:, X:, or Telegram: link, or say “no.”" };
+  return { website, twitter, telegram, telegramOmitted };
 }
 
 function next(state: GuidedLaunchState, phase: GuidedLaunchPhase, messagePrefix?: string): GuidedLaunchAdvance {
@@ -239,6 +286,7 @@ export function advanceGuidedLaunch(
   const draft = { ...state.draft, ...(mediaUrl ? { imageUrl: mediaUrl } : {}) };
   const current = { ...state, draft };
   if (EXPLICIT_CANCEL.test(control)) return { kind: "cancelled", message: "Guided launch cancelled." };
+  if (pairedAssetsQuestion(value)) return { kind: "prompt", state: current, message: pairedAssetsAnswer(state.phase) };
   if (isQuestion(value, state.phase)) return { kind: "prompt", state: current, message: `${explanation(state.phase)}\n\n${guidedLaunchPrompt(state.phase)}` };
 
   if (state.phase === "name") {
@@ -259,7 +307,18 @@ export function advanceGuidedLaunch(
   if (state.phase === "description") {
     const description = SKIP.test(control) ? undefined : safeText(value.replace(/^(?:description|desc)\s*(?:is|=|:)?\s*/i, ""), 280);
     if (!SKIP.test(control) && !description) return next(current, "description", "⚠️ Reply with a description, or say “no.”");
-    return next({ ...current, draft: { ...draft, ...(description ? { description } : {}) } }, "website");
+    return next({ ...current, draft: { ...draft, ...(description ? { description } : {}) } }, "socials");
+  }
+  if (state.phase === "socials") {
+    if (SKIP.test(control)) return next(current, "pair");
+    const parsed = parseGuidedSocials(value);
+    if (parsed.error) return next(current, "socials", parsed.error);
+    const updated = { ...current, draft: { ...draft,
+      ...(parsed.website ? { website: parsed.website } : {}),
+      ...(parsed.twitter ? { twitter: parsed.twitter } : {}),
+      ...(parsed.telegram ? { telegram: parsed.telegram } : {}),
+    } };
+    return next(updated, "pair", parsed.telegramOmitted ? "⚠️ That Telegram link was not usable, so it was omitted." : undefined);
   }
   if (state.phase === "website") {
     if (SKIP.test(control)) return next(current, "twitter");

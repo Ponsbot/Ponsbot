@@ -3,7 +3,7 @@ import { action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { mapLiquidityBounded } from "../lib/liquidity-concurrency";
-import { liquidityFieldsSchema, newLiquidityDraft } from "../lib/liquidity-workflow";
+import { canBackLiquidityDraft, liquidityDraftSchema, liquidityFieldsSchema, newLiquidityDraft } from "../lib/liquidity-workflow";
 import type { LiquidityLeg } from "../lib/liquidity-contracts";
 import type { LiquidityQuotePlan } from "../lib/liquidity-quote";
 import type { LiquidityPositionStatus } from "../lib/liquidity-status";
@@ -78,5 +78,18 @@ export const terminalPositions = action({
       };
     }, 4);
     return { positions };
+  },
+});
+
+export const terminalWorkflowState = action({
+  args: { secret: v.string(), ownerXUserId: v.string(), sessionIdHash: v.string(), sessionId: v.string() },
+  handler: async (ctx, args): Promise<{ active: boolean; phase?: string; canGoBack: boolean; revision?: number }> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("LP terminal authorization failed");
+    const record: { stateJson: string; revision: number } | null = await ctx.runQuery(internal.liquidity.terminalWorkflowRecord, {
+      ownerXUserId: args.ownerXUserId, sessionIdHash: args.sessionIdHash, sessionId: args.sessionId,
+    });
+    if (!record) return { active: false, canGoBack: false };
+    const draft = liquidityDraftSchema.parse(JSON.parse(record.stateJson));
+    return { active: true, phase: draft.phase, canGoBack: canBackLiquidityDraft(draft), revision: record.revision };
   },
 });

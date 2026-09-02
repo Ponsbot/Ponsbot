@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { decodeFunctionData, zeroAddress } from "viem";
 import { deltaLiquidityAbi, liquidityPoolKey, liquidityPoolId, prepareLiquidityClaim, prepareLiquidityClose, prepareLiquidityOpen, assertLiquidityOwnership } from "../lib/liquidity-contracts";
 import { liquidityAmounts, liquidityBands, fundLiquidityBands, liquiditySqrtTick, liquidityTickAtSqrt, LIQUIDITY_Q96 } from "../lib/liquidity-math";
-import { backLiquidityDraft, isIndependentLiquidityRead, isLiquidityMessage, liquidityControl, liquidityOpenInquirySelection, liquidityStatusSelection, liquidityStepFields, liquidityOwnerAllowed, newLiquidityDraft, liquidityNextPhase, normalizeLiquidityTokenAliases, updateLiquidityFields, selectLiquidityPool, liquidityReviewHash, validateLiquidityReview, type LiquidityCandidate, type LiquidityPhase } from "../lib/liquidity-workflow";
+import { backLiquidityDraft, canBackLiquidityDraft, isIndependentLiquidityRead, isLiquidityMessage, liquidityControl, liquidityOpenInquirySelection, liquidityStatusSelection, liquidityStepFields, liquidityOwnerAllowed, newLiquidityDraft, liquidityNextPhase, normalizeLiquidityTokenAliases, updateLiquidityFields, selectLiquidityPool, liquidityReviewHash, validateLiquidityReview, type LiquidityCandidate, type LiquidityPhase } from "../lib/liquidity-workflow";
 import { LIQUIDITY_TEST_OWNER, LIQUIDITY_TEST_WALLET } from "./liquidityFixtures";
 import { liquidityFundingMessage, paginateLiquidityResponse, liquidityResponseLines, liquidityCompletionGuidance, liquidityOpenedDetails } from "../lib/liquidity-responses";
 import { xWeightedLength } from "../convex/xText";
@@ -263,6 +263,16 @@ describe("liquidity conversation", () => {
     const budget = backLiquidityDraft(pool);
     expect(budget.phase).toBe("budget"); expect(budget.fields.amount).toBeUndefined(); expect(budget.fields.token).toBeDefined();
   });
+  it("only enables Back when an opening workflow has a previous functional step", () => {
+    const start = newLiquidityDraft("open");
+    expect(start.phase).toBe("token");
+    expect(canBackLiquidityDraft(start)).toBe(false);
+    const budget = updateLiquidityFields(start, { token: "PONSBOT" });
+    expect(budget.phase).toBe("budget");
+    expect(canBackLiquidityDraft(budget)).toBe(true);
+    expect(canBackLiquidityDraft(backLiquidityDraft(budget))).toBe(false);
+    expect(canBackLiquidityDraft(newLiquidityDraft("claim"))).toBe(false);
+  });
   it("treats numbers as pool choices only at the pool-selection step", () => {
     expect(liquidityControl("3", "pool")).toEqual({ kind: "choose", option: 3 });
     for (const phase of ["bands", "version", "fee", "spacing", "budget", "review"] as const) {
@@ -337,7 +347,7 @@ describe("liquidity conversation", () => {
     d.quoteSummary = ["Maximum WETH: 0.04 ($100).", "Wrap ETH for 0.04 WETH: 0.04 ETH maximum."];
     const text = liquidityResponseLines(d, "LQ-AABB0011").join("\n");
     for (const removed of ["Compounding is off", "Delta collects", "gas is additional", "gas are additional", "A stale quote must be refreshed"]) expect(text).not.toContain(removed);
-    expect(text).not.toContain("Slippage:"); expect(d.fields.slippageBps).toBeUndefined(); expect(text).toContain("Total spend: $100"); expect(text).not.toContain("Wrap ETH"); expect(text).not.toContain("confirm to proceed");
+    expect(text).not.toContain("Slippage:"); expect(d.fields.slippageBps).toBeUndefined(); expect(text).toContain("Position budget: $100"); expect(text).not.toContain("Total spend:"); expect(text).not.toContain("Wrap ETH"); expect(text).not.toContain("confirm to proceed");
   });
   it.each(["I want 20 bands", "use twenty bands please", "set bands to 20"])("accepts %s at review", async text => {
     const d = completeDraft();
