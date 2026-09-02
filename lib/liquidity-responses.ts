@@ -202,7 +202,6 @@ function responseLines(d: LiquidityDraft): string[] {
           : f.downPercent !== undefined && f.upPercent !== undefined ? [`Range: ${f.downPercent}% below to ${f.upPercent}% above the reference price`] : []),
           `Shape: ${f.shape === "bid_ask" ? "Bid-ask" : f.shape === "bell" ? "Bell" : "Flat"}`],
         displayedQuoteSummary(d),
-        ["Reply with changes for a revised quote, or confirm to proceed."],
       );
     case "blocked": return [d.alternative === "withdraw_all" ? LIQUIDITY_RESPONSES.partialUnavailable : d.operation === "add" ? LIQUIDITY_RESPONSES.addUnavailable : LIQUIDITY_RESPONSES.blocked];
     case "cancelled": return [LIQUIDITY_RESPONSES.cancelled];

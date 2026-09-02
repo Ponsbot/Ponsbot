@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { decodeFunctionData, zeroAddress } from "viem";
 import { deltaLiquidityAbi, liquidityPoolKey, liquidityPoolId, prepareLiquidityClaim, prepareLiquidityClose, prepareLiquidityOpen, assertLiquidityOwnership } from "../lib/liquidity-contracts";
 import { liquidityAmounts, liquidityBands, fundLiquidityBands, liquiditySqrtTick, liquidityTickAtSqrt, LIQUIDITY_Q96 } from "../lib/liquidity-math";
-import { isIndependentLiquidityRead, isLiquidityMessage, liquidityControl, liquidityOpenInquirySelection, liquidityStatusSelection, liquidityStepFields, liquidityOwnerAllowed, newLiquidityDraft, liquidityNextPhase, normalizeLiquidityTokenAliases, updateLiquidityFields, selectLiquidityPool, liquidityReviewHash, validateLiquidityReview, type LiquidityCandidate, type LiquidityPhase } from "../lib/liquidity-workflow";
+import { backLiquidityDraft, isIndependentLiquidityRead, isLiquidityMessage, liquidityControl, liquidityOpenInquirySelection, liquidityStatusSelection, liquidityStepFields, liquidityOwnerAllowed, newLiquidityDraft, liquidityNextPhase, normalizeLiquidityTokenAliases, updateLiquidityFields, selectLiquidityPool, liquidityReviewHash, validateLiquidityReview, type LiquidityCandidate, type LiquidityPhase } from "../lib/liquidity-workflow";
 import { LIQUIDITY_TEST_OWNER, LIQUIDITY_TEST_WALLET } from "./liquidityFixtures";
 import { liquidityFundingMessage, paginateLiquidityResponse, liquidityResponseLines, liquidityCompletionGuidance, liquidityOpenedDetails } from "../lib/liquidity-responses";
 import { xWeightedLength } from "../convex/xText";
@@ -250,6 +250,18 @@ describe("liquidity conversation", () => {
     expect(liquidityControl("yes but use $200")).toBeNull();
     expect(liquidityControl("cancel and buy ETH")).toBeNull();
     expect(liquidityControl("continue")).toEqual({ kind: "continue" });
+    expect(liquidityControl("back!")).toEqual({ kind: "back" });
+    expect(liquidityControl("go back please")).toBeNull();
+  });
+  it("moves back one setup choice and invalidates the prepared quote", () => {
+    const review = completeDraft(); review.phase = "review";
+    review.executionPlanJson = "prepared"; review.review = { hash: `0x${"a".repeat(64)}`, expiresAt: Date.now() + 1_000, executionReady: true };
+    const bands = backLiquidityDraft(review);
+    expect(bands.phase).toBe("bands"); expect(bands.fields.bands).toBeUndefined();
+    expect(bands.review).toBeUndefined(); expect(bands.executionPlanJson).toBeUndefined();
+    const pool = completeDraft(); pool.phase = "pool"; pool.analyzed = true; pool.fields.amount = "100"; pool.fields.unit = "usd";
+    const budget = backLiquidityDraft(pool);
+    expect(budget.phase).toBe("budget"); expect(budget.fields.amount).toBeUndefined(); expect(budget.fields.token).toBeDefined();
   });
   it("treats numbers as pool choices only at the pool-selection step", () => {
     expect(liquidityControl("3", "pool")).toEqual({ kind: "choose", option: 3 });
@@ -299,18 +311,18 @@ describe("liquidity conversation", () => {
     const d = completeDraft(); validateLiquidityReview(d);
     d.quoteSummary = ["Maximum PONSBOT: 1000000.", "Maximum ETH: 0.01.", "Estimated gas reserve: 0.0005 ETH."];
     const lines = liquidityResponseLines(d, "LQ-AABB0011"), pages = paginateLiquidityResponse(lines, "x");
-    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.length).toBeGreaterThanOrEqual(1);
     for (const page of pages) expect(xWeightedLength(`@123456789012345 ${page}`)).toBeLessThanOrEqual(280);
-    expect(pages.at(-1)).toContain("confirm to proceed");
+    expect(pages.join("\n")).not.toContain("confirm to proceed");
     expect(pages.join("\n")).not.toContain("Estimated gas reserve");
     for (const line of lines) expect(pages.join("\n")).toContain(line);
   });
-  it("omits the band summary while keeping change instructions in the quote", () => {
+  it("omits the band summary and removed change instructions from the quote", () => {
     const d = completeDraft(); d.fields.shape = "flat"; d.fields.bands = 1; d.bandsDefaulted = true;
     const text = liquidityResponseLines(d, "LQ-AABB0011").join("\n");
     expect(text).not.toMatch(/bands|Suggested bands/i);
     expect(d.fields.bands).toBe(1);
-    expect(text).toContain("revised quote");
+    expect(text).not.toContain("revised quote");
   });
   it("does not imply an earnings ranking when every pool lacks volume and dollar depth", () => {
     const d = completeDraft(); d.phase = "pool";
@@ -325,7 +337,7 @@ describe("liquidity conversation", () => {
     d.quoteSummary = ["Maximum WETH: 0.04 ($100).", "Wrap ETH for 0.04 WETH: 0.04 ETH maximum."];
     const text = liquidityResponseLines(d, "LQ-AABB0011").join("\n");
     for (const removed of ["Compounding is off", "Delta collects", "gas is additional", "gas are additional", "A stale quote must be refreshed"]) expect(text).not.toContain(removed);
-    expect(text).not.toContain("Slippage:"); expect(d.fields.slippageBps).toBeUndefined(); expect(text).toContain("Total spend: $100"); expect(text).not.toContain("Wrap ETH"); expect(text).toContain("confirm to proceed");
+    expect(text).not.toContain("Slippage:"); expect(d.fields.slippageBps).toBeUndefined(); expect(text).toContain("Total spend: $100"); expect(text).not.toContain("Wrap ETH"); expect(text).not.toContain("confirm to proceed");
   });
   it.each(["I want 20 bands", "use twenty bands please", "set bands to 20"])("accepts %s at review", async text => {
     const d = completeDraft();

@@ -32,7 +32,7 @@ describe("concise liquidity setup", () => {
     expect(text).toContain("Token: $PONSBOT (0xb1e9...2b07)"); expect(text).not.toContain(token);
     expect(text).toContain("MCap range: $50,000 to $150,000"); expect(text).toContain("Current MCap:");
     expect(text).not.toContain("Rounded range"); expect(text).not.toContain("Tick-rounded range");
-    expect(text).toContain("confirm to proceed"); expect(text).toContain("Reply with changes");
+    expect(text).not.toContain("confirm to proceed"); expect(text).not.toContain("Reply with changes");
     for (const hidden of ["Action:", "Missing assets", "Existing pool", "Pool:", "spacing", "Requested", "Slippage", "bands", "NFT band", "Suggested bands"]) expect(text).not.toContain(hidden);
     for (const shown of ["Maximum ETH: 0.0063461 ($12.69)", "Maximum PONSBOT: 138,320 ($69.16)", "Maximum USDG: $6.46", "Buy PONSBOT: 22,669 PONSBOT ($11.33), using up to 0.0063461 ETH ($12.69)."]) expect(text).toContain(shown);
     for (const hidden of ["138322.050252610903192101", "22668.897035481936131232", "0.006346067780123254"]) expect(text).not.toContain(hidden);

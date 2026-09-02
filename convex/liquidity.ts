@@ -4,7 +4,7 @@ import { inheritLiquidityPositionFields, isIndependentLiquidityRead, isOrdinaryW
 import { action, internalAction, internalMutation, internalQuery, mutation, type ActionCtx, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { applyLiquidityBandDefault, applyLiquiditySpacingDefault, isLiquidityMessage, liquidityControl, liquidityDraftSchema, liquidityFieldsSchema, liquidityNextPhase, liquidityOwnerAllowed, liquidityReviewHash, newLiquidityDraft, selectLiquidityPool, updateLiquidityFields, validateLiquidityReview, LIQUIDITY_CONVERSATION_MS, type LiquidityDraft } from "../lib/liquidity-workflow";
+import { applyLiquidityBandDefault, applyLiquiditySpacingDefault, backLiquidityDraft, isLiquidityMessage, liquidityControl, liquidityDraftSchema, liquidityFieldsSchema, liquidityNextPhase, liquidityOwnerAllowed, liquidityReviewHash, newLiquidityDraft, selectLiquidityPool, updateLiquidityFields, validateLiquidityReview, LIQUIDITY_CONVERSATION_MS, type LiquidityDraft } from "../lib/liquidity-workflow";
 import { liquidityFundingMessage, liquidityResponseLines, liquidityStepExample, liquidityCompletionGuidance, liquidityOpenedDetails, paginateLiquidityResponse, LIQUIDITY_RESPONSES as R } from "../lib/liquidity-responses";
 import { discoverLiquidityPools } from "../lib/liquidity-markets";
 import { extractLiquidityFields, rankLiquidityPoolsWithDiagnostics } from "./liquidityAi";
@@ -321,6 +321,7 @@ export const handle = internalAction({
         && parsed?.operation === "open" && /\b(?:create|open)\b[\s\S]*\b(?:liquidity|pool|position)\b/i.test(inputText);
       if (control?.id && control.id !== reservation.publicId) message = R.stale;
       else if (control?.kind === "cancel") { d.phase = "cancelled"; d.explanationPages = []; d.review = undefined; d.executionPlanJson = undefined; d.remainingPages = []; active = false; message = R.cancelled; }
+      else if (control?.kind === "back") { d = backLiquidityDraft(d); message = liquidityResponseLines(d, reservation.publicId).join("\n"); }
       else if (control?.kind === "continue") {
         message = d.explanationPages.shift() ?? d.remainingPages.shift() ?? liquidityResponseLines(d, reservation.publicId).join("\n");
       }

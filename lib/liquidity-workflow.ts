@@ -289,10 +289,10 @@ export function inheritLiquidityPositionFields(saved: LiquidityFields, requested
   const { amount: _amount, unit: _unit, withdrawPercent: _withdrawPercent, position: _position, allPositions: _all, ...settings } = saved;
   return liquidityFieldsSchema.parse({ ...settings, ...requested });
 }
-export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: "confirm" | "cancel" | "continue" | "next" | "refresh" | "choose" | "custom"; id?: string; option?: number } | null {
+export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: "confirm" | "cancel" | "back" | "continue" | "next" | "refresh" | "choose" | "custom"; id?: string; option?: number } | null {
   const clean = text.trim().replace(/^(?:@[A-Za-z0-9_]+\s+)+/, "").replace(/[.!]+$/, "").trim();
-  const match = /^(confirm|approve|yes|cancel|no|continue|next|refresh|resume)(?:\s+(LQ-[A-F0-9]{8}))?$/i.exec(clean);
-  if (match) return { kind: /confirm|approve|yes/i.test(match[1]) ? "confirm" : /cancel|no/i.test(match[1]) ? "cancel" : /resume/i.test(match[1]) ? "refresh" : match[1].toLowerCase() as "continue" | "next" | "refresh", ...(match[2] ? { id: match[2].toUpperCase() } : {}) };
+  const match = /^(confirm|approve|yes|cancel|no|back|go\s+back|previous(?:\s+step)?|continue|next|refresh|resume)(?:\s+(LQ-[A-F0-9]{8}))?$/i.exec(clean);
+  if (match) return { kind: /confirm|approve|yes/i.test(match[1]) ? "confirm" : /cancel|no/i.test(match[1]) ? "cancel" : /back|previous/i.test(match[1]) ? "back" : /resume/i.test(match[1]) ? "refresh" : match[1].toLowerCase() as "continue" | "next" | "refresh", ...(match[2] ? { id: match[2].toUpperCase() } : {}) };
   // Pool replies are often conversational, but remain tightly anchored to a
   // single option number. This accepts "Pool 1" and similarly explicit short
   // choices without treating trade amounts or multi-parameter edits as pool
@@ -308,6 +308,38 @@ export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: 
   if (choice && phase === "pool") return { kind: "choose", option: Number(choice[1]) };
   if (/^(?:custom|new)(?:\s+pool)?$/i.test(clean)) return { kind: "custom" };
   return null;
+}
+
+/** Move an opening setup back one meaningful choice and invalidate any quote
+ * derived from the removed setting. */
+export function backLiquidityDraft(draft: LiquidityDraft): LiquidityDraft {
+  const d = structuredClone(draft);
+  if (d.operation !== "open") return d;
+  switch (d.phase) {
+    case "budget": delete d.fields.token; break;
+    case "analysis":
+    case "pool": delete d.fields.amount; delete d.fields.unit; d.analyzed = false; d.analysis = undefined; d.candidates = []; break;
+    case "pair": d.custom = false; d.selected = undefined; d.analyzed = true; break;
+    case "version": delete d.fields.pair; break;
+    case "fee": delete d.fields.version; delete d.fields.tickSpacing; break;
+    case "spacing": delete d.fields.feePips; delete d.fields.tickSpacing; break;
+    case "range":
+      if (d.selected) {
+        d.selected = undefined;
+        for (const key of ["pair", "version", "feePips", "tickSpacing"] as const) delete d.fields[key];
+      } else { delete d.fields.feePips; delete d.fields.tickSpacing; }
+      break;
+    case "shape":
+      for (const key of ["lowerMarketCapUsd", "upperMarketCapUsd", "downPercent", "upPercent"] as const) delete d.fields[key];
+      break;
+    case "bands": delete d.fields.shape; delete d.fields.bands; d.bandsDefaulted = undefined; break;
+    case "review": delete d.fields.bands; d.bandsDefaulted = undefined; break;
+    default: return d;
+  }
+  d.review = undefined; d.executionPlanJson = undefined; d.quoteSummary = [];
+  d.remainingPages = []; d.explanationPages = [];
+  d.phase = liquidityNextPhase(d);
+  return d;
 }
 /** A short answer inherits meaning only from the question currently displayed. */
 export function liquidityStepFields(text: string, draft?: LiquidityDraft): LiquidityFields | null {

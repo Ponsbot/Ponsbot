@@ -47,6 +47,9 @@ function liquidityQuickReplies(text: string) {
   };
   for (const match of text.matchAll(/(?:^|\n)\s*(\d{1,2})\)\s+/g)) add(`Pool ${match[1]}`, `pool ${match[1]}`);
   if (/custom pool/i.test(text)) add("Custom Pool", "custom pool");
+  // Pool cards contain fee data as descriptive context. Do not mistake those
+  // percentages for a separate fee-selection step beneath the pool choices.
+  if (replies.some(reply => /^pool\s+\d+$/i.test(reply.value))) return replies.slice(0, 8);
   if (/ETH or USDG|pool pair/i.test(text)) { add("ETH", "ETH"); add("USDG", "USDG"); }
   if (/V3 or V4|Uniswap version|pool version/i.test(text)) { add("V3", "V3"); add("V4", "V4"); }
   if (/swap fee|fee percentage|fee tier/i.test(text)) {
@@ -54,7 +57,7 @@ function liquidityQuickReplies(text: string) {
   }
   if (/shape distribution|flat.+bell.+bid[- ]ask/is.test(text)) { add("Flat", "flat"); add("Bell", "bell"); add("Bid-Ask", "bid ask"); }
   if (/how many bands|number of bands|choose.*bands/i.test(text)) { add("3 Bands", "3 bands"); add("5 Bands", "5 bands"); add("7 Bands", "7 bands"); }
-  if (/review your liquidity quote|confirm to proceed/i.test(text)) { add("Confirm", "confirm", true); add("Make Changes", "I want to make changes"); add("Cancel", "cancel"); }
+  if (/review your liquidity quote|confirm to proceed/i.test(text)) add("Confirm", "confirm", true);
   if (/reply refresh|refresh to/i.test(text)) add("Refresh", "refresh", true);
   if (/reply resume|funded.*resume/i.test(text)) add("Resume", "resume", true);
   if (/reply next|more \(\d+\/\d+\)/i.test(text)) add("Next", "next");
@@ -84,12 +87,13 @@ function LiquidityQuoteDetails({ text }: { text: string }) {
   const sections = text.split(/\n\s*\n/).map(section => section.trim()).filter(Boolean)
     .filter(section => !/^💧 Review your liquidity quote$/i.test(section));
   return <div className="liquidity-quote-details">{sections.map((section, index) =>
-    <section key={`${index}-${section.slice(0, 24)}`} className={/reply with changes|confirm to proceed/i.test(section) ? "liquidity-quote-action" : "liquidity-quote-section"}>
+    <section key={`${index}-${section.slice(0, 24)}`} className={`liquidity-quote-section${/^Token:/i.test(section) ? " overview" : /^V[34]\b/i.test(section) ? " settings" : " funding"}`}>
       <LiquidityMessageText text={section} />
     </section>)}</div>;
 }
 
 function liquidityStepTitle(text: string) {
+  if (/review your liquidity quote|confirm to proceed/i.test(text)) return "Position Quote";
   if (/pool options|recommended|\d+\)\s+/i.test(text)) return "Choose a Pool";
   if (/ETH or USDG|pool pair/i.test(text)) return "Choose a Pair";
   if (/V3 or V4|Uniswap version/i.test(text)) return "Choose a Version";
@@ -97,10 +101,17 @@ function liquidityStepTitle(text: string) {
   if (/how many bands|number of bands|choose.*bands/i.test(text)) return "Choose Your Bands";
   if (/market cap|MCap range|lower.+upper/is.test(text)) return "Set the Position Range";
   if (/fee percentage|fee tier/i.test(text)) return "Choose a Fee";
-  if (/review your liquidity quote|confirm to proceed/i.test(text)) return "Review Your Position";
   if (/not enough|add funds|reply resume/i.test(text)) return "Fund Your Wallet";
   if (/success|position (?:is )?(?:open|created)|LP-/i.test(text)) return "Position Created";
   return "Build Your Position";
+}
+
+function liquidityStage(text?: string) {
+  if (!text) return 1;
+  if (/review your liquidity quote|confirm to proceed/i.test(text)) return 4;
+  if (/pool options|recommended|\d+\)\s+/i.test(text)) return 2;
+  if (/ETH or USDG|pool pair|V3 or V4|Uniswap version|shape distribution|flat.+bell.+bid[- ]ask|how many bands|number of bands|market cap|MCap range|lower.+upper|fee percentage|fee tier/i.test(text)) return 3;
+  return 1;
 }
 
 function optionDescription(label: string, value: string, prompt: string) {
@@ -194,7 +205,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const sliderLower = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeLower) ?? currentMarketCap * .5)) : 0;
   const sliderUpper = currentMarketCap ? Math.max(0, Math.min(sliderMaximum, parseCompactMoney(rangeUpper) ?? currentMarketCap * 1.5)) : 0;
   const quoteChoiceStep = latestAssistant ? /review your liquidity quote|confirm to proceed/i.test(latestAssistant.text) : false;
-  const selections = guideMessages.filter(message => message.role === "user").slice(1).slice(-5);
+  const stage = liquidityStage(latestAssistant?.text);
   const choose = (value: string) => void submit({ channel: "terminal_chat", text: value });
 
   useEffect(() => {
@@ -214,17 +225,16 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       <div><p className="eyebrow"><a className="delta-powered-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></p><h2>Build a Position</h2><p>Start with the token and budget. Pons Bot will analyze available pools and guide you through the remaining choices.</p></div>
       <div className="liquidity-start-fields"><label>Token or contract<input value={token} onChange={event => setToken(event.target.value)} placeholder="PONSBOT or 0x…" required /></label>
       <label>Budget<div className="liquidity-budget-input"><input value={budget} inputMode="decimal" onChange={event => setBudget(event.target.value)} placeholder={unit === "usd" ? "100" : "0.05"} required /><div className="liquidity-unit-toggle"><button type="button" className={unit === "usd" ? "active" : ""} onClick={() => setUnit("usd")}>USD</button><button type="button" className={unit === "eth" ? "active" : ""} onClick={() => setUnit("eth")}>ETH</button></div></div></label></div>
-      <button className="button button-dark" disabled={busy || !token.trim() || !budget.trim()} type="submit">{guideMessages.length ? "Update Analysis" : "Analyze Pools"}</button>
+      <button className="button button-dark" disabled={busy || !token.trim() || !budget.trim()} type="submit">{guideMessages.length ? "Update Quote" : "Analyze Pools"}</button>
     </form>
 
     {guideMessages.length ? <div className="liquidity-step-shell" aria-live="polite">
-      <div className="liquidity-step-progress"><strong>Position setup</strong><span>{busy ? "Working…" : "In progress"}</span></div>
-      {selections.length ? <div className="liquidity-selection-trail">{selections.map((message, index) => <span key={`${message.requestId || message.createdAt}-${index}`}>{message.text}</span>)}</div> : null}
+      <div className="liquidity-step-progress"><div><strong>Position setup</strong><span>{busy ? "Updating your setup…" : `Step ${stage} of 4`}</span></div><ol aria-label="Position setup progress">{["Basics", "Pool", "Settings", "Quote"].map((label, index) => <li key={label} className={index + 1 < stage ? "complete" : index + 1 === stage ? "active" : ""}><i>{index + 1 < stage ? "✓" : index + 1}</i><span>{label}</span></li>)}</ol></div>
       <article className="liquidity-current-step">
-        <header><span className="liquidity-step-icon">{busy ? "•••" : "◆"}</span><div><p>Current step</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
+        <header className={quoteChoiceStep ? "quote" : ""}><span className="liquidity-step-icon">{busy ? "•••" : quoteChoiceStep ? "✓" : "◆"}</span><div><p>{quoteChoiceStep ? "Ready to review" : "Current step"}</p><h2>{latestAssistant ? liquidityStepTitle(latestAssistant.text) : "Preparing Your Options"}</h2></div></header>
         {quoteChoiceStep && latestAssistant ? <LiquidityQuoteDetails text={latestAssistant.text} />
           : !poolChoiceStep && !shapeChoiceStep ? <div className="liquidity-step-copy">{latestAssistant ? <LiquidityMessageText text={latestAssistant.text} /> : "Pons Bot is analyzing the available liquidity pools."}</div> : null}
-        {quickReplies.length ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
+        {quickReplies.length && !quoteChoiceStep ? <div className={`liquidity-choice-cards${feeChoiceStep ? " fee-options" : ""}`}>{quickReplies.map(item => {
           const description = latestAssistant ? optionDescription(item.label, item.value, latestAssistant.text) : undefined;
           const shape = /bid[- ]ask/i.test(item.label) ? "bid-ask" : /bell/i.test(item.label) ? "bell" : /^flat$/i.test(item.label) ? "flat" : undefined;
           return <button key={item.value} className={item.emphasis ? "primary" : ""} type="button" disabled={busy} onClick={() => choose(item.value)}><strong>{item.label}</strong>{shape ? <ShapeGraphic shape={shape} /> : null}{description ? <span>{description}</span> : null}<i>Choose →</i></button>;
@@ -233,16 +243,16 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
           <label>Position MCap range</label>
           {currentMarketCap ? <div className="liquidity-range-slider">
             <div className="liquidity-range-current"><span>Current MCap</span><strong>{mcap(currentMarketCap)}</strong></div>
-            <div className="liquidity-dual-range">
-              <div className="liquidity-range-track" />
-              <input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} />
-              <input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} />
+            <div className="liquidity-range-controls">
+              <label><span>Lower bound</span><input aria-label="Lower market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.min(sliderLower, sliderUpper)} onChange={event => setRangeLower(String(Math.min(Number(event.target.value), sliderUpper)))} /></label>
+              <label><span>Upper bound</span><input aria-label="Upper market cap" type="range" min="0" max={sliderMaximum} step={Math.max(1, Math.round(currentMarketCap / 200))} value={Math.max(sliderUpper, sliderLower)} onChange={event => setRangeUpper(String(Math.max(Number(event.target.value), sliderLower)))} /></label>
             </div>
             <div className="liquidity-range-scale"><span>$0</span><span>{mcap(currentMarketCap)}</span><span>{mcap(sliderMaximum)}</span></div>
             <div className="liquidity-range-selected"><span>Lower <strong>{mcap(Math.min(sliderLower, sliderUpper))}</strong></span><span>Upper <strong>{mcap(Math.max(sliderLower, sliderUpper))}</strong></span></div>
           </div> : null}
           <div className="liquidity-range-fields"><label htmlFor="liquidity-range-lower"><span>Lower MCap</span><input id="liquidity-range-lower" value={rangeLower} maxLength={24} inputMode="text" onChange={event => setRangeLower(event.target.value)} placeholder="100k or 100,000" /></label><span>to</span><label htmlFor="liquidity-range-upper"><span>Upper MCap</span><input id="liquidity-range-upper" value={rangeUpper} maxLength={24} inputMode="text" onChange={event => setRangeUpper(event.target.value)} placeholder="250k or 250,000" /></label><button disabled={busy || !rangeLower.trim() || !rangeUpper.trim()} type="submit">Apply Range</button></div>
-        </form> : <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">{feeChoiceStep ? "Custom swap fee" : "Custom answer or question"}</label><div><input id="liquidity-custom-answer" value={reply} maxLength={500} inputMode={feeChoiceStep ? "decimal" : undefined} onChange={event => setReply(event.target.value)} placeholder={feeChoiceStep ? "Enter a custom percentage, such as 0.25%" : "Type a value, request a change, or ask what this means…"} /><button disabled={busy || !reply.trim()} type="submit">{feeChoiceStep ? "Apply" : "Continue"}</button></div></form>}
+        </form> : feeChoiceStep ? <form className="liquidity-custom-answer" onSubmit={replyToGuide}><label htmlFor="liquidity-custom-answer">Custom swap fee</label><div><input id="liquidity-custom-answer" value={reply} maxLength={32} inputMode="decimal" onChange={event => setReply(event.target.value)} placeholder="Enter a custom percentage, such as 0.25%" /><button disabled={busy || !reply.trim()} type="submit">Apply</button></div></form> : null}
+        <footer className="liquidity-step-controls"><button type="button" className="back" disabled={busy} onClick={() => choose("back")}>← Back</button><div><button type="button" className="cancel" disabled={busy} onClick={() => choose("cancel")}>Cancel setup</button>{quoteChoiceStep ? <button type="button" className="confirm" disabled={busy} onClick={() => choose("confirm")}>{busy ? "Preparing…" : "Confirm Position"}</button> : null}</div></footer>
       </article>
     </div> : <aside className="liquidity-build-preview" aria-hidden="true">
       <div className="liquidity-preview-card"><span>1</span><div><strong>Pool analysis</strong><p>Matching ETH and USDG pool options will appear here.</p></div></div>
