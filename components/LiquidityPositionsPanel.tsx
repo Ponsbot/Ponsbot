@@ -180,8 +180,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [error, setError] = useState("");
   const [acting, setActing] = useState<string>();
   const [actingStartedAt, setActingStartedAt] = useState(0);
-  const [withdrawalCards, setWithdrawalCards] = useState<Record<string, Position>>({});
-  const [withdrawalResults, setWithdrawalResults] = useState<Record<string, string>>({});
+  const [withdrawalNotice, setWithdrawalNotice] = useState<string>();
+  const [claimNotice, setClaimNotice] = useState<string>();
   const [token, setToken] = useState("");
   const [budget, setBudget] = useState("");
   const [unit, setUnit] = useState<"usd" | "eth">("usd");
@@ -252,14 +252,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     void submit({ channel: "terminal_chat", text: `${lower} to ${upper}` }).then(refreshWorkflow);
   };
   const act = async (position: Position, kind: "claim" | "withdraw") => {
-    if (kind === "withdraw") {
-      setWithdrawalCards(current => ({ ...current, [position.id]: position }));
-      setWithdrawalResults(current => {
-        const next = { ...current };
-        delete next[position.id];
-        return next;
-      });
-    }
+    setWithdrawalNotice(undefined);
+    setClaimNotice(undefined);
     setActing(`${kind}:${position.id}`);
     setActingStartedAt(Date.now());
     await submit({ channel: "terminal_chat", text: kind === "claim" ? `claim LP fees for ${position.id}` : `withdraw ${position.id}` }, "management");
@@ -271,18 +265,8 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       && message.requestId?.startsWith("liquidity-management_") && message.createdAt >= actingStartedAt
       && /confirmed|failed|couldn.?t|not enough|no (?:LP )?fees|nothing (?:to )?collect|withdrawn|collected/i.test(message.text));
     if (!completed) return;
-    if (acting.startsWith("withdraw:")) {
-      const positionId = acting.slice("withdraw:".length);
-      if (/position withdrawn|withdrawal confirmed/i.test(completed.text)) {
-        setWithdrawalResults(current => ({ ...current, [positionId]: completed.text }));
-      } else {
-        setWithdrawalCards(current => {
-          const next = { ...current };
-          delete next[positionId];
-          return next;
-        });
-      }
-    }
+    if (acting.startsWith("withdraw:")) setWithdrawalNotice(completed.text);
+    if (acting.startsWith("claim:")) setClaimNotice(completed.text);
     void refresh().finally(() => { setActing(undefined); setActingStartedAt(0); });
   }, [acting, actingStartedAt, messages, refresh]);
   useEffect(() => {
@@ -290,10 +274,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     const timer = window.setTimeout(() => { setActing(undefined); setActingStartedAt(0); void refresh(); }, 120_000);
     return () => window.clearTimeout(timer);
   }, [actingStartedAt, refresh]);
-  const visible = tab === "closed"
-    ? positions.filter(position => position.status === "closed")
-    : [...positions.filter(position => position.status === "active"),
-      ...Object.values(withdrawalCards).filter(position => !positions.some(current => current.status === "active" && current.id === position.id))];
+  const visible = positions.filter(position => position.status === tab);
   const guideMessages = liquidityGuideMessages(builderResetAt
     ? messages.filter(message => message.createdAt > builderResetAt)
     : messages);
@@ -386,11 +367,14 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
     </div> : <div className="liquidity-position-list">
       <div className="terminal-section-head"><div><h2>Liquidity Positions</h2></div><button className="button button-quiet" type="button" onClick={() => void refresh()} disabled={loading}>Refresh</button></div>
       <div className="liquidity-position-tabs"><button className={tab === "active" ? "active" : ""} onClick={() => setTab("active")} type="button">Open ({positions.filter(position => position.status === "active").length})</button><button className={tab === "closed" ? "active" : ""} onClick={() => setTab("closed")} type="button">Closed ({positions.filter(position => position.status === "closed").length})</button></div>
+      {withdrawalNotice ? <div className="liquidity-withdrawal-notice" role="status"><LiquidityMessageText text={terminalLiquidityText(withdrawalNotice)} /></div>
+        : claimNotice ? <div className="liquidity-withdrawal-notice" role="status"><LiquidityMessageText text={terminalLiquidityText(claimNotice)} /></div>
+        : acting?.startsWith("withdraw:") ? <div className="liquidity-withdrawal-notice pending" role="status">Your withdrawal is processing<AnimatedDots /></div>
+        : acting?.startsWith("claim:") ? <div className="liquidity-withdrawal-notice pending" role="status">Your LP fee claim is processing<AnimatedDots /></div> : null}
       {error ? <p className="liquidity-position-error">{error}</p> : null}
       {loading ? <p className="terminal-empty">Loading your Delta Liquidity positions<AnimatedDots /></p> : null}
       {!loading && !visible.length ? <p className="terminal-empty">No {tab} liquidity positions.</p> : null}
       <div className="liquidity-position-cards">{visible.map(position => {
-        const withdrawalResult = withdrawalResults[position.id];
         const range = position.live?.marketCapRangeUsd ?? (position.lowerMarketCapUsd && position.upperMarketCapUsd ? { lower: position.lowerMarketCapUsd, upper: position.upperMarketCapUsd } : null);
         const liveFees = position.live?.assets.filter(asset => asset.unclaimed !== null) ?? [];
         const valuedAssets = position.live?.assets.filter(asset => asset.usd !== null && Number.isFinite(asset.usd)) ?? [];
@@ -409,7 +393,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
             <div><dt>{position.status === "closed" ? "Closed" : "Opened"}</dt><dd>{new Date(position.status === "closed" ? position.updatedAt : position.createdAt).toLocaleString()}</dd></div>
             <div><dt>NFTs</dt><dd>{position.nftIds.map(id => <a key={id} href={`https://robinhoodchain.blockscout.com/token/0x58daec3116aae6d93017baaea7749052e8a04fa7/instance/${id}`} target="_blank" rel="noreferrer">#{id} ↗</a>)}</dd></div>
           </dl>
-          {withdrawalResult ? <footer className="liquidity-withdrawal-result"><p className="liquidity-claim-success"><LiquidityMessageText text={terminalLiquidityText(withdrawalResult)} /></p></footer> : position.status === "active" ? <footer>
+          {position.status === "active" ? <footer>
             {position.live?.range.inRange === false ? <p className="liquidity-out-of-range-message">Out of range. This position is not currently earning LP fees.</p> : <span />}
             {position.lastClaim?.items.length ? <p className="liquidity-claim-success">You claimed {position.lastClaim.items.map(fee => `${amount(fee.amount)} ${fee.symbol}${fee.usd === undefined ? "" : ` (${money(fee.usd)})`}`).join(" + ")}.</p> : null}
             <div className="liquidity-position-actions"><button className="button button-quiet" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "claim")}>{acting === `claim:${position.id}` ? <>Collecting<AnimatedDots /></> : "Claim LP Fees"}</button><button className="button button-dark" type="button" disabled={busy || Boolean(acting)} onClick={() => void act(position, "withdraw")}>{acting === `withdraw:${position.id}` ? <>Withdrawing<AnimatedDots /></> : "Withdraw"}</button></div>
