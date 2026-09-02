@@ -569,7 +569,7 @@ export const handle = internalAction({
       if (!preservedSetup && code.includes("INVALID_BANDS")) {
         d.phase = "bands"; d.remainingPages = []; d.quoteSummary = [];
       }
-      if (!preservedSetup && /LP_INVALID_MCAP_RANGE|LP_MCAP_RANGE_OUTSIDE_PRICE/.test(code)) d.phase = "range";
+      if (!preservedSetup && /LP_INVALID_MCAP_RANGE|LP_MCAP_RANGE_OUTSIDE_PRICE|LP_SELECTED_POOL_RANGE_OUTSIDE_CURRENT_MCAP/.test(code)) d.phase = "range";
       // A failed standalone lookup can create a brand-new draft before its
       // token/status lookup throws. Do not leave that empty draft looking like
       // an active setup. Preserve every draft that contains actual user input.

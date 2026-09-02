@@ -184,6 +184,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const [rangeUpper, setRangeUpper] = useState("");
   const [canGoBack, setCanGoBack] = useState(false);
   const [workflowMarketCapUsd, setWorkflowMarketCapUsd] = useState<number>();
+  const [workflowPhase, setWorkflowPhase] = useState<string>();
   const latestMessage = messages.at(-1);
   const latestMessageKey = latestMessage?.requestId ?? (latestMessage ? `${latestMessage.createdAt}:${latestMessage.role}:${latestMessage.text}` : "empty");
 
@@ -209,9 +210,10 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
       const response = await fetch("/api/terminal/liquidity?workflow=1", { cache: "no-store" });
       const value = await response.json();
       setCanGoBack(response.ok && value.active === true && value.canGoBack === true);
+      setWorkflowPhase(response.ok && value.active === true && typeof value.phase === "string" ? value.phase : undefined);
       setWorkflowMarketCapUsd(response.ok && Number.isFinite(value.currentMarketCapUsd) && value.currentMarketCapUsd > 0
         ? value.currentMarketCapUsd : undefined);
-    } catch { setCanGoBack(false); setWorkflowMarketCapUsd(undefined); }
+    } catch { setCanGoBack(false); setWorkflowPhase(undefined); setWorkflowMarketCapUsd(undefined); }
   }, []);
   useEffect(() => { void refreshWorkflow(); }, [latestMessageKey, refreshWorkflow]);
 
@@ -262,7 +264,7 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const poolChoiceStep = quickReplies.some(item => /^pool\s+\d+$/i.test(item.value));
   const feeChoiceStep = latestAssistant ? /swap fee|fee percentage|fee tier/i.test(latestAssistant.text) : false;
   const shapeChoiceStep = latestAssistant ? /shape distribution|flat.+bell.+bid[- ]ask/is.test(latestAssistant.text) : false;
-  const rangeChoiceStep = latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover/i.test(latestAssistant.text) : false;
+  const rangeChoiceStep = workflowPhase === "range" || (latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover|requested range[\s\S]*band spacing/i.test(latestAssistant.text) : false);
   // The saved workflow is authoritative. Parsing rendered messages remains a
   // fallback for a response that arrives just before the workflow-state fetch.
   const currentMarketCap = workflowMarketCapUsd ?? currentMarketCapFromMessages(guideMessages);
