@@ -20,8 +20,8 @@ const liquidityDetails = [
 export default function LiquidityGuidePage() {
   return <main><SiteHeader /><section className="how-page guide-page">
     <Link className="back-link guide-back-link" href="/how-it-works">← How it works</Link>
-    <div className="section-heading"><p className="eyebrow">Delta Liquidity</p><h1>Build liquidity<br />with guidance.</h1><p className="page-lede">Create and manage liquidity positions from X or through the interactive Liquidity Positions workspace.</p></div>
+    <div className="section-heading"><a className="eyebrow guide-provider-link" href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a><h1>Build liquidity<br />with guidance.</h1><p className="page-lede">Create and manage liquidity positions from X or through the interactive Liquidity Positions terminal.</p></div>
     <div className="guide-card-grid">{liquidityDetails.map((detail) => <article key={detail.title}><h2>{detail.title}</h2><p>{detail.body}</p></article>)}</div>
-    <section className="guide-example"><p className="eyebrow">Get started</p><code>@Ponsbotfamily create a $100 liquidity position for $PONSBOT</code><p>You can ask what a setting means at any step. Pons Bot explains the current choice and then returns you to the same point in the workflow.</p><a href="https://deltaliquidity.app/" target="_blank" rel="noreferrer">Powered by Delta Liquidity ↗</a></section>
+    <section className="guide-example"><p className="eyebrow">Examples</p><code>@Ponsbotfamily create a $100 liquidity position for $PONSBOT</code><code>@Ponsbotfamily claim LP fees for $PONSBOT</code><p>You can ask what a setting means at any step. Pons Bot explains the current choice and then returns you to the same point in the workflow.</p></section>
   </section><SiteFooter /></main>;
 }

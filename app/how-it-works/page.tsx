@@ -4,7 +4,7 @@ import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 
 export const metadata: Metadata = {
   title: "How it works",
-  description: "Learn how to use Pons Bot to manage a Robinhood Chain wallet, trade and swap tokens, manage liquidity, claim creator fees, and launch on Pons V2.",
+  description: "Learn how to use Pons Bot to manage a Robinhood Chain wallet, trade and swap tokens, manage liquidity, claim creator fees, and launch on Pons.",
   alternates: { canonical: "/how-it-works" },
 };
 
@@ -22,8 +22,8 @@ const commands = [
 export default function HowItWorks() {
   return <main><SiteHeader /><section className="how-page">
     <div className="section-heading"><p className="eyebrow">How it works</p><h1>One X post.<br />A world of possibilities.</h1></div>
-    <div className="how-intro-row"><p className="page-lede">Pons Bot gives you a Robinhood Chain wallet you can use from X or the website terminal. Check balances, buy, sell, swap, send, burn, manage liquidity, claim creator fees, or launch on Pons V2.</p><div className="how-guide-links"><Link className="button how-guide-primary" href="/how-it-works/launches">HOW TO LAUNCH →</Link><Link className="button how-guide-button" href="/how-it-works/liquidity">LIQUIDITY GUIDE →</Link></div></div>
-    <section className="command-section"><p className="eyebrow">What you can do</p><h2>Everything you need, one request at a time.</h2><div className="command-grid">{commands.map((command) => <article key={command.title}><h3>{command.title}</h3><p>{command.body}</p><ul>{command.tips.map((tip) => <li key={tip}>{tip}</li>)}</ul><code>{command.example}</code></article>)}</div></section>
+    <div className="how-intro-row"><p className="page-lede">Pons Bot gives you a Robinhood Chain wallet you can use from X or the website terminal. Check balances, buy, sell, swap, send, burn, manage liquidity, claim creator fees, or launch on Pons.</p><div className="how-guide-links"><Link className="button how-guide-primary" href="/how-it-works/launches">HOW TO LAUNCH →</Link><Link className="button how-guide-button" href="/how-it-works/liquidity">LIQUIDITY GUIDE →</Link></div></div>
+    <section className="command-section"><p className="eyebrow">What you can do</p><h2>Your everything bot on Robinhood.</h2><div className="command-grid">{commands.map((command) => <article key={command.title}><h3>{command.title}</h3><p>{command.body}</p><ul>{command.tips.map((tip) => <li key={tip}>{tip}</li>)}</ul><code>{command.example}</code></article>)}</div></section>
     <div className="example-panel"><p className="eyebrow">Example posts</p><div><span>“What&apos;s my wallet?”</span><span>“How much $PONSBOT do I have?”</span><span>“Buy $25 of $PONSBOT”</span><span>“Swap $25 of ETH to USDG”</span><span>“Private send $25 to WALLET ADDRESS as ASSET on CHAIN”</span><span>“Sell half my $PONSBOT”</span><span>“Send 10 $PONSBOT to @friend”</span><span>“Burn 10 $PONSBOT”</span></div></div>
   </section><SiteFooter /></main>;
 }
