@@ -270,7 +270,11 @@ export function LiquidityPositionsPanel({ busy, submit, messages }: {
   const poolChoiceStep = quickReplies.some(item => /^pool\s+\d+$/i.test(item.value));
   const feeChoiceStep = latestAssistant ? /swap fee|fee percentage|fee tier/i.test(latestAssistant.text) : false;
   const shapeChoiceStep = latestAssistant ? /shape distribution|flat.+bell.+bid[- ]ask/is.test(latestAssistant.text) : false;
-  const rangeChoiceStep = workflowPhase === "range" || (latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover|requested range[\s\S]*band spacing/i.test(latestAssistant.text) : false);
+  const rangePromptStep = latestAssistant ? /what MCap range|provide a lower and upper|range should your position cover|requested range[\s\S]*band spacing/i.test(latestAssistant.text) : false;
+  // A freshly rendered prompt is more current than the separately refreshed
+  // workflow snapshot. In particular, do not keep the range editor mounted
+  // when the conversation has already advanced to the shape choice.
+  const rangeChoiceStep = rangePromptStep || (workflowPhase === "range" && !shapeChoiceStep);
   // The saved workflow is authoritative. Parsing rendered messages remains a
   // fallback for a response that arrives just before the workflow-state fetch.
   const currentMarketCap = workflowMarketCapUsd ?? currentMarketCapFromMessages(guideMessages);
