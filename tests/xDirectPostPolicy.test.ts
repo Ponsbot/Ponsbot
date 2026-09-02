@@ -26,9 +26,16 @@ describe("X resume reply normalization", () => {
   it.each([
     "resume", "Resume!", "please resume.", "@Ponsbotfamily resume",
     "@Ponsbotfamily @Ponsboyfamily, please resume!",
+    "Done", "Done ✅", "funded", "I funded it", "wallet funded!",
+    "funds added", "added ETH", "sent the ETH", "deposited eth",
+    "ready now", "all set", "go ahead", "try again", "retry please",
+    "continue", "proceed now", "yes", "I'm done", "I’m done", "did it",
+    "finished", "good to go", "it's funded",
   ])("accepts %s", text => expect(isResumeReply(text)).toBe(true));
 
   it.each([
     "resume my launch", "can you resume", "@alice resume", "resume and buy",
+    "done with the launch", "ready to launch something else", "send ETH to @alice",
+    "I added ETH and want to buy PONSBOT",
   ])("rejects %s", text => expect(isResumeReply(text)).toBe(false));
 });

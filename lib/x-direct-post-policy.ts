@@ -13,7 +13,14 @@ export function directPostCommandText(text: string, botUsername = "Ponsbotfamily
 /** Control replies are matched against the user's body, not X's automatically
  * prepended reply-participant handles. */
 export function isResumeReply(text: string, botUsername = "Ponsbotfamily") {
-  return /^(?:please\s+)?resume[.!?,;:\s]*$/i.test(directPostCommandText(text, botUsername));
+  const normalized = directPostCommandText(text, botUsername)
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/[^a-z0-9]+$/g, "")
+    .replace(/[.!?,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(?:please )?(?:resume|continue|proceed|retry|try again|go ahead|yes|done|im done|did it|finished|all set|good to go|ready|ready now|funded|funded it|wallet funded|its funded|i funded it|funds added|added (?:the )?(?:eth|funds)|sent (?:the )?eth|deposited (?:the )?eth)(?: please| now)?$/.test(normalized);
 }
 
 function escapeRegExp(value: string) {
