@@ -1522,6 +1522,22 @@ export const retryInteraction = internalAction({
     // X can prepend every participant in a reply chain. Strip only that leading
     // invocation block; never read or append parent/quoted post text.
     const directText = directPostCommandText(current.interaction.text);
+    if (/^unlink\s+tg[.!]?$/i.test(directText.trim())) {
+      await ctx.runMutation(internal.xReplies.updateInteraction, {
+        postId, status: "processing", commandKind: "unlink_telegram",
+      });
+      const revoked = await ctx.runMutation(internal.telegram.revokeLinkByX, {
+        ownerXUserId: current.user.xUserId,
+      });
+      const message = revoked
+        ? "✅ Telegram has been unlinked from your Pons Bot X account. Your wallet and funds are unchanged."
+        : "ℹ️ No Telegram account is currently linked to your Pons Bot X account.";
+      const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: true, kind: "reply" });
+      await ctx.runMutation(internal.xReplies.updateInteraction, {
+        postId, status: "completed", commandKind: "unlink_telegram", responsePostId,
+      });
+      return;
+    }
     const guidedHelpThread = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
       ownerXUserId: current.user.xUserId,
       parentPostId: current.interaction.parentPostId,

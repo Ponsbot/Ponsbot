@@ -32,6 +32,7 @@ const commands = [
   { command: "help", description: "See everything Pons Bot can do" },
   { command: "cancel", description: "Cancel the active guided workflow" },
   { command: "link", description: "Connect your X account" },
+  { command: "unlink", description: "Unlink your X account" },
 ];
 
 if (checkOnly) {

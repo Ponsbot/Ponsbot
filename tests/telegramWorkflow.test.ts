@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { telegramCommandText, telegramGuideOperation, telegramLiquidityText, telegramMenuGuideOperation, telegramRecipientAllowed } from "../convex/telegram";
+import { isTelegramUnlinkCommand, telegramCommandText, telegramGuideOperation, telegramLiquidityMenuCommand, telegramLiquidityText, telegramMenuGuideOperation, telegramRecipientAllowed } from "../convex/telegram";
 
 describe("Telegram command routing", () => {
   it.each([
@@ -43,5 +43,20 @@ describe("Telegram command routing", () => {
     expect(telegramLiquidityText("PONSBOT", false)).toBe("create liquidity PONSBOT");
     expect(telegramLiquidityText("$100", true)).toBe("$100");
     expect(telegramLiquidityText("check my positions", false)).toBe("check my positions");
+  });
+
+  it("maps liquidity submenu callbacks to explicit shared-workflow commands", () => {
+    expect(telegramLiquidityMenuCommand("liquidity:check")).toBe("check my positions");
+    expect(telegramLiquidityMenuCommand("liquidity:withdraw")).toBe("withdraw my position");
+    expect(telegramLiquidityMenuCommand("liquidity:create")).toBe("create liquidity");
+    expect(telegramLiquidityMenuCommand("liquidity:unknown")).toBeNull();
+  });
+
+  it("accepts only the dedicated Telegram unlink controls", () => {
+    expect(isTelegramUnlinkCommand("/unlink")).toBe(true);
+    expect(isTelegramUnlinkCommand("unlink TG")).toBe(true);
+    expect(isTelegramUnlinkCommand("UNLINK tg!")).toBe(true);
+    expect(isTelegramUnlinkCommand("please unlink TG")).toBe(false);
+    expect(isTelegramUnlinkCommand("unlink X")).toBe(false);
   });
 });

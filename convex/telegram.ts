@@ -64,6 +64,10 @@ export function telegramCommandText(text: string) {
   return clean;
 }
 
+export function isTelegramUnlinkCommand(text: string) {
+  return /^(?:\/unlink|unlink\s+tg)[.!]?$/i.test(text.trim());
+}
+
 async function telegramApi(method: string, body: Record<string, unknown>) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new Error("Telegram delivery is not configured");
@@ -147,6 +151,14 @@ export function telegramRecipientAllowed(command: WalletCommand) {
 export function telegramLiquidityText(text: string, hasActiveLiquidityConversation: boolean) {
   if (hasActiveLiquidityConversation || isLiquidityMessage(text)) return text;
   return `create liquidity ${text}`;
+}
+
+export function telegramLiquidityMenuCommand(value: string) {
+  const normalized = value.toLowerCase();
+  if (normalized === "liquidity:check") return "check my positions";
+  if (normalized === "liquidity:withdraw") return "withdraw my position";
+  if (normalized === "liquidity:create") return "create liquidity";
+  return null;
 }
 
 export const reserveUpdate = internalMutation({
@@ -234,6 +246,48 @@ export const clearConversation = internalMutation({
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
     for (const row of rows) await ctx.db.patch(row._id, { active: false, updatedAt: Date.now() });
+  },
+});
+
+export const revokeLinkByTelegram = internalMutation({
+  args: { telegramUserId: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const links = await ctx.db.query("telegramAccountLinks")
+      .withIndex("by_telegram_user", q => q.eq("telegramUserId", args.telegramUserId)).collect();
+    const active = links.filter(row => !row.revokedAt && row.ownerXUserId === args.ownerXUserId);
+    for (const row of active) await ctx.db.patch(row._id, { revokedAt: now, updatedAt: now });
+    const conversations = await ctx.db.query("telegramConversations")
+      .withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
+    for (const row of conversations) await ctx.db.patch(row._id, { active: false, updatedAt: now });
+    const scope = `telegram:telegram_${args.telegramUserId}`;
+    const liquidity = await ctx.db.query("liquidityConversations")
+      .withIndex("by_scope_active", q => q.eq("scope", scope).eq("active", true)).collect();
+    for (const row of liquidity) if (row.ownerXUserId === args.ownerXUserId)
+      await ctx.db.patch(row._id, { active: false, updatedAt: now });
+    return active.length > 0;
+  },
+});
+
+export const revokeLinkByX = internalMutation({
+  args: { ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const links = await ctx.db.query("telegramAccountLinks")
+      .withIndex("by_owner_x_user", q => q.eq("ownerXUserId", args.ownerXUserId)).collect();
+    const active = links.filter(row => !row.revokedAt);
+    for (const row of active) {
+      await ctx.db.patch(row._id, { revokedAt: now, updatedAt: now });
+      const conversations = await ctx.db.query("telegramConversations")
+        .withIndex("by_user_active", q => q.eq("telegramUserId", row.telegramUserId).eq("active", true)).collect();
+      for (const conversation of conversations) await ctx.db.patch(conversation._id, { active: false, updatedAt: now });
+      const scope = `telegram:telegram_${row.telegramUserId}`;
+      const liquidity = await ctx.db.query("liquidityConversations")
+        .withIndex("by_scope_active", q => q.eq("scope", scope).eq("active", true)).collect();
+      for (const conversation of liquidity) if (conversation.ownerXUserId === args.ownerXUserId)
+        await ctx.db.patch(conversation._id, { active: false, updatedAt: now });
+    }
+    return active.length > 0;
   },
 });
 
@@ -361,7 +415,8 @@ export const processUpdate = internalAction({
       }
       const chatId = String(message.chat.id);
       const telegramUserId = String(from.id);
-      const text = (update.message?.text || callback?.data || "").trim();
+      const rawText = (update.message?.text || callback?.data || "").trim();
+      const text = telegramLiquidityMenuCommand(rawText) || rawText;
       if (update.message?.text) await ctx.runMutation(internal.telegram.recordMessage, { telegramUserId, telegramChatId: chatId, role: "user", text, updateId: args.updateId });
       const command = commandName(text);
       const link = await ctx.runQuery(internal.telegram.activeLink, { telegramUserId });
@@ -370,7 +425,14 @@ export const processUpdate = internalAction({
         await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
         return;
       }
-      if (command === "/link" && link) {
+      if (isTelegramUnlinkCommand(text) && link) {
+        const revoked = await ctx.runMutation(internal.telegram.revokeLinkByTelegram, {
+          telegramUserId, ownerXUserId: link.ownerXUserId,
+        });
+        await sendMessage(chatId, revoked
+          ? "✅ Telegram has been unlinked from your Pons Bot X account. Your wallet and funds are unchanged."
+          : "ℹ️ No active Telegram link was found.");
+      } else if (command === "/link" && link) {
         await sendMessage(chatId, "✅ Your Telegram account is permanently linked to your Pons Bot X account.");
       } else if (!link) {
         const nonce = randomNonce();
@@ -394,6 +456,7 @@ export const processUpdate = internalAction({
             [{ text: "Send", callback_data: "guide:send" }, { text: "Burn", callback_data: "guide:burn" }],
             [{ text: "Claim Fees", callback_data: "guide:claim" }, { text: "Liquidity", callback_data: "guide:liquidity" }],
             [{ text: "Cross-chain", callback_data: "guide:cross_chain" }, { text: "Private Swap", callback_data: "guide:private_swap" }],
+            [{ text: "Unlink TG", callback_data: "/unlink" }],
           ],
         });
       } else if (command === "/cancel") {
@@ -403,6 +466,18 @@ export const processUpdate = internalAction({
         const currentConversation = await ctx.runQuery(internal.telegram.activeConversation, { telegramUserId });
         const selectedGuide = telegramMenuGuideOperation(text, currentConversation?.operation === "root");
         if (selectedGuide) {
+          if (selectedGuide === "liquidity" && rawText.toLowerCase() === "guide:liquidity") {
+            await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
+            await sendMessage(chatId, "💧 What would you like to do?", {
+              inline_keyboard: [
+                [{ text: "Check Positions", callback_data: "liquidity:check" }],
+                [{ text: "Withdraw", callback_data: "liquidity:withdraw" }],
+                [{ text: "Create Position", callback_data: "liquidity:create" }],
+              ],
+            });
+            await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+            return;
+          }
           await ctx.runMutation(internal.telegram.setConversation, { telegramUserId, telegramChatId: chatId, operation: selectedGuide });
           await sendMessage(chatId, telegramGuidePrompt(selectedGuide));
           await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
