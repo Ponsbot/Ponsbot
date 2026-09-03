@@ -244,10 +244,13 @@ describe("guided help thread ownership", () => {
       .toEqual({ operation: "buy", owner: "101", allowed: false, sourceText: "what can you do", sourceExplicitMention: false });
   });
 
-  it("treats a persisted launch how-to response as an owner-bound guided entry point", async () => {
+  it.each([
+    "@Ponsbotfamily how do I launch?",
+    "@Ponsbotfamily how do I launch",
+  ])("treats a persisted launch how-to response as an owner-bound guided entry point: %s", async text => {
     const ctx = fixture();
     await ctx.db.insert("xReplyInteractions", {
-      postId: "launch-help-source", authorXUserId: "101", text: "@Ponsbotfamily how do I launch?",
+      postId: "launch-help-source", authorXUserId: "101", text,
       parsedIntentJson: JSON.stringify({ kind: "help", topic: "launch" }),
       responsePostId: "bot-launch-help-reply", status: "completed",
       createdAt: Date.now(), updatedAt: Date.now(),
@@ -360,6 +363,27 @@ describe("pacing math", () => {
     expect(replyQueueWaitMs(ordinary, "A", now, undefined, "reply")).toBe(0);
     expect(replyQueueWaitMs(ordinary, "A", now, undefined, "houdini_final")).toBe(0);
     expect(replyQueueWaitMs(ordinary.map(a => ({ ...a, kind: "liquidity" })), "A", now)).toBe(0);
+  });
+  it("allows twenty guided replies per two minutes below 65% three-hour usage", () => {
+    const now = Date.now();
+    const attempts = Array.from({ length: 20 }, (_, index) => ({
+      at: now - index,
+      priority: "B" as const,
+      kind: "guided_reply",
+    }));
+    expect(replyQueueWaitMs(attempts.slice(0, 19), "B", now, undefined, "guided_reply")).toBe(0);
+    expect(replyQueueWaitMs(attempts, "B", now, undefined, "guided_reply")).toBeGreaterThan(0);
+  });
+  it("allows ten guided replies per two minutes at or above 65% three-hour usage", () => {
+    const now = Date.now();
+    const older = Array.from({ length: 186 }, (_, index) => ({ at: now - 60 * 60_000 - index, kind: "reply" }));
+    const guided = Array.from({ length: 10 }, (_, index) => ({
+      at: now - index,
+      priority: "B" as const,
+      kind: "guided_reply",
+    }));
+    expect(replyQueueWaitMs([...older, ...guided.slice(0, 9)], "B", now, undefined, "guided_reply")).toBe(0);
+    expect(replyQueueWaitMs([...older, ...guided], "B", now, undefined, "guided_reply")).toBeGreaterThan(0);
   });
   it.each(["liquidity", "reply"])("counts LP attempts toward both shared windows for %s", kind => {
     const now = Date.now();

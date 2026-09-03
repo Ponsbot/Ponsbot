@@ -2,6 +2,8 @@ export type ReplyPriority = "A" | "B" | "C";
 export const REPLY_QUEUE_WINDOW_MS = 2 * 60_000;
 export const REPLY_QUEUE_WINDOW_LIMIT = 3; // Cautious/high mode: floor(1.67 * 2).
 export const REPLY_QUEUE_NORMAL_WINDOW_LIMIT = 6;
+export const GUIDED_REPLY_WINDOW_LIMIT = 10;
+export const GUIDED_REPLY_NORMAL_WINDOW_LIMIT = 20;
 export const REPLY_QUEUE_C_GAP_MS = 3 * 60_000;
 export const REPLY_QUEUE_NORMAL_C_GAP_MS = 60_000;
 export const X_POST_WINDOW_15_MINUTES_MS = 15 * 60_000;
@@ -68,7 +70,9 @@ export function replyQueueWaitMs(attempts: QueueAttempt[], priority: ReplyPriori
       ? waitUntilBelow(Math.ceil(X_POST_WINDOW_3_HOURS_LIMIT * 0.8))
       : 0;
   const lastC = sorted.filter(a => a.priority === "C").at(-1)?.at;
-  // Only trusted workflow kind exempts LP replies, never priority or text.
+  // Only trusted workflow kinds receive workflow pacing, never priority or
+  // response text. Guided replies have their own larger short window so an
+  // active walkthrough can move quickly without becoming unbounded.
   // Legacy attempts without a kind conservatively remain in the short window.
   // Liquidity is not paced from a projected posting velocity. It can use the
   // 100th 15-minute slot and the 300th 3-hour slot, then waits before an
@@ -80,7 +84,13 @@ export function replyQueueWaitMs(attempts: QueueAttempt[], priority: ReplyPriori
     dynamicShortLimit,
     sorted.filter(a => !["liquidity", "guided_reply", "guided_execution", "thread_continuation"].includes(a.kind ?? "")),
   );
+  const guidedReplyWait = kind === "guided_reply" ? windowWait(
+    REPLY_QUEUE_WINDOW_MS,
+    normal ? GUIDED_REPLY_NORMAL_WINDOW_LIMIT : GUIDED_REPLY_WINDOW_LIMIT,
+    sorted.filter(a => a.kind === "guided_reply"),
+  ) : 0;
   return Math.max(0, (header?.blockedUntil ?? now) - now, shortWait,
+    guidedReplyWait,
     windowWait(X_POST_WINDOW_15_MINUTES_MS, X_POST_WINDOW_15_MINUTES_LIMIT),
     windowWait(X_POST_WINDOW_3_HOURS_MS, X_POST_WINDOW_3_HOURS_LIMIT),
     priorityPressureWait,

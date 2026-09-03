@@ -827,7 +827,7 @@ export function explicitInformationalTopic(text: string): WalletHelpTopic | null
   return "capabilities";
 }
 
-function isDirectLaunchHelpRequest(text: string) {
+export function isDirectLaunchHelpRequest(text: string) {
   const clean = withoutQuotedContent(text)
     .replace(/@ponsbot(?:family)?\b/gi, " ")
     .replace(/^(?:(?:hey|hi|hello|yo|please)[,!]?\s+)+/i, "")

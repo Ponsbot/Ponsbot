@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalCommandText, conversationalWalletMessage, decodePersistedXWalletIntent, explicitInformationalTopic, groundedCanonicalCommand, intentClassifierPrompt, isPromotionalLaunchReference, parameterExtractorPrompt, parseXWalletIntent, requestedOperations, straightforwardCommandOperation, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
+import { canonicalCommandText, conversationalWalletMessage, decodePersistedXWalletIntent, explicitInformationalTopic, groundedCanonicalCommand, intentClassifierPrompt, isDirectLaunchHelpRequest, isPromotionalLaunchReference, parameterExtractorPrompt, parseXWalletIntent, requestedOperations, straightforwardCommandOperation, unknownWalletMessage, walletHelpMessage } from "../convex/xWalletIntent";
 import { parseWalletCommand } from "../convex/walletCommands";
 
 describe("deterministic X wallet replies", () => {
@@ -194,6 +194,15 @@ describe("deterministic X wallet replies", () => {
     }
     await expect(parseXWalletIntent("@Ponsbotfamily I want to launch Clawpump ticker CLAWPUMP", false))
       .resolves.toMatchObject({ kind: "command", command: { kind: "launch", name: "Clawpump", symbol: "CLAWPUMP" } });
+  });
+
+  it.each([
+    "@ponsbotfamily how do I launch?",
+    "@ponsbotfamily how do I launch",
+  ])("deterministically recognizes the public guided-launch entry phrase: %s", async text => {
+    expect(isDirectLaunchHelpRequest(text)).toBe(true);
+    await expect(parseXWalletIntent(text, false)).resolves.toEqual({ kind: "help", topic: "launch" });
+    expect(walletHelpMessage("launch")).toContain("reply “get started”");
   });
 
   it("documents worth-of buy syntax", () => {
