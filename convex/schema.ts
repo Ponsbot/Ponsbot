@@ -633,6 +633,8 @@ export default defineSchema({
     .index("by_request", ["requestId"]),
 
   telegramConversations: defineTable({
+    resumeText: v.optional(v.string()),
+    resumeOwner: v.optional(v.string()),
     telegramUserId: v.string(),
     telegramChatId: v.string(),
     operation: v.string(),

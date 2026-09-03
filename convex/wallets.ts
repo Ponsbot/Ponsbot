@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
 import { geckoTokenMarkets } from "../lib/gecko-token-market";
 import { terminalFeeReceipts } from "./lib/terminalFeeReceipts";
 import type { TerminalFeeReceipt } from "../lib/terminal-fee-receipt";
@@ -3195,7 +3196,7 @@ export function safeFailure(
   )
     return "🌐 The network couldn't submit that transaction. Nothing was spent. Reply with the request again.";
   if (/slippage/i.test(message))
-    return "📉 The price moved beyond your slippage setting. Reply with the request again or choose a higher slippage.";
+    return "📉 The price moved beyond your slippage setting. Reply with the full request again. To change slippage, include the new slippage setting in that request.";
   if (/website (?:must use https|link is invalid)/i.test(message))
     return "🔗 Reply with the launch request using a valid public website link, such as example.com or https://example.com.";
   if (
@@ -5860,7 +5861,7 @@ export const terminalGasResumeContext = internalQuery({
     if (!latest || latest.ownerXUserId !== args.ownerXUserId || latest.role !== "assistant"
       || latest.createdAt < Date.now() - GUIDED_HELP_TTL_MS
       || latest.resumeConsumedByRequestId
-      || !/fund your wallet with (?:~?[\d.]+\s+)?ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(latest.text)) return null;
+      || !isGasResumePrompt(latest.text)) return null;
     const sourceIndex = recent.slice(1).findIndex(message => message.role === "user" && !isResumeReply(message.text)) + 1;
     if (sourceIndex <= 0) return null;
     const source = recent[sourceIndex];
@@ -5880,7 +5881,7 @@ export const claimTerminalGasResume = internalMutation({
     const prompt = await ctx.db.get(args.promptMessageId);
     if (!prompt || prompt.sessionId !== args.sessionId || prompt.ownerXUserId !== args.ownerXUserId
       || prompt.role !== "assistant" || prompt.createdAt < Date.now() - GUIDED_HELP_TTL_MS
-      || !/fund your wallet with (?:~?[\d.]+\s+)?ETH for gas[\s\S]*reply\s+[“\"]resume[”\"]/i.test(prompt.text)) return false;
+      || !isGasResumePrompt(prompt.text)) return false;
     if (prompt.resumeConsumedByRequestId) return prompt.resumeConsumedByRequestId === args.requestId;
     await ctx.db.patch(prompt._id, { resumeConsumedByRequestId: args.requestId });
     return true;

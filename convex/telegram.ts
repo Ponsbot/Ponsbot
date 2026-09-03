@@ -6,6 +6,8 @@ import { parseXWalletIntent, walletHelpMessage } from "./xWalletIntent";
 import { parseXHoudiniCommand } from "./xHoudini";
 import { GENERAL_GUIDED_HELP_MESSAGE, guidedHelpCancelled, guidedHelpClaimLpOfferSelection, guidedHelpClaimSelection, guidedHelpCommandText, guidedHelpPrompt, guidedHelpQuestion, guidedHelpQuestionResponse, guidedHelpSelection, type GuidedHelpOperation } from "../lib/guided-help-workflow";
 import { isLiquidityMessage } from "../lib/liquidity-workflow";
+import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
+import { isResumeReply } from "../lib/x-direct-post-policy";
 
 const LINK_TTL_MS = 10 * 60 * 1_000;
 
@@ -232,12 +234,26 @@ export const activeLiquidityConversation = internalQuery({
 });
 
 export const setConversation = internalMutation({
-  args: { telegramUserId: v.string(), telegramChatId: v.string(), operation: v.string() },
+  args: { telegramUserId: v.string(), telegramChatId: v.string(), operation: v.string(), resumeText: v.optional(v.string()), resumeOwner: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const now = Date.now();
     const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
     for (const row of rows) await ctx.db.patch(row._id, { active: false, updatedAt: now });
     await ctx.db.insert("telegramConversations", { ...args, active: true, expiresAt: now + 10 * 60 * 1_000, createdAt: now, updatedAt: now });
+  },
+});
+
+export const consumeGasResume = internalMutation({
+  args: { conversationId: v.id("telegramConversations"), telegramUserId: v.string(), telegramChatId: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.get(args.conversationId);
+    const links = await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", args.telegramUserId)).collect();
+    if (!row?.active || row.expiresAt <= Date.now() || row.operation !== "gas_resume"
+      || row.telegramUserId !== args.telegramUserId || row.telegramChatId !== args.telegramChatId
+      || row.resumeOwner !== args.ownerXUserId || !row.resumeText
+      || !links.some(link => !link.revokedAt && link.ownerXUserId === args.ownerXUserId)) return null;
+    await ctx.db.patch(row._id, { active: false, updatedAt: Date.now() });
+    return row.resumeText;
   },
 });
 
@@ -516,7 +532,17 @@ export const processUpdate = internalAction({
         const operation = conversation ? telegramGuideOperation(`guide:${conversation.operation}`) : null;
         const claimChoice = operation === "claim" ? guidedHelpClaimSelection(text) : null;
         const lpOfferChoice = conversation?.operation === "claim_lp_offer" ? guidedHelpClaimLpOfferSelection(text) : null;
-        const effectiveText = telegramCommandText(operation && operation !== "liquidity" ? guidedHelpCommandText(text, operation) : text);
+        let effectiveText = telegramCommandText(operation && operation !== "liquidity" ? guidedHelpCommandText(text, operation) : text);
+        if (conversation?.operation === "gas_resume" && isResumeReply(text)) {
+          const saved = await ctx.runMutation(internal.telegram.consumeGasResume, {
+            conversationId: conversation._id, telegramUserId, telegramChatId: chatId, ownerXUserId: link.ownerXUserId,
+          });
+          if (!saved) {
+            await sendMessage(chatId, "That resume request has expired or was already used. Send the full request again.");
+            return;
+          }
+          effectiveText = saved;
+        }
         const liquidityScope = `telegram:telegram_${telegramUserId}`;
         const hasActiveLiquidityConversation = operation === "liquidity"
           ? await ctx.runQuery(internal.telegram.activeLiquidityConversation, { scope: liquidityScope, ownerXUserId: link.ownerXUserId })
@@ -618,6 +644,10 @@ export const processUpdate = internalAction({
             });
           } else {
             await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
+            if (isGasResumePrompt(result.message)) await ctx.runMutation(internal.telegram.setConversation, {
+              telegramUserId, telegramChatId: chatId, operation: "gas_resume",
+              resumeText: effectiveText, resumeOwner: link.ownerXUserId,
+            });
             await sendMessage(chatId, result.message);
           }
         }
@@ -675,7 +705,12 @@ export const deliverDeferredWalletResult = internalAction({
     if (!link || link.ownerXUserId !== args.ownerXUserId || link.telegramChatId !== args.telegramChatId) return;
     const result = await ctx.runQuery(internal.telegram.walletRequestResult, { requestId: args.requestId, ownerXUserId: args.ownerXUserId });
     if (result && ["confirmed", "rejected", "failed", "skipped"].includes(result.status)) {
-      const text = result.finalMessage || result.safeError || "The request finished without a displayable result.";
+      const rawText = result.finalMessage || result.safeError || "The request finished without a displayable result.";
+      // Deferred results must not replace a newer conversation or promise an
+      // unsaved continuation. The user can explicitly submit a fresh request.
+      const text = isGasResumePrompt(rawText)
+        ? rawText.replace(/reply\s+[“"]resume[”"]/i, "send the full request again")
+        : rawText;
       await sendMessage(args.telegramChatId, text);
       await ctx.runMutation(internal.telegram.recordMessage, {
         telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, role: "assistant", text,

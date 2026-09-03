@@ -1,5 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { temporaryXReplySuppressionReason as reason, isInsufficientEthReply } from "../lib/x-temporary-reply-policy";
+import { temporaryXReplySuppressionReason as reason, isInsufficientEthReply, isGasResumePrompt } from "../lib/x-temporary-reply-policy";
+
+describe("shared gas continuation recognition", () => {
+  it.each(["buy tokens", "send ETH", "burn tokens", "sell tokens"])("recognizes simulated gas to %s", action => {
+    const text = `⛽ Simulated gas for this transaction is 0.00012 ETH. Fund your wallet to ${action}, then reply “resume”.`;
+    expect(isInsufficientEthReply(text)).toBe(true);
+    expect(isGasResumePrompt(text)).toBe(true);
+  });
+  it("requires an actual resume invitation", () => {
+    expect(isGasResumePrompt("Not enough ETH.")).toBe(false);
+    expect(isGasResumePrompt("Reply \"resume\" to learn about gas.")).toBe(false);
+    expect(isGasResumePrompt("⛽ Simulated gas and Pons launch fee for this transaction is 0.001 ETH. Fund your wallet, then reply “resume”.")).toBe(true);
+  });
+});
 
 afterEach(() => vi.unstubAllEnvs());
 describe("temporary X response suppression", () => {
