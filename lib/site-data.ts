@@ -121,6 +121,14 @@ const STOCK_ICON_DOMAINS: Record<string, string> = {
   USO: "uscfinvestments.com",
   LLY: "lilly.com",
   RBLX: "roblox.com",
+  UPS: "ups.com",
+  SNAP: "snap.com",
+  LULU: "lululemon.com",
+  FIG: "figma.com",
+  MRNA: "modernatx.com",
+  PFE: "pfizer.com",
+  MRVL: "marvell.com",
+  JNJ: "jnj.com",
 };
 
 function stockIconUrl(symbol: string) {

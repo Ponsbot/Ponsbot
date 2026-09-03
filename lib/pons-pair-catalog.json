@@ -33,5 +33,13 @@
   { "address": "0x58FfE4a942d3885bAa22D7520691F611EF09e7AA", "symbol": "TSM", "name": "Taiwan Semiconductor Manufacturing" },
   { "address": "0xa30FA36Db767ad9eD3f7a60fC79526fB4d56D344", "symbol": "USO", "name": "United States Oil Fund" },
   { "address": "0x8005d266423c7ea827372c9c864491e5786600ea", "symbol": "LLY", "name": "Eli Lilly" },
-  { "address": "0xF0C4BF4C582cb3836e98394b1d4e7B7281101bE8", "symbol": "RBLX", "name": "Roblox" }
+  { "address": "0xF0C4BF4C582cb3836e98394b1d4e7B7281101bE8", "symbol": "RBLX", "name": "Roblox" },
+  { "address": "0xf23250dac154D05Bb671CB0d0eBEf3c635c79CE2", "symbol": "UPS", "name": "United Parcel Service" },
+  { "address": "0xF6589F11Bc40b669e584073F428B05562F568733", "symbol": "SNAP", "name": "Snap" },
+  { "address": "0x4e62068525Ab11FE768e29dfD00ef909B9803016", "symbol": "LULU", "name": "Lululemon Athletica" },
+  { "address": "0x41F4267525a8AFf329540eF24fD83d9044758B33", "symbol": "FIG", "name": "Figma" },
+  { "address": "0x43B07D15cE533bEc5476d70C22a78a1B2B662155", "symbol": "MRNA", "name": "Moderna" },
+  { "address": "0x7066A64c24e4206CD62E83bf198c1E7EB361F51e", "symbol": "PFE", "name": "Pfizer" },
+  { "address": "0x62fd0668e10D8B72339BE2DCF7643001688ff13B", "symbol": "MRVL", "name": "Marvell Technology" },
+  { "address": "0x03DfbBE0AC4E7bCDaFd08eD41A400326B77D8c80", "symbol": "JNJ", "name": "Johnson & Johnson" }
 ]
