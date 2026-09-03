@@ -747,6 +747,7 @@ function isDirectFeeClaim(text: string) {
 function asksWhatIsInMyWallet(text: string) {
   const normalized = text.toLowerCase().replace(/[’]/g, "'").replace(/\s+/g, " ");
   return /\b(?:what(?:'s|\s+is)|show|check|view|see|tell\s+me)\b[\s\S]{0,20}\bmy\s+wallet\s+balance\b/i.test(normalized)
+    || /\b(?:show|check|view|see)\s+(?:my\s+)?wallet\s+funds?\b/i.test(normalized)
     || /\b(?:sitting|held|inside)\b[\s\S]{0,24}\bwallet\b/i.test(normalized)
     || /\b(?:show|list|display|check|view|see)\b[\s\S]{0,20}\bmy\s+wallet\s+(?:holdings?|balances?|assets?|tokens?)\b/i.test(normalized)
     || /\b(?:show|list|display|check|view|see|what(?:'s|\s+is))\b[\s\S]{0,24}\b(?:everything|all|tokens?|assets?|holdings?)\b[\s\S]{0,20}\b(?:in|inside)\s+my\s+wallet\b/i.test(normalized);

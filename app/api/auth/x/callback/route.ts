@@ -15,6 +15,7 @@ function errorRedirect(request: NextRequest, reason: string) {
   const response = NextResponse.redirect(target);
   response.cookies.delete("pons_x_oauth_state");
   response.cookies.delete("pons_x_oauth_verifier");
+  response.cookies.delete("pons_telegram_link");
   return response;
 }
 
@@ -76,10 +77,17 @@ export async function GET(request: NextRequest) {
     await new ConvexHttpClient(convexUrl).action(api.wallets.registerWebSession, {
       secret: webSecret, sessionId: session.sessionId, ownerXUserId: session.xUserId, expiresAt: session.expiresAt,
     });
+    const telegramLink = request.cookies.get("pons_telegram_link")?.value;
+    if (telegramLink && /^[a-f0-9]{64}$/.test(telegramLink)) {
+      await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
+        secret: webSecret, nonce: telegramLink, ownerXUserId: identity.id,
+      });
+    }
     const response = NextResponse.redirect(new URL(returnTo, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
     response.cookies.delete("pons_x_oauth_return");
+    response.cookies.delete("pons_telegram_link");
     response.cookies.set(WEB_WALLET_SESSION_COOKIE, sessionCookie, {
       httpOnly: true,
       secure: siteUrl.startsWith("https://"),

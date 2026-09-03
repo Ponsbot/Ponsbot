@@ -20,12 +20,21 @@ export async function GET(request: NextRequest) {
 
   const session = readWebWalletSession(request.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, webSecret);
   const requestedReturn = request.nextUrl.searchParams.get("returnTo");
+  const telegramLink = request.nextUrl.searchParams.get("telegramLink");
+  const validTelegramLink = telegramLink && /^[a-f0-9]{64}$/.test(telegramLink) ? telegramLink : null;
   const returnTo = requestedReturn === "/terminal" ? "/terminal" : `/wallet/${session?.walletAddress || ""}`;
   if (session) {
     const active = await new ConvexHttpClient(convexUrl).action(api.wallets.verifyWebSession, {
       secret: webSecret, sessionId: session.sessionId, ownerXUserId: session.xUserId,
     }).catch(() => false);
-    if (active) return NextResponse.redirect(new URL(returnTo, siteUrl));
+    if (active) {
+      if (validTelegramLink) {
+        await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
+          secret: webSecret, nonce: validTelegramLink, ownerXUserId: session.xUserId,
+        });
+      }
+      return NextResponse.redirect(new URL(returnTo, siteUrl));
+    }
   }
 
   const state = base64url(randomBytes(32));
@@ -49,6 +58,7 @@ export async function GET(request: NextRequest) {
   response.cookies.set("pons_x_oauth_state", state, cookie);
   response.cookies.set("pons_x_oauth_verifier", verifier, cookie);
   response.cookies.set("pons_x_oauth_return", requestedReturn === "/terminal" ? "/terminal" : "/wallet", cookie);
+  if (validTelegramLink) response.cookies.set("pons_telegram_link", validTelegramLink, cookie);
   // A cryptographically valid cookie may refer to a revoked or missing Convex
   // session. Remove it before starting OAuth so it cannot cause a redirect loop.
   if (session) response.cookies.set(WEB_WALLET_SESSION_COOKIE, "", {

@@ -30,6 +30,7 @@ import type * as marketData from "../marketData.js";
 import type * as ponsV2 from "../ponsV2.js";
 import type * as registry from "../registry.js";
 import type * as site from "../site.js";
+import type * as telegram from "../telegram.js";
 import type * as walletCommands from "../walletCommands.js";
 import type * as wallets from "../wallets.js";
 import type * as xFloodProtection from "../xFloodProtection.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   ponsV2: typeof ponsV2;
   registry: typeof registry;
   site: typeof site;
+  telegram: typeof telegram;
   walletCommands: typeof walletCommands;
   wallets: typeof wallets;
   xFloodProtection: typeof xFloodProtection;

@@ -20,7 +20,7 @@ import { validateLiquidityQuote, validateLiquidityEnvelope, validateLiquiditySig
 import { withGuidedHelpCompletion } from "../lib/guided-help-workflow";
 import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 
-const source = v.union(v.literal("x"), v.literal("terminal"));
+const source = v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram"));
 const requestArgs = { ownerXUserId: v.string(), source, scope: v.string(), requestKey: v.string(), text: v.string(), parentPostId: v.optional(v.string()) };
 
 export const cacheTerminalPositionStatus = internalMutation({
@@ -127,12 +127,12 @@ export const reserveTurn = internalMutation({
     let retryExecution = retryConversation
       ? await ctx.db.query("liquidityExecutions").withIndex("by_conversation", q => q.eq("conversationId", retryConversation!._id)).first()
       : null;
-    if (retryRequested && args.source === "terminal" && !retryExecution) {
+    if (retryRequested && args.source !== "x" && !retryExecution) {
       const recent = await ctx.db.query("liquidityExecutions").withIndex("by_owner_updated", q => q.eq("ownerXUserId", args.ownerXUserId)).order("desc").take(20);
       for (const candidate of recent) {
         if (candidate.status !== "failed") continue;
         const candidateConversation = await ctx.db.get(candidate.conversationId);
-        if (candidateConversation?.source === "terminal" && candidateConversation.scope === args.scope) {
+        if (candidateConversation?.source === args.source && candidateConversation.scope === args.scope) {
           retryConversation = candidateConversation; retryExecution = candidate; break;
         }
       }
@@ -159,7 +159,7 @@ export const reserveTurn = internalMutation({
       return { handled: true, message: R.stale };
     // Give simultaneous top-level status/NFT lookups separate short-lived
     // conversations so neither can return the setup workflow's busy message.
-    let conversation = independentRead ? null : args.source === "terminal" ? await latestForScope(ctx, args.scope) : parent?.conversation ?? null;
+    let conversation = independentRead ? null : args.source !== "x" ? await latestForScope(ctx, args.scope) : parent?.conversation ?? null;
     if (conversation && (conversation.ownerXUserId !== args.ownerXUserId || conversation.source !== args.source)) throw new Error("LP access denied");
     if (parent && (parent.conversation.ownerXUserId !== args.ownerXUserId || !independentRead && parent.conversation.currentTurnId !== parent.turn._id)) return { handled: true, message: R.stale };
     if (!conversation && liquidityControl(args.text)?.kind === "cancel") return { handled: true, message: R.cancelled };
@@ -333,7 +333,7 @@ async function signer<T>(path: string, body: unknown, timeout = 120_000): Promis
   const response = await fetch(`${base.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
   return liquiditySignerResponse<T>(response);
 }
-async function positionStatusPages(ctx: ActionCtx, ownerXUserId: string, source: "x" | "terminal", position?: string, cursor?: string, view?: "nfts", token?: string) {
+async function positionStatusPages(ctx: ActionCtx, ownerXUserId: string, source: "x" | "terminal" | "telegram", position?: string, cursor?: string, view?: "nfts", token?: string) {
   if (view === "nfts" && !position) return { pages: ["Tell me one position's LP ID to see its NFTs. Example: Show me the NFTs for position LP-1234ABCD"], cursor: undefined };
   const context = await ctx.runQuery(internal.liquidity.resolveContext, { ownerXUserId, source, position, token, listPositions: true, cursor, ...(view === "nfts" ? { includeClosedPosition: true } : {}) });
   const wallet = context.wallet;
@@ -366,7 +366,7 @@ export const handle = internalAction({
     // execute without replacing or conflicting with the user's saved setup.
     // Requiring a concrete position ID keeps ambiguous conversational requests
     // in the ordinary guided flow, where clarification remains available.
-    const terminalManagement = args.source === "terminal"
+    const terminalManagement = args.source !== "x"
       ? liquidityClaimSelection(args.text) ?? liquidityWithdrawalSelection(args.text)
       : null;
     const detachedTerminalManagement = terminalManagement?.position
@@ -548,8 +548,9 @@ export const handle = internalAction({
                   // Preserve the draft and skip expensive market discovery
                   // until the user funds the wallet and explicitly resumes.
                 } else {
-                if (args.source === "terminal") {
-                  const sessionId = args.scope.startsWith("terminal:") ? args.scope.slice("terminal:".length) : "";
+                if (args.source !== "x") {
+                  const scopePrefix = `${args.source}:`;
+                  const sessionId = args.scope.startsWith(scopePrefix) ? args.scope.slice(scopePrefix.length) : "";
                   const searchLimit = await ctx.runMutation(internal.wallets.consumeTerminalLiquiditySearch, {
                     ownerXUserId: args.ownerXUserId, sessionId,
                   });
@@ -1258,10 +1259,19 @@ export const deliverExecution = internalAction({ args: { executionId: v.id("liqu
       if (context.conversation.source === "x") {
         if (!context.turn.requestKey.startsWith("x:")) throw new Error("LP_RESULT_SOURCE_MISMATCH");
         handedOff = await ctx.runAction(internal.xReplies.deliverLiquidityResult, { postId: context.turn.requestKey.slice(2), executionId: args.executionId });
-      } else {
+      } else if (context.conversation.source === "terminal") {
         if (!context.conversation.scope.startsWith("terminal:")) throw new Error("LP_RESULT_SOURCE_MISMATCH");
         await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: context.conversation.scope.slice("terminal:".length), ownerXUserId: context.execution.ownerXUserId, role: "assistant", messageType: "result", text: context.execution.response, requestId: `liquidity-result:${args.executionId}` });
         handedOff = true;
+      } else {
+        const match = /^telegram:telegram_(\d{1,30})$/.exec(context.conversation.scope);
+        if (!match) throw new Error("LP_RESULT_SOURCE_MISMATCH");
+        const link = await ctx.runQuery(internal.telegram.activeLink, { telegramUserId: match[1] });
+        if (!link || link.ownerXUserId !== context.execution.ownerXUserId) throw new Error("LP_RESULT_SOURCE_MISMATCH");
+        handedOff = await ctx.runAction(internal.telegram.deliverLiquidityResult, {
+          telegramUserId: match[1], telegramChatId: link.telegramChatId, ownerXUserId: context.execution.ownerXUserId,
+          text: context.execution.response, requestId: `liquidity-result:${args.executionId}`,
+        });
       }
     }
   } catch { /* Retry message delivery only; never persist provider bodies. */ }

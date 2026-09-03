@@ -356,6 +356,8 @@ describe("X wallet commands", () => {
 
   it("broadly recognizes requests for the caller's wallet", () => {
     expect(parseWalletCommand("what is my wallet?")).toEqual({ kind: "show_wallet" });
+    expect(parseWalletCommand("check my wallet fund")).toEqual({ kind: "show_balance" });
+    expect(parseWalletCommand("check my wallet funds")).toEqual({ kind: "show_balance" });
     expect(parseWalletCommand("where can I find my wallet address")).toEqual({ kind: "show_wallet" });
     expect(parseWalletCommand("give me the address for my wallet")).toEqual({ kind: "show_wallet" });
     expect(parseWalletCommand("wallet please")).toEqual({ kind: "show_wallet" });

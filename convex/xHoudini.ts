@@ -608,11 +608,16 @@ export const createQuote = internalAction({
     ownerXUserId: v.string(),
     walletAddress: v.string(),
     commandJson: v.string(),
+    deliverySource: v.optional(v.union(v.literal("x"), v.literal("telegram"))),
+    telegramUserId: v.optional(v.string()),
+    telegramChatId: v.optional(v.string()),
     previousQuoteId: v.optional(v.id("xHoudiniQuotes")),
   },
   handler: async (ctx, args): Promise<{ quoteId: string; message: string }> => {
     const command = decodeCommand(args.commandJson);
     if (!command) throw new Error("invalid cross-chain command");
+    if (args.deliverySource === "telegram" && (!/^\d{1,30}$/.test(args.telegramUserId || "") || !/^-?\d{1,30}$/.test(args.telegramChatId || "")))
+      throw new Error("invalid Telegram delivery binding");
     await requireWalletNativeGas(args.walletAddress);
     const quote = await requestQuote(
         command,
@@ -650,11 +655,17 @@ export const storeQuote = internalMutation({
     duration: v.optional(v.string()),
     walletAddress: v.string(),
     commandJson: v.string(),
+    deliverySource: v.optional(v.union(v.literal("x"), v.literal("telegram"))),
+    telegramUserId: v.optional(v.string()),
+    telegramChatId: v.optional(v.string()),
     previousQuoteId: v.optional(v.id("xHoudiniQuotes")),
   },
   handler: async (ctx, args) =>
     await ctx.db.insert("xHoudiniQuotes", {
       requestPostId: args.requestPostId,
+      deliverySource: args.deliverySource ?? "x",
+      ...(args.telegramUserId ? { telegramUserId: args.telegramUserId } : {}),
+      ...(args.telegramChatId ? { telegramChatId: args.telegramChatId } : {}),
       ownerXUserId: args.ownerXUserId,
       sourceAmount: args.amount,
       sourceUnit: args.unit,
@@ -1218,10 +1229,19 @@ async function publishSubmitted(
     `⏳ ${privateMode ? "Private" : "Cross-chain"} swap submitted to Houdini Swap.${duration ? `\nEstimated wait: ${duration}.` : ""}\nPlease stand by for the result.`,
     houdiniId,
   );
-  const result = await ctx.runAction(
-    internal.xReplies.publishHoudiniProgress,
-    { postId: confirmationPostId, text, houdiniQuoteId: quoteId },
-  );
+  const row = await ctx.runQuery(internal.xHoudini.getQuote, { quoteId });
+  if (row?.deliverySource === "telegram" && row.telegramUserId && row.telegramChatId) {
+    let delivered = false;
+    try {
+      delivered = await ctx.runAction(internal.telegram.deliverHoudiniMessage, {
+        telegramUserId: row.telegramUserId, telegramChatId: row.telegramChatId, ownerXUserId: row.ownerXUserId,
+        text, requestId: `houdini-submitted:${row._id}`,
+      });
+    } catch { /* Order monitoring must continue even if its progress message is unavailable. */ }
+    await ctx.runMutation(internal.xHoudini.recordSubmissionPublication, { quoteId, status: delivered ? "published" : "failed" });
+    return;
+  }
+  const result = await ctx.runAction(internal.xReplies.publishHoudiniProgress, { postId: confirmationPostId, text, houdiniQuoteId: quoteId });
   if (result.status === "queued") return;
   await ctx.runMutation(internal.xHoudini.recordSubmissionPublication, {
     quoteId,
@@ -1284,8 +1304,8 @@ async function fund(
         unit: "eth",
         recipient: row.depositAddress,
       }),
-      source: "x",
-      channel: "x_reply",
+      source: row.deliverySource === "telegram" ? "telegram" : "x",
+      channel: row.deliverySource === "telegram" ? "telegram_chat" : "x_reply",
     });
   } catch (error) {
     const message =
@@ -1506,6 +1526,9 @@ export const refreshExpired = internalAction({
           walletAddress: args.walletAddress,
           commandJson: JSON.stringify(command),
           previousQuoteId: args.quoteId,
+          deliverySource: row.deliverySource,
+          ...(row.telegramUserId ? { telegramUserId: row.telegramUserId } : {}),
+          ...(row.telegramChatId ? { telegramChatId: row.telegramChatId } : {}),
         }),
         publication = await ctx.runAction(
           internal.xReplies.publishHoudiniOutcome,
@@ -1581,6 +1604,9 @@ export const refreshImmediate = internalAction({
         walletAddress: args.walletAddress,
         commandJson: JSON.stringify(command),
         previousQuoteId: args.quoteId,
+        deliverySource: row.deliverySource,
+        ...(row.telegramUserId ? { telegramUserId: row.telegramUserId } : {}),
+        ...(row.telegramChatId ? { telegramChatId: row.telegramChatId } : {}),
       });
       const activated = await ctx.runMutation(
         internal.xHoudini.startImmediateExecution,
@@ -1698,19 +1724,32 @@ export const publishFinalOutcome = internalAction({
       row.finalReplyOk === undefined
     )
       return;
-    const result = await ctx.runAction(
-        internal.xReplies.publishHoudiniOutcome,
-        {
-          // Final outcomes belong on the user's original command, not under
-          // the bot's intermediate "submitted" response.
-          postId: row.requestPostId,
-          text: withHoudiniOrderLink(row.finalReplyText, row.houdiniId),
-          ok: row.finalReplyOk,
-          publicationKey: `houdini-final:${row._id}`,
-          houdiniQuoteId: row._id,
-        },
-      ),
-      attempts = (row.finalPublicationAttempts || 0) + 1;
+    if (row.deliverySource === "telegram") {
+      if (!row.telegramUserId || !row.telegramChatId) {
+        await ctx.runMutation(internal.xHoudini.finishFinalPublication, {
+          quoteId: args.quoteId, leaseId, status: "failed", safeError: "Telegram final delivery binding missing",
+        });
+        return;
+      }
+      const delivered = await ctx.runAction(internal.telegram.deliverHoudiniMessage, {
+        telegramUserId: row.telegramUserId, telegramChatId: row.telegramChatId, ownerXUserId: row.ownerXUserId,
+        text: withHoudiniOrderLink(row.finalReplyText, row.houdiniId), requestId: `houdini-final:${row._id}`,
+      });
+      await ctx.runMutation(internal.xHoudini.finishFinalPublication, {
+        quoteId: args.quoteId, leaseId, status: delivered ? "published" : "failed",
+        ...(!delivered ? { safeError: "Telegram final delivery failed" } : {}),
+      });
+      return;
+    }
+    const result = await ctx.runAction(internal.xReplies.publishHoudiniOutcome, {
+      // Final outcomes belong on the user's original command, not under
+      // the bot's intermediate "submitted" response.
+      postId: row.requestPostId,
+      text: withHoudiniOrderLink(row.finalReplyText, row.houdiniId),
+      ok: row.finalReplyOk,
+      publicationKey: `houdini-final:${row._id}`,
+      houdiniQuoteId: row._id,
+    }), attempts = (row.finalPublicationAttempts || 0) + 1;
     if (result.status === "queued") return;
     if (result.status === "published" && result.responsePostId) {
       await ctx.runMutation(internal.xHoudini.finishFinalPublication, {

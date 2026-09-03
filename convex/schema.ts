@@ -504,12 +504,13 @@ export default defineSchema({
     ownerXUserId: v.string(),
     walletId: v.id("cryptoWallets"),
     kind: v.string(),
-    source: v.optional(v.union(v.literal("x"), v.literal("terminal"))),
+    source: v.optional(v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram"))),
     channel: v.optional(
       v.union(
         v.literal("x_reply"),
         v.literal("terminal_chat"),
         v.literal("terminal_form"),
+        v.literal("telegram_chat"),
       ),
     ),
     status: v.union(
@@ -578,6 +579,68 @@ export default defineSchema({
   })
     .index("by_session_hash", ["sessionIdHash"])
     .index("by_owner", ["ownerXUserId"]),
+
+  telegramAccountLinks: defineTable({
+    telegramUserId: v.string(),
+    telegramChatId: v.string(),
+    telegramUsername: v.optional(v.string()),
+    ownerXUserId: v.string(),
+    linkedAt: v.number(),
+    lastAuthenticatedAt: v.number(),
+    revokedAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_telegram_user", ["telegramUserId"])
+    .index("by_owner_x_user", ["ownerXUserId"]),
+
+  telegramLinkNonces: defineTable({
+    nonceHash: v.string(),
+    telegramUserId: v.string(),
+    telegramChatId: v.string(),
+    telegramUsername: v.optional(v.string()),
+    expiresAt: v.number(),
+    consumedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_nonce_hash", ["nonceHash"]),
+
+  telegramUpdates: defineTable({
+    updateId: v.string(),
+    telegramUserId: v.optional(v.string()),
+    telegramChatId: v.optional(v.string()),
+    status: v.union(
+      v.literal("received"),
+      v.literal("processing"),
+      v.literal("completed"),
+      v.literal("ignored"),
+      v.literal("failed"),
+    ),
+    safeError: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_update_id", ["updateId"]),
+
+  telegramMessages: defineTable({
+    telegramUserId: v.string(),
+    telegramChatId: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+    updateId: v.optional(v.string()),
+    requestId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_user_created_at", ["telegramUserId", "createdAt"])
+    .index("by_request", ["requestId"]),
+
+  telegramConversations: defineTable({
+    telegramUserId: v.string(),
+    telegramChatId: v.string(),
+    operation: v.string(),
+    active: v.boolean(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_user_active", ["telegramUserId", "active"]),
 
   terminalRateLimits: defineTable({
     key: v.string(),
@@ -1069,6 +1132,9 @@ export default defineSchema({
 
   xHoudiniQuotes: defineTable({
     requestPostId: v.string(),
+    deliverySource: v.optional(v.union(v.literal("x"), v.literal("telegram"))),
+    telegramUserId: v.optional(v.string()),
+    telegramChatId: v.optional(v.string()),
     quoteResponsePostId: v.optional(v.string()),
     confirmationPostId: v.optional(v.string()),
     ownerXUserId: v.string(),

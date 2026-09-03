@@ -594,7 +594,7 @@ export function parseWalletCommand(raw: string): WalletCommand {
     return { kind: "send", amount: "100", unit: "percent", token: "ETH", recipient: recipientAddress || recipientHandle! };
   }
   if (/\b(?:make|create|open|set\s*up|start)\b[\s\S]*\bwallet\b|\bnew wallet\b/i.test(text)) return { kind: "create_wallet" };
-  if (/\b(?:balance|holdings?|portfolio|what\s+tokens|what(?:'s|\s+is)\s+in\s+(?:the|my)\s+wallet|how\s+much.*(?:eth|token|coin|wallet)|do\s+i\s+have\s+any|combien\s+j['’]?ai)\b/i.test(text)) {
+  if (/\b(?:balance|holdings?|portfolio|what\s+tokens|what(?:'s|\s+is)\s+in\s+(?:the|my)\s+wallet|(?:show|check|view|see)\s+(?:my\s+)?wallet\s+funds?|how\s+much.*(?:eth|token|coin|wallet)|do\s+i\s+have\s+any|combien\s+j['’]?ai)\b/i.test(text)) {
     const token = text.match(/\b(?:of|for|much|any)\s+\$?([a-zA-Z0-9]{1,42})\b/i)?.[1];
     return { kind: "show_balance", ...(token ? { token } : {}) };
   }

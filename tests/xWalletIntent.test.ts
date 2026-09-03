@@ -173,6 +173,7 @@ describe("deterministic X wallet replies", () => {
     expect(straightforwardCommandOperation("List all tokens in my wallet")).toBe("show_balance");
     expect(straightforwardCommandOperation("Show me my wallet holdings please")).toBe("show_balance");
     expect(straightforwardCommandOperation("what's my wallet balance")).toBe("show_balance");
+    expect(straightforwardCommandOperation("check my wallet fund")).toBe("show_balance");
     expect(requestedOperations("what's my wallet balance")).toEqual(["show_balance"]);
   });
 

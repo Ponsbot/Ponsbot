@@ -27,8 +27,8 @@ export function liquidityWithdrawalMinimum(amount: bigint) {
 
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const leg = z.object({ tokenId: z.string().regex(/^[1-9]\d*$/), tickLower: z.number().int(), tickUpper: z.number().int(), liquidity: z.string().regex(/^\d+$/) }).strict();
-const accessFields = { ownerXUserId: z.string().regex(/^[1-9]\d{0,31}$/), source: z.enum(["x", "terminal"]).default("x") };
-function validateAccess(input: { ownerXUserId: string; source: "x" | "terminal"; walletRef: string; expectedFrom?: string }, ctx: z.RefinementCtx) {
+const accessFields = { ownerXUserId: z.string().regex(/^[1-9]\d{0,31}$/), source: z.enum(["x", "terminal", "telegram"]).default("x") };
+function validateAccess(input: { ownerXUserId: string; source: "x" | "terminal" | "telegram"; walletRef: string; expectedFrom?: string }, ctx: z.RefinementCtx) {
   if (!liquidityOwnerAllowed(input.ownerXUserId, input.source) || !liquidityWalletAllowed(input.ownerXUserId, input.walletRef)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "LP access denied", path: ["ownerXUserId"] });
   }

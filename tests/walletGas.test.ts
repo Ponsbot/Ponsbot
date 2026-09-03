@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { bufferedActualCost, estimateActualFees, estimateResilientAutomationFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "../lib/wallet-signer/gas";
+import { bufferedActualCost, estimateActualFees, estimateResilientAutomationFees, insufficientGasError, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "../lib/wallet-signer/gas";
 
 describe("wallet gas envelope", () => {
+  it("carries the once-buffered simulation cost into an insufficient-gas error", () => {
+    expect(insufficientGasError(100n, 3n).message).toBe("insufficient ETH for gas [gas_estimate_wei=330]");
+  });
+
   it("splits one 10% budget between gas units and gas price without stacking", () => {
     const envelope = transactionGasEnvelope(21_000n, 100n);
 

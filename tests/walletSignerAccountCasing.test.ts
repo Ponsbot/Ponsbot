@@ -61,10 +61,11 @@ describe("verified CDP account address is preserved at signing", () => {
     expect(mock.rpc.call).not.toHaveBeenCalled();
     expect(mock.signTransaction).not.toHaveBeenCalled();
   });
-  it("still rejects insufficient gas funds before signing", async () => {
+  it("simulates an empty wallet and rejects it with the buffered estimate before signing", async () => {
     mock.rpc.getBalance.mockResolvedValue(0n);
-    await expect(prepareSigned(request, destination, "0x", 0n)).rejects.toThrow("zero native ETH");
-    expect(mock.rpc.estimateGas).not.toHaveBeenCalled();
+    await expect(prepareSigned(request, destination, "0x", 0n)).rejects.toThrow("gas_estimate_wei=43890000000000");
+    expect(mock.rpc.estimateGas).toHaveBeenCalledOnce();
+    expect(mock.rpc.call.mock.calls[0][0].stateOverride).toBeDefined();
     expect(mock.signTransaction).not.toHaveBeenCalled();
   });
   it("does not change persisted LP envelopes or let them choose the signing account", async () => {
@@ -77,12 +78,12 @@ describe("verified CDP account address is preserved at signing", () => {
 
   it("accepts exactly the single-budget balance and does not add an implicit fee multiplier", async () => {
     const value = 123n;
-    const required = transactionMaximumCost(value, 21000n, 1000000000n);
+    const required = transactionMaximumCost(value, 21000n, 1900000000n);
     mock.rpc.getBalance.mockResolvedValue(required);
     await prepareSigned(request, destination, "0x", value);
     const tx = parseTransaction(mock.signTransaction.mock.calls[0][0].transaction);
     expect(tx.gas! * tx.maxFeePerGas! + tx.value!).toBeLessThanOrEqual(required);
-    expect(required - value).toBe(23_100_000_000_000n);
+    expect(required - value).toBe(43_890_000_000_000n);
     expect(tx.maxPriorityFeePerGas).toBe(100000000n);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -93,14 +94,15 @@ describe("verified CDP account address is preserved at signing", () => {
     mock.rpc.getBlock.mockResolvedValueOnce({ baseFeePerGas: 900000000n }).mockResolvedValue({ baseFeePerGas: 9_000_000_000n });
     const result = await executeTransaction({ ...request, operation: { type: "eth_transfer", recipient: destination, amount: "100", unit: "percent" } });
     const tx = parseTransaction(mock.signTransaction.mock.calls[0][0].transaction);
-    const reserve = sendAllGasReserve(21000n, 1000000000n);
+    const reserve = sendAllGasReserve(21000n, 1900000000n);
     expect(BigInt(result.valueWei)).toBe(10n ** 18n - reserve);
     expect(tx.value! + tx.gas! * tx.maxFeePerGas!).toBeLessThanOrEqual(10n ** 18n);
     expect(mock.rpc.getBlock).toHaveBeenCalledTimes(1);
     expect(mock.rpc.estimateGas).toHaveBeenCalledTimes(1);
     expect(mock.rpc.estimateGas.mock.calls[0][0].stateOverride).toBeDefined();
-    // The execution simulation and balance check still use the real wallet.
-    expect(mock.rpc.call.mock.calls[0][0].stateOverride).toBeUndefined();
+    // The execution simulation uses a simulation-only balance; the later
+    // signing gate still checks the real wallet balance.
+    expect(mock.rpc.call.mock.calls[0][0].stateOverride).toBeDefined();
     expect(mock.rpc.sendRawTransaction).not.toHaveBeenCalled();
   });
 

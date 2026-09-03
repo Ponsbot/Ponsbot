@@ -74,6 +74,13 @@ export function sendAllGasReserve(estimatedGas: bigint, actualFeePerGas: bigint)
   return transactionMaximumCost(0n, estimatedGas, actualFeePerGas);
 }
 
+/** Stable machine-readable suffix carried across the signer HTTP boundary so
+ * user-facing insufficient-gas responses can display the exact simulation
+ * budget. `sendAllGasReserve` already applies the single 10% margin. */
+export function insufficientGasError(estimatedGas: bigint, actualFeePerGas: bigint, reason = "insufficient ETH for gas") {
+  return new Error(`${reason} [gas_estimate_wei=${sendAllGasReserve(estimatedGas, actualFeePerGas)}]`);
+}
+
 /** Pons launch fee is a cost, unlike a user's developer buy or transfer. */
 export function sponsoredLaunchCost(launchFee: bigint, estimatedGas: bigint, actualFeePerGas: bigint) {
   if (launchFee < 0n) throw new Error("launch fee must not be negative");

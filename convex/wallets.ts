@@ -45,7 +45,6 @@ import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { assertBuyTarget } from "../lib/buy-target-policy";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
-import { EmptyNativeGasBalanceError, requireWalletNativeGas } from "../lib/wallet-native-gas";
 import { confirmedAllEthDisplay } from "../lib/native-send-display";
 import { isResumeReply } from "../lib/x-direct-post-policy";
 import { existingFeeUpgradeState, feeUpgradeAlreadyMessage, feeUpgradeSuccessMessage, FEE_UPGRADE_RESPONSES } from "../lib/fee-upgrade-command";
@@ -781,12 +780,13 @@ export const reserveWalletRequest = internalMutation({
     walletId: v.id("cryptoWallets"),
     kind: v.string(),
     normalizedJson: v.string(),
-    source: v.optional(v.union(v.literal("x"), v.literal("terminal"))),
+    source: v.optional(v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram"))),
     channel: v.optional(
       v.union(
         v.literal("x_reply"),
         v.literal("terminal_chat"),
         v.literal("terminal_form"),
+        v.literal("telegram_chat"),
       ),
     ),
   },
@@ -3075,6 +3075,16 @@ function walletPageUrl(address: string, requestId?: string) {
     : addressUrl(address);
 }
 
+function formatBufferedGasEstimate(valueWei: string) {
+  const wei = BigInt(valueWei);
+  // Round upward at eight decimal places so the displayed funding target never
+  // understates the signer budget while remaining readable in an X response.
+  const precisionWei = 10_000_000_000n;
+  const roundedWei = ((wei + precisionWei - 1n) / precisionWei) * precisionWei;
+  const display = formatUnits(roundedWei, 18);
+  return display.replace(/\.?0+$/, "");
+}
+
 export function safeFailure(
   error: unknown,
   operationKind?: WalletCommand["kind"],
@@ -3082,6 +3092,10 @@ export function safeFailure(
 ) {
   const message =
     error instanceof Error ? error.message : "wallet request failed";
+  const gasEstimateMatch = message.match(/\[gas_estimate_wei=(\d+)\]/i);
+  const gasEstimate = gasEstimateMatch ? formatBufferedGasEstimate(gasEstimateMatch[1]) : undefined;
+  const launchCostEstimateMatch = message.match(/\[launch_cost_estimate_wei=(\d+)\]/i);
+  const launchCostEstimate = launchCostEstimateMatch ? formatBufferedGasEstimate(launchCostEstimateMatch[1]) : undefined;
   if (message === "BUY_TARGET_NATIVE_ETH")
     return "⚠️ Your wallet already uses Robinhood Chain ETH. Choose a token to buy, or send ETH to your wallet to fund it.";
   if (message === "SELL_TARGET_NATIVE_ETH")
@@ -3115,8 +3129,14 @@ export function safeFailure(
                   : operationKind === "upgrade_fees" ? "upgrade creator fees"
                     : "complete this transaction";
   const gasResume = operationKind === "launch"
-    ? "⛽ You'll need to fund your wallet with ~0.0015 ETH for gas and the Pons launch fee. Fund it, then reply “resume”."
-    : `⛽ You'll need to fund your wallet with ETH for gas to ${gasAction}. Fund it, then reply “resume”.`;
+    ? launchCostEstimate
+      ? `⛽ Simulated gas and Pons launch fee for this transaction is ${launchCostEstimate} ETH. Fund your wallet, then reply “resume”.`
+      : gasEstimate
+        ? `⛽ Simulated gas for this transaction is ${gasEstimate} ETH. You'll also need the Pons launch fee. Fund your wallet, then reply “resume”.`
+      : "⛽ You'll need to fund your wallet with ~0.0015 ETH for gas and the Pons launch fee. Fund it, then reply “resume”."
+    : gasEstimate
+      ? `⛽ Simulated gas for this transaction is ${gasEstimate} ETH. Fund your wallet to ${gasAction}, then reply “resume”.`
+      : `⛽ You'll need to fund your wallet with ETH for gas to ${gasAction}. Fund it, then reply “resume”.`;
   if (/ETH transfer amount plus gas exceeds/i.test(message)) return gasResume;
   if (
     /total cost .*exceeds the balance|gas \* gas fee \+ value.*exceeds the balance/i.test(
@@ -3345,12 +3365,13 @@ export const executeCommand = internalAction({
     mediaUrl: v.optional(v.string()),
     recipientAddress: v.optional(v.string()),
     parsedCommandJson: v.optional(v.string()),
-    source: v.optional(v.union(v.literal("x"), v.literal("terminal"))),
+    source: v.optional(v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram"))),
     channel: v.optional(
       v.union(
         v.literal("x_reply"),
         v.literal("terminal_chat"),
         v.literal("terminal_form"),
+        v.literal("telegram_chat"),
       ),
     ),
     terminalSessionId: v.optional(v.string()),
@@ -3365,7 +3386,7 @@ export const executeCommand = internalAction({
     let command = structured || parseWalletCommand(args.text);
     if (command.kind === "unknown")
       return { ok: false, message: command.reason };
-    if ((command.kind === "reassign_fees" || command.kind === "upgrade_fees") && args.source === "terminal") {
+    if ((command.kind === "reassign_fees" || command.kind === "upgrade_fees") && (args.source === "terminal" || args.source === "telegram")) {
       return {
         ok: false,
         message:
@@ -3480,18 +3501,18 @@ export const executeCommand = internalAction({
       process.env.X_BOT_USER_ID &&
       args.xUserId === process.env.X_BOT_USER_ID
     ) {
-      if (source !== "terminal" || (args.channel !== "terminal_chat" && args.channel !== "terminal_form")) {
+      if ((source !== "terminal" && source !== "telegram") || (args.channel !== "terminal_chat" && args.channel !== "terminal_form" && args.channel !== "telegram_chat")) {
         return {
           ok: false,
           message:
             "❌ I couldn't complete that wallet request. Check the details, then reply with the request again!",
         };
       }
-      if (!await hasActiveTerminalSession(ctx, args.xUserId, args.terminalSessionId)) {
+      if (source === "terminal" && !await hasActiveTerminalSession(ctx, args.xUserId, args.terminalSessionId)) {
         return { ok: false, message: "🔒 Reconnect X to use the terminal." };
       }
     }
-    if (source === "terminal" && !isTerminalCommand(command)) {
+    if ((source === "terminal" || source === "telegram") && !isTerminalCommand(command)) {
       return {
         ok: false,
         message:
@@ -3501,7 +3522,7 @@ export const executeCommand = internalAction({
       };
     }
     if (
-      source === "terminal" &&
+      (source === "terminal" || source === "telegram") &&
       args.channel === "terminal_form" &&
       command.kind === "swap_token_for_token"
     ) {
@@ -3692,41 +3713,6 @@ export const executeCommand = internalAction({
         // Backward-compatible rolling deploy and transient-read fallback. The
         // normal claim path still checks gas and validates claimability again.
         preflightClaimPlan = undefined;
-      }
-    }
-    // The keeper pays vault-cycle gas. Legacy claims still enforce gas at their
-    // signer; an empty beneficiary wallet must not block its vault payout.
-    if (isValueMovingCommand(command) && command.kind !== "claim_fees" && !vaultClaimEligible && (!reserved.retried || reserved.request?.status === "accepted")) {
-      try {
-        await requireWalletNativeGas(wallet.address);
-      } catch (error) {
-        const empty = error instanceof EmptyNativeGasBalanceError;
-        const message = empty
-          ? fundingMessage(safeFailure(error, command.kind), wallet.address, args.sourcePostId)
-          : "⚠️ I couldn't check your ETH balance right now. Reply with the request again shortly.";
-        await ctx.runMutation(internal.wallets.updateWalletRequest, {
-          requestId, status: "rejected", safeError: message, finalMessage: message,
-          workflowStage: "native_gas_precheck",
-          diagnosticCode: empty ? "INSUFFICIENT_FUNDS" : "NATIVE_BALANCE_UNAVAILABLE",
-          diagnosticDetail: empty ? "ZERO_NATIVE_ETH_BALANCE: stopped before estimates or sponsorship" : "Native ETH balance lookup failed; no estimates or execution attempted",
-        });
-        return { ok: false, message };
-      }
-    }
-    if (command.kind === "claim_fees" && !vaultClaimEligible && (!reserved.retried || reserved.request?.status === "accepted")) {
-      try {
-        await requireWalletNativeGas(wallet.address);
-      } catch (error) {
-        const empty = error instanceof EmptyNativeGasBalanceError;
-        const message = empty
-          ? fundingMessage(safeFailure(error, command.kind), wallet.address, args.sourcePostId)
-          : "⚠️ I couldn't check your ETH balance right now. Reply with the request again shortly.";
-        await ctx.runMutation(internal.wallets.updateWalletRequest, {
-          requestId, status: "rejected", safeError: message, finalMessage: message,
-          workflowStage: "native_gas_precheck", diagnosticCode: empty ? "INSUFFICIENT_FUNDS" : "NATIVE_BALANCE_UNAVAILABLE",
-          diagnosticDetail: empty ? "ZERO_NATIVE_ETH_BALANCE: creator fees exist but the legacy claim needs gas" : "Native ETH balance lookup failed after creator-fee availability was confirmed",
-        });
-        return { ok: false, message };
       }
     }
     if (isValueMovingCommand(command)) {
@@ -5631,7 +5617,7 @@ export const executeCommand = internalAction({
               requestId, status: pendingClaim.transaction.status === "prepared" ? "prepared" : "broadcast",
               transactionHash: pendingClaim.transaction.transactionHash, workflowStage: "claim_confirmation_wait",
             });
-            if (source === "terminal") await ctx.scheduler.runAfter(20_000, internal.legacyClaims.resumeTerminalClaim, { requestId });
+            if (source === "terminal" || source === "telegram") await ctx.scheduler.runAfter(20_000, internal.legacyClaims.resumeTerminalClaim, { requestId });
             return { ok: true, message: "", pending: true, deferred: true };
           }
           if (/no claimable creator fees/i.test(rawMessage) && (!command.token || resolvedClaimToken)) {
@@ -5678,7 +5664,7 @@ export const executeCommand = internalAction({
             status: "simulating",
             workflowStage,
           });
-          if (rawMessage === CLAIM_WORKFLOW_CONTINUATION && source === "terminal") {
+          if (rawMessage === CLAIM_WORKFLOW_CONTINUATION && (source === "terminal" || source === "telegram")) {
             await ctx.scheduler.runAfter(5_000, internal.legacyClaims.resumeTerminalClaim, { requestId });
             return { ok: true, message: "", deferred: true, pending: true };
           }
@@ -5982,12 +5968,18 @@ export const consumeTerminalLimit = internalMutation({
 export const consumeTerminalLiquiditySearch = internalMutation({
   args: { ownerXUserId: v.string(), sessionId: v.string() },
   handler: async (ctx, args) => {
-    if (!/^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId)) return { allowed: false, remaining: 0, warn: false };
+    const webSession = /^web_[a-zA-Z0-9_-]{16,80}$/.test(args.sessionId);
+    const telegramMatch = args.sessionId.match(/^telegram_(\d{1,30})$/);
+    if (!webSession && !telegramMatch) return { allowed: false, remaining: 0, warn: false };
+    if (telegramMatch) {
+      const links = await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", telegramMatch[1])).collect();
+      if (!links.some(link => !link.revokedAt && link.ownerXUserId === args.ownerXUserId)) return { allowed: false, remaining: 0, warn: false };
+    }
     // executeTerminalCommand validates the live authenticated session before
     // the internal liquidity action can reach this mutation.
     const now = Date.now();
     const day = new Date(now).toISOString().slice(0, 10);
-    const key = `liquidity_search:${args.ownerXUserId}`;
+    const key = `${telegramMatch ? "telegram_" : ""}liquidity_search:${args.ownerXUserId}`;
     const record = await ctx.db.query("terminalRateLimits")
       .withIndex("by_key", q => q.eq("key", key)).unique();
     const sameDay = record?.utcDay === day;
@@ -6331,7 +6323,7 @@ type TerminalHistoryResult = {
     token?: string;
     lpIdentifiers?: string[];
     status: string;
-    source: "x" | "terminal";
+    source: "x" | "terminal" | "telegram";
     transactionHash?: string;
     safeError?: string;
     createdAt: number;

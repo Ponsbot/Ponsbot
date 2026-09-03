@@ -12,7 +12,7 @@ export const resumeTerminalClaim = internalAction({
   args: { requestId: v.string(), pendingPolls: v.optional(v.number()) },
   handler: async (ctx, args): Promise<void> => {
     const request: Doc<"walletRequests"> | null = await ctx.runQuery(internal.wallets.getWalletRequest, { requestId: args.requestId });
-    if (!request || request.source !== "terminal" || request.kind !== "claim_fees"
+    if (!request || (request.source !== "terminal" && request.source !== "telegram") || request.kind !== "claim_fees"
       || request.claimWorkflowVersion !== LEGACY_CLAIM_VERSION || request.diagnosticCode === LEGACY_CLAIM_SUPERSEDED) return;
     const sessionId = legacyClaimTerminalSession(request.requestId, request.sourcePostId);
     const command = validateStructuredWalletCommand(JSON.parse(request.normalizedJson));
@@ -26,8 +26,8 @@ export const resumeTerminalClaim = internalAction({
       ? { message: request.finalMessage!, pending: false, deferred: false }
       : await ctx.runAction(internal.wallets.executeCommand, {
         requestId: request.requestId, sourcePostId: request.sourcePostId,
-        xUserId: request.ownerXUserId, source: "terminal",
-        channel: request.channel === "terminal_form" ? "terminal_form" : "terminal_chat",
+        xUserId: request.ownerXUserId, source: request.source,
+        channel: request.source === "telegram" ? "telegram_chat" : request.channel === "terminal_form" ? "terminal_form" : "terminal_chat",
         text: "claim fees", parsedCommandJson: request.normalizedJson,
       });
     if (result.pending || result.deferred) {
@@ -41,7 +41,7 @@ export const resumeTerminalClaim = internalAction({
       }
       return;
     }
-    if (result.message) await ctx.runMutation(internal.wallets.recordTerminalMessage, {
+    if (request.source === "terminal" && result.message) await ctx.runMutation(internal.wallets.recordTerminalMessage, {
       sessionId, ownerXUserId: request.ownerXUserId, role: "assistant", messageType: "result",
       text: result.message, requestId: request.sourcePostId,
     });

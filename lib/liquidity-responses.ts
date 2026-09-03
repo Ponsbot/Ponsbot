@@ -251,14 +251,14 @@ export function liquidityOpenedDetails(d: LiquidityDraft, deposited?: Array<{ sy
   );
 }
 /** Every X page is shown in full. Never trim away a spending/confirmation term. */
-export function paginateLiquidityResponse(lines: string[], source: "x" | "terminal", longForm = false) {
+export function paginateLiquidityResponse(lines: string[], source: "x" | "terminal" | "telegram", longForm = false) {
   const normalized = lines.reduce<string[]>((result, line) => {
     if (!line && (!result.length || !result.at(-1))) return result;
     result.push(line);
     return result;
   }, []);
   while (normalized.length && !normalized.at(-1)) normalized.pop();
-  if (source === "terminal") return [normalized.join("\n")];
+  if (source !== "x") return [normalized.join("\n")];
   const limit = longForm ? 7900 : 220, pages: string[] = []; let page = "";
   for (const line of normalized) {
     if (xWeightedLength(line) > limit) throw new Error("Liquidity response line too long");

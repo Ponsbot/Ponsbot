@@ -178,6 +178,11 @@ describe("liquidity conversation", () => {
   it.each(["Create a liquidity pool for $PONSBOT", "open a position for PONSBOT", "claim rewards for LP-AABB0011", "add $50 to my position", "turn auto compounding off"])("captures LP request %s before launch parsing", text => expect(isLiquidityMessage(text)).toBe(true));
   it.each(["buy $20 PONSBOT", "launch Blue Pool ticker BP", "claim my creator fees", "send 1 ETH to @bob"])("does not intercept existing commands %s", text => expect(isLiquidityMessage(text)).toBe(false));
   it.each([
+    "Everything from launching to liquidity management in one place.",
+    "We make liquidity management easy for everyone.",
+    "Proud of our liquidity and community.",
+  ])("does not start a workflow from descriptive liquidity language: %s", text => expect(isLiquidityMessage(text)).toBe(false));
+  it.each([
     ["what Pons pools are there?", { token: "PONS" }],
     ["show me the pools for $PONSBOT", { token: "PONSBOT" }],
     ["which liquidity options are available for PONS?", { token: "PONS" }],

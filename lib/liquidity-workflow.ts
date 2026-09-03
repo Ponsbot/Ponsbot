@@ -7,13 +7,13 @@ export { LIQUIDITY_CONVERSATION_MS } from "./liquidity-timing";
 export const LIQUIDITY_TURN_LIMIT = 40;
 // Both X intake and terminal sessions supply immutable numeric X IDs. Display
 // names and model-extracted values never satisfy this boundary.
-export function liquidityOwnerAllowed(id: string, _source: "x" | "terminal" = "x") {
+export function liquidityOwnerAllowed(id: string, _source: "x" | "terminal" | "telegram" = "x") {
   return /^[1-9]\d{0,31}$/.test(id);
 }
 export function liquidityWalletAllowed(id: string, wallet: string) {
   return liquidityOwnerAllowed(id) && /^0x[a-fA-F0-9]{40}$/.test(wallet);
 }
-export function liquidityWorkflowEnabled(id: string, source: "x" | "terminal" = "x") {
+export function liquidityWorkflowEnabled(id: string, source: "x" | "terminal" | "telegram" = "x") {
   return liquidityOwnerAllowed(id, source);
 }
 export const DELTA_LIQUIDITY = {
@@ -208,9 +208,17 @@ export function liquidityOpenInquirySelection(text: string): LiquidityFields | n
 export function isLiquidityMessage(text: string) {
   if (isOrdinaryWalletCommand(text)) return false;
   const clean = text.replace(/https?:\/\/\S+|@[A-Za-z0-9_]+/gi, " ").trim();
+  // Product descriptions such as "liquidity management" are not requests.
+  // They must not create a conversation merely because they contain the broad
+  // liquidity noun used by the workflow.
+  if (/\bliquidity\s+management\b/i.test(clean)
+    && !/\b(?:create|open|provide|set\s*up|withdraw|remove|close|claim|collect|check|show|view|list|find|recommend|add|manage)\b[^.!?]{0,120}\b(?:pools?|positions?|LPs?|LP-[A-F0-9]{8}|NFTs?)\b/i.test(clean)) return false;
   const bareManagementId = /^(?:please\s+)?(?:add|close|manage)\b/i.test(clean)
     && /(?<![A-Za-z0-9_$-])[A-F0-9]{8}(?![A-Za-z0-9_-])/i.test(clean);
-  return bareManagementId || liquidityOpenInquirySelection(text) !== null || /\b(?:liquidity|pools?|positions?|LPs?)\b|\bL[PQ]-[A-F0-9]{8}\b|\bauto(?:matic)?[ -]?compound(?:ing)?\b/i.test(text) || liquidityWithdrawalSelection(text) !== null || liquidityStatusSelection(text) !== null || liquidityNftSelection(text) !== null || liquidityClaimSelection(text) !== null;
+  const actionableLiquidity = /\b(?:create|open|provide|make|set\s*up|withdraw|remove|close|claim|collect|check|show|view|list|find|recommend|add|manage)\b[^.!?]{0,120}\b(?:liquidity|pools?|positions?|LPs?|LP-[A-F0-9]{8}|NFTs?)\b/i.test(clean)
+    || /\b(?:how|where|can)\b[^.!?]{0,80}\b(?:buy|provide|create|open|set\s*up|add|earn|collect|get)\b[^.!?]{0,60}\b(?:liquidity|pools?|positions?|LPs?|LP\s+fees?)\b/i.test(clean)
+    || /\b(?:turn|set|enable|disable|start|stop)\b[^.!?]{0,60}\bauto(?:matic)?[ -]?compound(?:ing)?\b/i.test(clean);
+  return bareManagementId || liquidityOpenInquirySelection(text) !== null || actionableLiquidity || liquidityWithdrawalSelection(text) !== null || liquidityStatusSelection(text) !== null || liquidityNftSelection(text) !== null || liquidityClaimSelection(text) !== null;
 }
 /** Explicit read-only NFT lookup. Never interpret an NFT request as a mint,
  * transfer, approval, or spending authorization, and never guess multiple IDs. */

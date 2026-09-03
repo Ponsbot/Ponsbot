@@ -4,7 +4,7 @@ export const liquidityWorkflowTables = {
   liquidityThreadPosts: defineTable({ postId: v.string(), conversationId: v.id("liquidityConversations") })
     .index("by_post", ["postId"]),
   liquidityConversations: defineTable({
-    publicId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), source: v.union(v.literal("x"), v.literal("terminal")),
+    publicId: v.string(), ownerXUserId: v.string(), walletId: v.id("cryptoWallets"), source: v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram")),
     scope: v.string(), stateJson: v.string(), revision: v.number(), active: v.boolean(), expiresAt: v.number(),
     currentTurnId: v.optional(v.id("liquidityTurns")), lastPromptPostId: v.optional(v.string()),
     createdAt: v.number(), updatedAt: v.number(),

@@ -3,7 +3,7 @@ import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
 import { checkedUsdToEthWei } from "./pricing";
-import { estimateActualFees, estimateResilientAutomationFees, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
+import { estimateActualFees, estimateResilientAutomationFees, insufficientGasError, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
 import { requireNativeGasBalance, requireWalletNativeGas } from "../wallet-native-gas";
 import { nativeTokenOperationError } from "../native-token-operation";
 import { reliableHttp } from "../rpc-http";
@@ -2032,7 +2032,7 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   });
   // Match the same single 10% gas budget used for signing; no extra cushion.
   const gasReserve = sendAllGasReserve(gas, fees.maxFeePerGas);
-  if (balance <= gasReserve) throw new Error("insufficient ETH for gas");
+  if (balance <= gasReserve) throw insufficientGasError(gas, fees.maxFeePerGas);
   const maximumTransfer = balance - gasReserve;
   if (unit !== "percent" && requested > maximumTransfer) throw new Error("ETH transfer amount plus gas exceeds wallet balance");
   const value = unit === "percent" && requested > maximumTransfer ? maximumTransfer : requested;
@@ -2042,14 +2042,18 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
 
 async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, minimumBlock?: bigint, gasQuote?: TransactionGasQuote) {
   const client = rpcClient();
-  await requireNativeGasBalance(() => client.getBalance({ address: request.expectedFrom as Address }));
   if (await client.getChainId() !== ROBINHOOD_CHAIN_ID) throw new Error("RPC chain mismatch");
   const account = await cdp().evm.getOrCreateAccount({ name: accountName(request.ownerReference) });
   if (account.address.toLowerCase() !== request.expectedFrom.toLowerCase()) throw new Error("wallet owner mismatch");
   if (minimumBlock !== undefined && await client.getBlockNumber({ cacheTime: 0 }) < minimumBlock) throw new Error("LP_RPC_BEHIND_CONFIRMED_STEP");
-  await client.call({ account: account.address, to, data, value });
+  // Simulation-only funding lets an empty wallet produce a real execution and
+  // gas estimate. It does not alter chain state or weaken the real-balance
+  // check immediately before signing.
+  const simulationBalance = value + parseEther("100");
+  const stateOverride = [{ address: account.address, balance: simulationBalance }];
+  await client.call({ account: account.address, to, data, value, stateOverride });
   const [estimatedGas, fees, rpcNonce, balance] = await Promise.all([
-    gasQuote?.estimatedGas ?? client.estimateGas({ account: account.address, to, data, value }),
+    gasQuote?.estimatedGas ?? client.estimateGas({ account: account.address, to, data, value, stateOverride }),
     gasQuote?.fees ?? estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
     client.getBalance({ address: account.address }),
@@ -2062,7 +2066,7 @@ async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "opera
   // fails immediately with an actionable response instead of timing out while
   // waiting for a transaction that could never enter the mempool.
   if (balance < transactionMaximumCost(value, estimatedGas, fees.maxFeePerGas)) {
-    throw new Error("transaction total cost (gas * gas fee + value) exceeds the balance");
+    throw insufficientGasError(estimatedGas, fees.maxFeePerGas, "transaction total cost (gas * gas fee + value) exceeds the balance");
   }
   const transaction = {
     chainId: ROBINHOOD_CHAIN_ID, type: "eip1559" as const, to, data, value, nonce,
@@ -2347,6 +2351,13 @@ type PreparedPonsLaunch = Awaited<ReturnType<typeof prepareSigned>> & {
   approvalTokenAddress?: Address;
 };
 
+function includeLaunchFeeInGasError(error: unknown, launchFee: bigint) {
+  if (!(error instanceof Error)) return error;
+  const match = error.message.match(/\[gas_estimate_wei=(\d+)\]/i);
+  if (!match) return error;
+  return new Error(error.message.replace(match[0], `[launch_cost_estimate_wei=${BigInt(match[1]) + launchFee}]`));
+}
+
 function preparePonsLaunch(request: ExecutionRequest, operation: PonsLaunchOperation): Promise<PreparedPonsLaunch>;
 function preparePonsLaunch(request: ExecutionRequest, operation: PonsLaunchOperation, fundingEstimateOnly: true): Promise<FreeLaunchFundingEstimate>;
 async function preparePonsLaunch(
@@ -2378,15 +2389,14 @@ async function preparePonsLaunch(
       // Funding estimates commonly run for an empty wallet. The simulation
       // happens before eth_estimateGas, so it needs the same simulation-only
       // balance override or the RPC rejects the launch before sponsorship.
-      ...(fundingEstimateOnly
-        ? { stateOverride: [{ address: owner, balance: parseEther("100") }] }
-        : {}),
+      stateOverride: [{ address: owner, balance: launchFee + parseEther("100") }],
     });
     const data = encodeFunctionData({ abi: ponsFactoryAbi, functionName: "launchToken", args: [params, launchConfigId, pairToken, []] });
     if (fundingEstimateOnly) {
       return estimateFreeLaunchGrant(client, owner, factory, data, launchFee, launchFee);
     }
-    const prepared = await prepareSigned(request, factory, data, launchFee);
+    const prepared = await prepareSigned(request, factory, data, launchFee)
+      .catch(error => { throw includeLaunchFeeInGasError(error, launchFee); });
     if (simulation.result[0].toLowerCase() !== vanity.tokenAddress.toLowerCase() || simulation.result[1].toLowerCase() !== vanity.curveAddress.toLowerCase()) throw new Error("Pons expected launch address did not match the b07 prediction");
     return {
       ...prepared,
@@ -2420,9 +2430,7 @@ async function preparePonsLaunch(
   const first = await client.simulateContract({
     account: owner, address: router, abi: ponsRouterAbi, functionName: "launchAndBuy",
     args: [params, launchConfigId, pairToken, quoteIn, 0n, owner, []], value,
-    ...(fundingEstimateOnly
-      ? { stateOverride: [{ address: owner, balance: parseEther("100") }] }
-      : {}),
+    stateOverride: [{ address: owner, balance: value + parseEther("100") }],
   });
   if (first.result[0].toLowerCase() !== vanity.tokenAddress.toLowerCase() || first.result[1].toLowerCase() !== vanity.curveAddress.toLowerCase()) throw new Error("Pons expected launch address did not match the b07 prediction");
   const minimum = first.result[2] * 9_750n / 10_000n;
@@ -2433,7 +2441,8 @@ async function preparePonsLaunch(
   if (fundingEstimateOnly) {
     return estimateFreeLaunchGrant(client, owner, router, data, value, launchFee);
   }
-  const prepared = await prepareSigned(request, router, data, value);
+  const prepared = await prepareSigned(request, router, data, value)
+    .catch(error => { throw includeLaunchFeeInGasError(error, launchFee); });
   return {
     ...prepared,
     tokenAddress: first.result[0],
@@ -2549,7 +2558,8 @@ export async function executeTransaction(request: ExecutionRequest) {
         const seed = 10n ** BigInt(Math.max(0, pairDecimals - 6));
         if (pons.phase === 0) {
           quoteIn = await inputForTokenTarget(desiredTokens, seed, async (amountIn) => {
-            const simulated = await rpcClient().simulateContract({ account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "buy", args: [amountIn, 0n, owner], value: nativePair ? amountIn : 0n });
+            const simulated = await rpcClient().simulateContract({ account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "buy", args: [amountIn, 0n, owner], value: nativePair ? amountIn : 0n,
+              stateOverride: [{ address: owner, balance: amountIn + parseEther("100") }] });
             return simulated.result;
           });
         } else if (pons.phase === 2) {
@@ -2579,6 +2589,7 @@ export async function executeTransaction(request: ExecutionRequest) {
       }
       const simulation = await rpcClient().simulateContract({
         account: owner, address: pons.curve, abi: ponsCurveAbi, functionName: "buy", args: [quoteIn, 0n, owner], value: nativePair ? quoteIn : 0n,
+        stateOverride: [{ address: owner, balance: (nativePair ? quoteIn : 0n) + parseEther("100") }],
       });
       const minimum = simulation.result * BigInt(10_000 - operation.slippageBps) / 10_000n;
       const data = encodeFunctionData({ abi: ponsCurveAbi, functionName: "buy", args: [quoteIn, minimum, owner] });

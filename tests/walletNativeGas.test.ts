@@ -83,47 +83,12 @@ describe("zero native ETH gate", () => {
     expect(safeFailure(error, "buy")).toContain("fund your wallet with ETH for gas to buy");
     expect(safeFailure(error, "buy")).toContain("reply “resume”");
   });
-  it.each([
-    "launch Gas Check ticker GASCHK", "buy $1 of PONS", "sell all PONS",
-    `send 0.01 ETH to ${recipient}`, "burn 1 PONS",
-    `buy $1 of PONS and send it to ${recipient}`, "buy $1 of PONS and burn it",
-    "swap $1 of SNDK for PONS", `Reassign PONS fees to ${recipient}`, "Upgrade PONS",
-  ])("rejects %s before quota, locks, routes, fees, sponsorship or signing", async text => {
-    expect(parseWalletCommand(text).kind).not.toBe("unknown");
-    const f = fixture();
-    const result = await handler(executeCommand)(f.ctx, args(text));
-    expect(result).toMatchObject({ ok: false });
-    expect(result.message).toContain(text.startsWith("launch ")
-      ? "fund your wallet with ~0.0015 ETH for gas and the Pons launch fee"
-      : "fund your wallet with ETH for gas to");
-    expect(result.message).toContain("reply “resume”");
-    expect(result.message).toContain(`https://www.ponsbot.family/wallet/${address}`);
-    expect(f.calls.map(c => c.name)).toEqual(["wallets:getXUserAndWallet", "wallets:reserveWalletRequest", "wallets:updateWalletRequest"]);
-    expect(f.calls.at(-1)?.args).toMatchObject({ status: "rejected", workflowStage: "native_gas_precheck", diagnosticCode: "INSUFFICIENT_FUNDS" });
-    expect(f.ctx.scheduler.runAfter).not.toHaveBeenCalled();
-    expect(fetcher).toHaveBeenCalledTimes(1);
-  });
-  it("applies to terminal requests as well", async () => {
+  it("does not stop wallet commands at a zero-balance precheck", async () => {
     const f = fixture();
     const result = await handler(executeCommand)(f.ctx, args("buy $1 of PONS", "terminal"));
-    expect(result.message).toContain("fund your wallet with ETH for gas to buy");
-    expect(f.calls.some(c => c.name === "wallets:consumeWalletLimit")).toBe(false);
-  });
-  it("stops safely on a failed RPC read without saying the wallet is empty or queuing execution", async () => {
-    fetcher.mockImplementation(async () => { throw new Error("RPC unavailable"); });
-    const f = fixture();
-    const result = await handler(executeCommand)(f.ctx, args("buy $1 of PONS"));
-    expect(result.message).toContain("couldn't check your ETH balance");
-    expect(result.message).not.toContain(NO_NATIVE_GAS_MESSAGE);
-    expect(f.calls.at(-1)?.args).toMatchObject({ status: "rejected", diagnosticCode: "NATIVE_BALANCE_UNAVAILABLE" });
-    expect(f.ctx.scheduler.runAfter).not.toHaveBeenCalled();
-  });
-  it("allows a funded wallet through the early gate", async () => {
-    balance = "0x1";
-    const f = fixture();
-    const result = await handler(executeCommand)(f.ctx, args("buy $1 of PONS"));
     expect(result.message).toContain("wallet action limit");
     expect(f.calls.some(c => c.name === "wallets:consumeWalletLimit")).toBe(true);
+    expect(fetcher).not.toHaveBeenCalled();
   });
   it.each(["show my wallet", "what's my wallet balance?"])("keeps read-only %s working with zero ETH", async text => {
     const f = fixture();
@@ -138,12 +103,6 @@ describe("zero native ETH gate", () => {
     expect(result.pending).toBe(true);
     expect(fetcher).not.toHaveBeenCalled();
     expect(f.calls.some(c => c.name === "wallets:updateWalletRequest")).toBe(false);
-  });
-  it("rechecks gas when reopening an unbroadcast failed attempt", async () => {
-    const f = fixture({ inserted: true, retried: true, request: { status: "accepted" } });
-    const result = await handler(executeCommand)(f.ctx, args("buy $1 of PONS"));
-    expect(result.message).toContain("fund your wallet with ETH for gas to buy");
-    expect(fetcher).toHaveBeenCalledTimes(1);
   });
   it("stops cross-chain quoting before contacting Houdini", async () => {
     const f = fixture();
@@ -168,10 +127,9 @@ describe("zero native ETH gate", () => {
   it.each([
     ["transaction execution", () => executeTransaction({ expectedFrom: address, operation: { type: "eth_transfer" } } as any)],
     ["launch address mining", () => prepareLaunchAddresses({ expectedFrom: address } as any)],
-    ["unsigned transaction preparation", () => prepareUnsigned({ expectedFrom: address } as any, recipient, "0x", 0n)],
     ["vault controller preparation", () => prepareAutomatedFeeControllerTransaction({ expectedAddress: address } as any)],
     ["spendable ETH estimation", () => spendableEthBalance(address, 21_000)],
-  ] as const)("stops %s at the signer before estimates, quotes or CDP", async (_name, run) => {
+  ] as const)("retains the specialized zero-balance gate for %s", async (_name, run) => {
     await expect(run()).rejects.toThrow("zero native ETH");
     expect(fetcher).toHaveBeenCalledTimes(1);
   });

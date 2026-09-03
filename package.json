@@ -11,6 +11,8 @@
     "project:health": "node --use-system-ca --env-file-if-exists=.env.local scripts/check-project-resources.mjs",
     "convex:dev": "convex dev",
     "x:authorize": "node scripts/authorize-x.mjs",
+    "telegram:configure": "node --use-system-ca --env-file-if-exists=.env.local scripts/configure-telegram-bot.mjs",
+    "telegram:check": "node --use-system-ca --env-file-if-exists=.env.local scripts/configure-telegram-bot.mjs --check",
     "free-launch:sponsor-wallet": "node --env-file-if-exists=.env.local scripts/setup-free-launch-sponsor.mjs",
     "houdini:x402:setup": "node scripts/setup-houdini-x402.mjs",
     "automated-fees:compile": "powershell -ExecutionPolicy Bypass -File scripts/compile-automated-fees.ps1",

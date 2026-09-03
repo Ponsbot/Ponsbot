@@ -140,7 +140,7 @@ export function obviousLiquidityInquiry(text: string): LiquidityHelpTopic[] | un
   return topics.length ? [...new Set(topics)].slice(0, 3) : undefined;
 }
 
-export function liquidityExplanation(draft: LiquidityDraft, id: string, requested: LiquidityHelpTopic[], source: "x" | "terminal") {
+export function liquidityExplanation(draft: LiquidityDraft, id: string, requested: LiquidityHelpTopic[], source: "x" | "terminal" | "telegram") {
   const d = structuredClone(draft);
   const topics = [...new Set(requested.map(topic => topic === "step" ? liquidityStepTopic(d) : topic))];
   const lines = topics.flatMap((topic, topicIndex) => {
