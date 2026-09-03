@@ -1767,7 +1767,7 @@ export const retryInteraction = internalAction({
           await ctx.runMutation(internal.xReplies.updateInteraction, {
             postId, status: "processing", commandKind: guidedHelpCommandKind("launch"), guidedHelpStateJson: stateJson,
           });
-          const responsePostId = await publishReplyOnce(ctx, advanced.message, postId, undefined, advanced.allowLong === true, { ok: true, kind: "reply" });
+          const responsePostId = await publishReplyOnce(ctx, advanced.message, postId, undefined, advanced.allowLong === true || xWeightedLength(advanced.message) > 280, { ok: true, kind: "reply" });
           await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "completed", responsePostId, guidedHelpStateJson: stateJson });
           return;
         }
@@ -1827,7 +1827,7 @@ export const retryInteraction = internalAction({
         }
         if (guidedHelpQuestion(directText)) {
           const message = guidedHelpQuestionResponse("reassign_fees");
-          const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: true, kind: "reply" });
+          const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, xWeightedLength(message) > 280, { ok: true, kind: "reply" });
           await ctx.runMutation(internal.xReplies.updateInteraction, {
             postId, status: "completed", commandKind: guidedHelpCommandKind("reassign_fees"),
             guidedHelpStateJson: JSON.stringify(state), responsePostId,
@@ -2262,7 +2262,10 @@ export const retryInteraction = internalAction({
         ...(gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
-      const responsePostId = await publishReplyOnce(ctx, reply, postId, undefined, longCommandResult || longHelpResult || guidedCommandCompleted, {
+      // Preserve complete balance lists, templated command results, and guided
+      // explanations. Short replies retain their existing formatting and limits.
+      const needsLongResponse = xWeightedLength(reply) > 280;
+      const responsePostId = await publishReplyOnce(ctx, reply, postId, undefined, longCommandResult || longHelpResult || guidedCommandCompleted || needsLongResponse, {
         ok,
         // A completed on-chain action must outrank prompts even though it was
         // initiated inside a B-tier guided conversation.

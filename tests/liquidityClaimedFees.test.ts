@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
+import { liquidityClaimTotalLine, mergeLiquidityClaimedFees, parseLiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
+
+it("totals claim assets in ETH, USDG, token order", () => {
+  expect(liquidityClaimTotalLine(["LP-AAAA: 2 PONSBOT ($1)", "LP-BBBB: 3 USDG ($3)", "LP-AAAA: 0.01 ETH ($20)", "LP-BBBB: 0.02 ETH ($40)"]))
+    .toBe("Total: 0.03 ETH ($60), 3 USDG ($3), 2 PONSBOT ($1)");
+});
+it("does not present partial dollar valuations as complete totals", () => {
+  expect(liquidityClaimTotalLine(["1 ETH ($2)", "2 ETH"])).toBe("Total: 3 ETH");
+  expect(liquidityClaimTotalLine(["1e-7 ETH ($<0.01)"])).toBe("Total: 0.0000001 ETH");
+});
 
 describe("liquidity claimed fee accounting", () => {
   it("accepts the USD-valued receipt format used by LP claims", () => {

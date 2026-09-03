@@ -18,7 +18,7 @@ import { decodeFunctionData, keccak256, stringToHex, TransactionNotFoundError, T
 import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityFundedRetryPrefix, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, liquidityStepIdempotencyKey, LIQUIDITY_WRITE_ATTEMPTS, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
 import { validateLiquidityQuote, validateLiquidityEnvelope, validateLiquiditySignature, validateLiquidityFinalReceipt, validateLiquidityOpenRefresh } from "../lib/liquidity-wire";
 import { withGuidedHelpCompletion } from "../lib/guided-help-workflow";
-import { mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
+import { liquidityClaimTotalLine, mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
 
 const source = v.union(v.literal("x"), v.literal("terminal"), v.literal("telegram"));
 const requestArgs = { ownerXUserId: v.string(), source, scope: v.string(), requestKey: v.string(), text: v.string(), parentPostId: v.optional(v.string()) };
@@ -1080,16 +1080,17 @@ export const finishExecution = internalMutation({
       : d.operation === "add" ? "Delta Liquidity position opened" : "Delta Liquidity position opened";
     const completionDetails = d.operation === "open" || d.operation === "add"
       ? liquidityOpenedDetails(d, args.deposited, args.depositedUsd, plan.requestedBudgetUsd, plan.partialReprice)
-      : args.received?.length ? [`Received: ${args.received.join(", ")}`] : [];
+      : args.received?.length ? [d.operation === "claim" ? liquidityClaimTotalLine(args.received) : `Received: ${args.received.join(", ")}`] : [];
     const completionGuidance = liquidityCompletionGuidance(d.operation, positionId);
     const successMessage = [
       `✅ ${positionId || "Liquidity"}: ${successTitle}!`, "",
       ...completionDetails,
       ...(completionGuidance ? ["", completionGuidance] : []),
-      "", claimLinks ?? `TXN: https://robinhoodchain.blockscout.com/tx/${args.transactionHash}`,
+      "", ...(d.operation === "claim" ? ["Claimed LP Fees for:"] : []),
+      claimLinks ?? `${d.operation === "claim" && positionId ? `${positionId} ` : ""}TXN: https://robinhoodchain.blockscout.com/tx/${args.transactionHash}`,
     ].join("\n");
     const message = args.success
-      ? conversation.source === "x"
+      ? conversation.source === "x" && d.operation !== "claim"
         ? withGuidedHelpCompletion(successMessage)
         : successMessage
       : steps.some((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim")
