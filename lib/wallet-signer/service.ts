@@ -1458,7 +1458,7 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
 export async function spendableEthBalance(address: Address, reservedGasUnits: number, requestedEth?: string) {
   const client = rpcClient();
   const balance = await requireNativeGasBalance(() => client.getBalance({ address }));
-  const fees = await estimateResilientAutomationFees(client);
+  const fees = await estimateActualFees(client);
   const result = spendableEthAfterGas(
     balance,
     BigInt(reservedGasUnits),
@@ -2054,7 +2054,7 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   const requested = unit === "usd" ? await checkedUsdToEthWei(amount)
     : unit === "eth" ? parseEther(amount)
       : await client.getBalance({ address: owner }) * BigInt(Math.round(Number(amount) * 100)) / 10_000n;
-  const [balance, fees] = await Promise.all([client.getBalance({ address: owner }), estimateResilientAutomationFees(client)]);
+  const [balance, fees] = await Promise.all([client.getBalance({ address: owner }), estimateActualFees(client)]);
   const gas = await client.estimateGas({
     account: owner, to: recipient, value: requested > 0n ? requested : 1n,
     // Estimation only: a full-balance request cannot cover gas until we have
@@ -2085,7 +2085,7 @@ async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "opera
   await client.call({ account: account.address, to, data, value, stateOverride });
   const [estimatedGas, fees, rpcNonce, balance] = await Promise.all([
     gasQuote?.estimatedGas ?? client.estimateGas({ account: account.address, to, data, value, stateOverride }),
-    gasQuote?.fees ?? estimateResilientAutomationFees(client),
+    gasQuote?.fees ?? estimateActualFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
     client.getBalance({ address: account.address }),
   ]);
@@ -2504,7 +2504,7 @@ async function estimateFreeLaunchGrant(
       // rejecting before sponsorship for insufficient sender funds.
       stateOverride: [{ address: owner, balance: parseEther("100") }],
     }),
-    estimateResilientAutomationFees(client),
+    estimateActualFees(client),
   ]);
   const bufferedGasCost = sendAllGasReserve(estimatedGas, fees.maxFeePerGas);
   // ONE margin over the unbuffered launch fee + actual gas-price estimate.

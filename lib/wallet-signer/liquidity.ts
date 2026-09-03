@@ -12,7 +12,7 @@ import { formatLiquidityMarketCap } from "../liquidity-market-cap";
 import { ethUsdPrice } from "./pricing";
 import { prepareSigned, prepareUnsigned, signPreparedEnvelope, quoteLiquidityPurchase, quoteLiquidityUsdgToEth, tokenValueAtBlock } from "./service";
 import { planLiquidityFunding, type LiquidityAssetRequirement } from "../liquidity-funding";
-import { estimateResilientAutomationFees, transactionMaximumCost } from "./gas";
+import { estimateActualFees, transactionMaximumCost } from "./gas";
 import { quoteDetails } from "../token-market-cap";
 import type { LiquidityQuotePlan } from "../liquidity-quote";
 import { liquidityClaimPositionSchema, liquidityMarketCapRangeSchema } from "../liquidity-quote";
@@ -323,7 +323,7 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
       if (plan.poolId.toLowerCase() !== position.poolId.toLowerCase() || plan.version !== position.version || plan.calls.length !== 1) throw new Error("LP_POSITION_SETTINGS_CONFLICT");
       return plan;
     });
-    const calls = plans.flatMap(p => p.calls), block = await c.getBlock(), fees = await estimateResilientAutomationFees(c);
+    const calls = plans.flatMap(p => p.calls), block = await c.getBlock(), fees = await estimateActualFees(c);
     const simulated = await c.simulateCalls({ account: owner, blockNumber: block.number, calls: calls.map(call => ({ to: call.to, data: call.data, value: BigInt(call.value) })), validation: false });
     if (simulated.results.length !== calls.length || simulated.results.some(r => r.status !== "success")) throw new Error("LP_SIMULATION_FAILED");
     const reserve = simulated.results.reduce((sum, r) => sum + transactionMaximumCost(0n, r.gasUsed, fees.maxFeePerGas), 0n);
@@ -385,7 +385,7 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
     }
     summary.push(`${d.operation === "claim" ? "Collect LP fees from" : "Close and withdraw"} ${input.legs.length} NFT band(s).`);
     if (d.operation === "withdraw" && claimable !== false) summary.push("Collect LP fees first, then withdraw the full position. If closing fails, already-collected fees remain in your wallet.");
-    const fees = await estimateResilientAutomationFees(c);
+    const fees = await estimateActualFees(c);
     const simulation = await c.simulateCalls({ account: owner, blockNumber: block.number, calls: calls.map(call => ({ to: call.to, data: call.data, value: BigInt(call.value) })), validation: false });
     if (simulation.results.length !== calls.length || simulation.results.some(r => r.status !== "success")) throw new Error("LP_SIMULATION_FAILED");
     const reserve = simulation.results.reduce((total, r) => total + transactionMaximumCost(0n, r.gasUsed, fees.maxFeePerGas), 0n);
@@ -449,7 +449,7 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
     const [ethBalance, usdgBalance, fees] = await Promise.all([
       c.getBalance({ address: owner, blockNumber: block.number }),
       c.readContract({ address: A.usdg, abi: erc20Abi, functionName: "balanceOf", args: [owner], blockNumber: block.number }),
-      estimateResilientAutomationFees(c),
+      estimateActualFees(c),
     ]);
     for (const [asset, maximum, decimals, label, assetUsd] of [
       [key.currency0, rungs.reduce((n, r) => n + r.amount0Max, 0n), decimals0, tokenIs0 ? d.symbol : f.pair, usd0],
