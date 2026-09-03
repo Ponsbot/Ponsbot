@@ -177,6 +177,20 @@ describe("guided help thread ownership", () => {
     })).toBeNull();
   });
 
+  it("recognizes a simulated launch-cost prompt and reserves only the owner's resume", async () => {
+    const ctx = fixture();
+    await ctx.db.insert("xReplyInteractions", {
+      postId: "launch-triple", authorXUserId: "101", text: "@Ponsbotfamily launch token TripleT ticker should be $TripleT",
+      responsePostId: "simulated-gas-reply",
+      safeError: "⛽ Simulated gas and Pons launch fee for this transaction is 0.00184692 ETH. Fund your wallet, then reply “resume”.",
+      status: "rejected", createdAt: Date.now(), updatedAt: Date.now(),
+    });
+    expect(await invoke(replies.insufficientEthResumeContext, ctx, { ownerXUserId: "101", parentPostId: "simulated-gas-reply" })).toMatchObject({ resumable: true });
+    expect(await invoke(replies.insufficientEthResumeContext, ctx, { ownerXUserId: "202", parentPostId: "simulated-gas-reply" })).toBeNull();
+    expect(await invoke(replies.claimInsufficientEthResume, ctx, { ownerXUserId: "101", parentPostId: "simulated-gas-reply", consumerPostId: "resume-1" })).toBe(true);
+    expect(await invoke(replies.claimInsufficientEthResume, ctx, { ownerXUserId: "101", parentPostId: "simulated-gas-reply", consumerPostId: "resume-2" })).toBe(false);
+  });
+
   it("expires gas resumes after ten minutes", async () => {
     const ctx = fixture();
     await ctx.db.insert("xReplyInteractions", {

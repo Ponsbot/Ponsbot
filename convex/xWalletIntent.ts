@@ -219,7 +219,7 @@ function commandRolesMatchText(text: string, command: WalletCommand) {
 }
 
 function hasMultipleLaunchSpecifications(text: string) {
-  const symbols = [...text.matchAll(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\b/gi)]
+  const symbols = [...text.matchAll(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\b/gi)]
     .map((match) => match[1].toUpperCase());
   const names = [...text.matchAll(/\b(?:(?:full|token)\s+name|name)\s*(?:is|=|:)?\s*(?:["\u201c]([^"\u201d]+)["\u201d]|['\u2018]([^'\u2019]+)['\u2019]|([^,;|\n]+))/gi)]
     .map((match) => (match[1] || match[2] || match[3] || "").trim().toLowerCase());
@@ -469,7 +469,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
   if (operation === "launch" && value && typeof value === "object") {
     const item = { ...(value as Record<string, unknown>) };
     if (/\bno\s+description\s+(?:needed|required)\b/i.test(text)) delete item.description;
-    const explicitSymbol = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)?.[1];
+    const explicitSymbol = text.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)?.[1];
     if (explicitSymbol) item.symbol = explicitSymbol.toUpperCase();
     const labeledWebsite = text.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
     const labeledXHandle = text.match(/\b(?:x|twitter)\s*(?:is|=|:)?\s*@([a-zA-Z0-9_]{1,15})\b/i)?.[1];

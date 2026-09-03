@@ -18,6 +18,16 @@ const tickerOnly = [
 ];
 
 describe("ticker-only launch names", () => {
+  it.each(["ticker should be $TripleT", "symbol should be TripleT", "ticker will be ‘TripleT’"])("handles connector words: %s", label => {
+    const text = `@Ponsbotfamily @Ponsbotfamily launch token TripleT ${label}`;
+    expect(parseWalletCommand(text)).toMatchObject({ kind: "launch", name: "TripleT", symbol: "TRIPLET" });
+    expect(groundedCanonicalCommand(text)).toMatchObject({ kind: "launch", name: "TripleT", symbol: "TRIPLET" });
+    expect(parseWalletCommand(`launch ${label}`)).toMatchObject({ kind: "launch", name: "TRIPLET", symbol: "TRIPLET" });
+  });
+  it("preserves tickers that start with is or are literal SHOULD", () => {
+    expect(parseWalletCommand("launch token Island ticker ISLAND")).toMatchObject({ symbol: "ISLAND" });
+    expect(parseWalletCommand("launch token Should ticker SHOULD")).toMatchObject({ symbol: "SHOULD" });
+  });
   it.each(tickerOnly)("uses the supplied ticker as the name: %s", (post) => {
     expect(parseWalletCommand(post)).toMatchObject({ kind: "launch", name: "RR", symbol: "RR" });
     expect(groundedCanonicalCommand(post)).toMatchObject({ kind: "launch", name: "RR", symbol: "RR" });

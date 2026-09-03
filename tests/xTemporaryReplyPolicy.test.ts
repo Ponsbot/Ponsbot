@@ -28,6 +28,9 @@ describe("temporary X response suppression", () => {
     expect(reason("This request did not complete.")).toBe("request_not_completed");
   });
   it.each([
+    "⛽ Simulated gas and Pons launch fee for this transaction is 0.00184692 ETH. Fund your wallet, then reply “resume”.",
+    "⛽ Simulated gas for this transaction is 0.0005 ETH. Fund your wallet, then reply “resume”.",
+    "⛽ Simulated gas for this transaction is 0.0005 ETH. You'll also need the Pons launch fee. Fund your wallet, then reply “resume”.",
     "⛽ There isn't enough ETH in your wallet to cover the launch and network gas.\nYour wallet: https://www.ponsbot.family/wallet/0x123",
     "❌ There isn't enough ETH for the transfer plus gas.",
     "⛽ This wallet needs a little more ETH for gas.",
@@ -38,6 +41,8 @@ describe("temporary X response suppression", () => {
     expect(reason(message, true)).toBeUndefined();
   });
   it.each([
+    "⛽ Simulated gas for this transaction is 0.0005 ETH.",
+    "⛽ Gas costs vary by transaction. Attempt a transaction for a simulated gas cost.",
     "✅ Success! Launched Not Enough ETH (NEE) on Pons V2!",
     "❌ You don't have enough of this token's paired asset yet.",
     "The MSFT purchase completed, but the final launch did not. There isn't enough ETH.",

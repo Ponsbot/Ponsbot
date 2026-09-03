@@ -4,7 +4,9 @@ function replyOpening(text: string) {
 
 // Classify the generated response, never the user's request or a token name.
 export function isInsufficientEthReply(text: string) {
-  return /^(?:There isn't enough ETH\b|You (?:don't|do not) have enough ETH\b|You'll need to fund your wallet with (?:~?[\d.]+\s+)?ETH for gas\b|This wallet needs a little more ETH\b|Not enough ETH\b|Insufficient ETH\b)/i.test(replyOpening(text));
+  const opening = replyOpening(text);
+  if (/^Simulated gas(?: and Pons launch fee)? for this transaction is [\d.,]+ ETH\.\s*(?:You'll also need the Pons launch fee\.\s*)?Fund your wallet, then reply ["“]resume["”]/i.test(opening)) return true;
+  return /^(?:There isn't enough ETH\b|You (?:don't|do not) have enough ETH\b|You'll need to fund your wallet with (?:~?[\d.]+\s+)?ETH for gas\b|This wallet needs a little more ETH\b|Not enough ETH\b|Insufficient ETH\b)/i.test(opening);
 }
 
 /** Publication-only switch. Never alter wallet validation or terminal responses. */

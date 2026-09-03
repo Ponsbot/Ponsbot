@@ -378,7 +378,7 @@ export function extractGroundedLaunchName(text: string) {
   const named = text.match(/\b(?:called|named|call\s+it)\s+([^,;|/]{1,48}?)(?=\s*(?:[,;|/]|(?:with\s+)?(?:ticker|symbol)\b|using\b|dev\s*buy\b|website\b|site\b|description\b|desc\b|assign\s+fees\s+to\b|holder\s+fee\s+sharing\b|share\s+with\s+holders\b|$))/i)?.[1];
   // A ticker immediately after launch syntax is also the name when no name
   // was supplied. Anchor to the launch clause, never a pair or social field.
-  const tickerOnlyPrefix = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?(?:with\s+)?(?:ticker|symbol)\b\s*(?:is\b|=|:)?\s*/i);
+  const tickerOnlyPrefix = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?(?:with\s+)?(?:ticker|symbol)\b\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*/i);
   if (tickerOnlyPrefix && !quoted && !labeled && !named) {
     const rest = text.slice(tickerOnlyPrefix.index! + tickerOnlyPrefix[0].length);
     const value = rest.match(/^["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,16})(?=["'\u2018\u2019\u201c\u201d\s,;.!?]|$)/)?.[1];
@@ -435,7 +435,7 @@ function parseLaunch(text: string): WalletCommand | null {
   const explicitPairToken = extractGroundedPairToken(text);
   const genericCashtag = [...text.matchAll(/\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/g)]
     .map((match) => match[1]).find((symbol) => symbol.toLowerCase() !== explicitPairToken?.toLowerCase());
-  const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:is|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)
+  const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s*\)/)
     || (genericCashtag ? [genericCashtag, genericCashtag] : null)
