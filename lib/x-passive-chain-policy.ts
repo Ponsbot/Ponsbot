@@ -15,6 +15,11 @@ export function isPassiveBotChainReply(text: string, references: XReference[] | 
   const bot = new RegExp(`@${escapeRegExp(botUsername)}\\b`, "ig");
   const mentions = [...text.matchAll(bot)];
   if (!mentions.length) return true;
+  // X carries a participant into a reply prefix once. If the author includes
+  // the bot again in that same leading block, treat the repeated mention as
+  // an explicit invocation even when X has normalized both mentions ahead of
+  // the body text.
+  if (mentions.length >= 2) return false;
   const leading = text.trimStart().match(/^(?:@[A-Za-z0-9_]{1,15}(?:[\s,:-]+|$))+/)?.[0] || "";
   const leadingHandles = leading.match(/@[A-Za-z0-9_]{1,15}/g) || [];
   const distinctHandles = new Set(leadingHandles.map((handle) => handle.toLowerCase()));

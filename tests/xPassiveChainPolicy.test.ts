@@ -14,7 +14,7 @@ describe("passive X chain filtering", () => {
       expect(hasExplicitBotMention(text, reply)).toBe(true);
       expect(isPassiveBotChainReply(text, reply)).toBe(false);
     }
-    expect(hasExplicitBotMention("@alice @Ponsbotfamily @ponsbotfamily launch TEST", reply)).toBe(false);
+    expect(hasExplicitBotMention("@alice @Ponsbotfamily @ponsbotfamily launch TEST", reply)).toBe(true);
     expect(shouldRestrictChainReply("@Ponsbotfamily @ponsbotfamily launch TEST", reply, true)).toBe(true);
   });
   it("detects any reply whose direct parent is itself a reply", () => {
@@ -57,6 +57,7 @@ describe("passive X chain filtering", () => {
   it("distinguishes a direct tag from X-carried participants in deep chains", () => {
     expect(hasExplicitBotMention("@Ponsbotfamily please help", reply)).toBe(true);
     expect(hasExplicitBotMention("@alice @Ponsbotfamily please help", reply)).toBe(false);
+    expect(hasExplicitBotMention("@alice @Ponsbotfamily @ponsbotfamily what assets can I pair with?", reply)).toBe(true);
     expect(hasExplicitBotMention("@alice @Ponsbotfamily please help @Ponsbotfamily", reply)).toBe(true);
   });
 
