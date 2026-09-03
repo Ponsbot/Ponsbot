@@ -304,6 +304,10 @@ export const activeLink = internalQuery({
   },
 });
 
+type TelegramLinkOutcome =
+  | { status: "expired" }
+  | { status: "linked" | "wallet_already_linked" | "telegram_already_linked"; telegramUserId: string; telegramChatId: string };
+
 export const linkedWallet = internalQuery({
   args: { ownerXUserId: v.string() },
   handler: async (ctx, args) => {
@@ -332,15 +336,30 @@ export const linkStatus = action({
 
 export const consumeLinkNonce = internalMutation({
   args: { nonceHash: v.string(), ownerXUserId: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<TelegramLinkOutcome> => {
     const nonce = await ctx.db.query("telegramLinkNonces").withIndex("by_nonce_hash", q => q.eq("nonceHash", args.nonceHash)).unique();
     const now = Date.now();
-    if (!nonce || nonce.consumedAt || nonce.expiresAt <= now) return null;
+    if (!nonce || nonce.consumedAt || nonce.expiresAt <= now) return { status: "expired" as const };
     const telegramLinks = await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", nonce.telegramUserId)).collect();
     const xLinks = await ctx.db.query("telegramAccountLinks").withIndex("by_owner_x_user", q => q.eq("ownerXUserId", args.ownerXUserId)).collect();
-    // Linking is permanent and one-to-one. Neither another OAuth pass nor a
-    // bot command may replace either side of an existing active binding.
-    if ([...telegramLinks, ...xLinks].some(row => !row.revokedAt)) return null;
+    const activeTelegramLink = telegramLinks.find(row => !row.revokedAt);
+    const activeXLink = xLinks.find(row => !row.revokedAt);
+    // Active links are one-to-one, but revoked identities are reusable. Keep
+    // collision checks and insertion in this mutation so simultaneous OAuth
+    // callbacks cannot bind either identity twice.
+    if (activeXLink && activeXLink.telegramUserId !== nonce.telegramUserId) {
+      await ctx.db.patch(nonce._id, { consumedAt: now });
+      return { status: "wallet_already_linked" as const, telegramUserId: nonce.telegramUserId, telegramChatId: nonce.telegramChatId };
+    }
+    if (activeTelegramLink && activeTelegramLink.ownerXUserId !== args.ownerXUserId) {
+      await ctx.db.patch(nonce._id, { consumedAt: now });
+      return { status: "telegram_already_linked" as const, telegramUserId: nonce.telegramUserId, telegramChatId: nonce.telegramChatId };
+    }
+    if (activeTelegramLink && activeXLink) {
+      await ctx.db.patch(nonce._id, { consumedAt: now });
+      await ctx.db.patch(activeTelegramLink._id, { lastAuthenticatedAt: now, updatedAt: now });
+      return { status: "linked" as const, telegramUserId: nonce.telegramUserId, telegramChatId: nonce.telegramChatId };
+    }
     await ctx.db.patch(nonce._id, { consumedAt: now });
     await ctx.db.insert("telegramAccountLinks", {
       telegramUserId: nonce.telegramUserId,
@@ -352,26 +371,30 @@ export const consumeLinkNonce = internalMutation({
       createdAt: now,
       updatedAt: now,
     });
-    return { telegramUserId: nonce.telegramUserId, telegramChatId: nonce.telegramChatId };
+    return { status: "linked" as const, telegramUserId: nonce.telegramUserId, telegramChatId: nonce.telegramChatId };
   },
 });
 
 export const completeXLink = action({
   args: { secret: v.string(), nonce: v.string(), ownerXUserId: v.string() },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ linked: boolean; status: Exclude<TelegramLinkOutcome["status"], "expired">; notificationSent: boolean }> => {
     if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("Telegram link authorization failed");
     if (!/^[a-f0-9]{64}$/.test(args.nonce) || !/^\d{1,30}$/.test(args.ownerXUserId)) throw new Error("Invalid Telegram link request");
-    const linked = await ctx.runMutation(internal.telegram.consumeLinkNonce, { nonceHash: await sha256(args.nonce), ownerXUserId: args.ownerXUserId });
-    if (!linked) throw new Error("Telegram link expired or was already used");
+    const linked: TelegramLinkOutcome = await ctx.runMutation(internal.telegram.consumeLinkNonce, { nonceHash: await sha256(args.nonce), ownerXUserId: args.ownerXUserId });
+    if (linked.status === "expired") throw new Error("Telegram link expired or was already used");
     try {
-      const text = "✅ Your X account is linked to Pons Bot. Use /wallet, /balance, or /help to get started.";
+      const text = linked.status === "wallet_already_linked"
+        ? 'This wallet is already linked to another TG. Post "@Ponsbotfamily unlink TG" on X to unlink the attached account.'
+        : linked.status === "telegram_already_linked"
+          ? "This TG account is already linked to another Pons Bot wallet. Tap Unlink TG before linking a different X account."
+          : "✅ Your X account is linked to Pons Bot. Use /wallet, /balance, or /help to get started.";
       await sendMessage(linked.telegramChatId, text);
       await ctx.runMutation(internal.telegram.recordMessage, { telegramUserId: linked.telegramUserId, telegramChatId: linked.telegramChatId, role: "assistant", text });
-      return { linked: true, notificationSent: true };
+      return { linked: linked.status === "linked", status: linked.status, notificationSent: true };
     } catch {
-      // The identity binding is already complete. A transient Telegram outage
-      // must not turn the successful X callback into a failed login page.
-      return { linked: true, notificationSent: false };
+      // The link decision is already committed. A transient Telegram outage
+      // must not turn the completed X callback into a failed login page.
+      return { linked: linked.status === "linked", status: linked.status, notificationSent: false };
     }
   },
 });

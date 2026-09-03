@@ -31,11 +31,6 @@ export async function GET(request: NextRequest) {
       secret: webSecret, sessionId: session.sessionId, ownerXUserId: session.xUserId,
     }).catch(() => false);
     if (active) {
-      if (validTelegramLink) {
-        await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
-          secret: webSecret, nonce: validTelegramLink, ownerXUserId: session.xUserId,
-        });
-      }
       return NextResponse.redirect(new URL(returnTo, siteUrl));
     }
   }

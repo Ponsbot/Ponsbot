@@ -9,6 +9,14 @@ export const dynamic = "force-dynamic";
 type XToken = { access_token?: string };
 type XIdentity = { data?: { id?: string; username?: string; verified?: boolean; verified_type?: string } };
 
+function telegramReturnUrl() {
+  const configured = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "");
+  const username = configured && /^[a-zA-Z0-9_]{5,32}$/.test(configured) ? configured : "The_Pons_Bot";
+  // Telegram's HTTPS universal link opens the native app where the client and
+  // operating system permit it, with a normal web fallback otherwise.
+  return `https://t.me/${username}`;
+}
+
 function errorRedirect(request: NextRequest, reason: string) {
   const target = new URL("/wallet/sign-in-error", request.url);
   target.searchParams.set("reason", reason);
@@ -70,6 +78,23 @@ export async function GET(request: NextRequest) {
       verified: Boolean(identity.verified),
       ...(identity.verified_type ? { verifiedType: identity.verified_type } : {}),
     });
+    const telegramLink = request.cookies.get("pons_telegram_link")?.value;
+    if (telegramLink && /^[a-f0-9]{64}$/.test(telegramLink)) {
+      await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
+        secret: webSecret, nonce: telegramLink, ownerXUserId: identity.id,
+      });
+      const response = NextResponse.redirect(telegramReturnUrl());
+      response.cookies.delete("pons_x_oauth_state");
+      response.cookies.delete("pons_x_oauth_verifier");
+      response.cookies.delete("pons_x_oauth_return");
+      response.cookies.delete("pons_telegram_link");
+      // Telegram linking authorizes access inside Telegram; it must not leave
+      // an unrelated website wallet session behind in the OAuth browser.
+      response.cookies.set(WEB_WALLET_SESSION_COOKIE, "", {
+        httpOnly: true, secure: siteUrl.startsWith("https://"), sameSite: "lax", path: "/", maxAge: 0,
+      });
+      return response;
+    }
     const returnTo = request.cookies.get("pons_x_oauth_return")?.value === "/terminal" ? "/terminal" : `/wallet/${wallet.address}`;
     const sessionCookie = createWebWalletSession(wallet.address, identity.id, identity.username, webSecret);
     const session = readWebWalletSession(sessionCookie, webSecret);
@@ -77,12 +102,6 @@ export async function GET(request: NextRequest) {
     await new ConvexHttpClient(convexUrl).action(api.wallets.registerWebSession, {
       secret: webSecret, sessionId: session.sessionId, ownerXUserId: session.xUserId, expiresAt: session.expiresAt,
     });
-    const telegramLink = request.cookies.get("pons_telegram_link")?.value;
-    if (telegramLink && /^[a-f0-9]{64}$/.test(telegramLink)) {
-      await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
-        secret: webSecret, nonce: telegramLink, ownerXUserId: identity.id,
-      });
-    }
     const response = NextResponse.redirect(new URL(returnTo, siteUrl));
     response.cookies.delete("pons_x_oauth_state");
     response.cookies.delete("pons_x_oauth_verifier");
