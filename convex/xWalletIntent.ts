@@ -24,7 +24,6 @@ const PUBLISHED_PAIR_LINES = Array.from(
   { length: Math.ceil(PUBLISHED_PAIR_SYMBOLS.length / 9) },
   (_, index) => PUBLISHED_PAIR_SYMBOLS
     .slice(index * 9, index * 9 + 9)
-    .map((symbol) => `$${symbol}`)
     .join("  •  "),
 ).join("\n");
 

@@ -149,4 +149,12 @@ describe("guided general help", () => {
     expect(isGuidedHelpPendingCommandKind(kind)).toBe(true);
     expect(guidedHelpOperationFromCommandKind(kind)).toBeNull();
   });
+
+  it("formats the expanded pair list without triggering X's multi-cashtag rejection", () => {
+    const message = walletHelpMessage("pairs");
+    expect(message).toContain("NVDA  •  SPCX");
+    expect(message).toContain("JNJ  •  ETH");
+    expect(message.match(/\$[A-Za-z]/g)).toBeNull();
+    expect(message).toContain("\n\n");
+  });
 });
