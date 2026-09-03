@@ -5,7 +5,11 @@ export const PONS_PAIR_CATALOG: ReadonlyArray<readonly [string, string, string, 
 );
 
 export const PUBLISHED_PAIR_SYMBOLS = [
-  ...PONS_PAIR_CATALOG.map(([, symbol]) => symbol),
+  ...PONS_PAIR_CATALOG
+    .map(([, symbol]) => symbol)
+    .filter((symbol) => !["cbBTC", "USDG"].includes(symbol)),
+  "cbBTC",
+  "USDG",
   "ETH",
 ] as const;
 

@@ -50,7 +50,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     capabilities: GENERAL_GUIDED_HELP_MESSAGE,
     wallet: "👛 Just ask for your wallet! I'll return your Pons Bot wallet page, where you can view the address and holdings. It's connected to your X account and ready to receive ETH or supported tokens.",
     fund: "💰 Ask for your wallet and send Robinhood Chain ETH or supported tokens to the provided address. Keep a little ETH available for gas!",
-    gas: "⛽ Gas costs vary by transaction. For launches, 0.0015 to 0.002 ETH is a safe margin for gas and the Pons launch fee.",
+    gas: "⛽ Gas costs vary by transaction. Attempt a transaction for a simulated gas cost.",
     balance: "📊 Ask “what's my balance?” to see your ETH and token balances. You can also name a ticker or contract to check a specific asset.",
     send: "📤 Tell me the amount, token, and destination wallet or X handle. Example: send 25 PONSBOT to @user. You can also buy and send in one post: buy $100 of PONSBOT and send it to @user.",
     buy_sell: "🔄 Try “buy $5 of PONSBOT”, “sell 0.001 ETH of PONSBOT”, or “swap $25 of ETH to USDG.”",

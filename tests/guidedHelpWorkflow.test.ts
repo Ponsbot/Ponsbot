@@ -153,7 +153,7 @@ describe("guided general help", () => {
   it("formats the expanded pair list without triggering X's multi-cashtag rejection", () => {
     const message = walletHelpMessage("pairs");
     expect(message).toContain("NVDA  •  SPCX");
-    expect(message).toContain("JNJ  •  ETH");
+    expect(message).toContain("cbBTC  •  USDG  •  ETH");
     expect(message.match(/\$[A-Za-z]/g)).toBeNull();
     expect(message).toContain("\n\n");
   });

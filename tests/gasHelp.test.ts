@@ -59,7 +59,7 @@ describe("gas-cost help (no external actions)", () => {
   );
   it("prints the requested gas allowance and fits an X reply", () => {
     const message = walletHelpMessage("gas");
-    expect(message).toBe("⛽ Gas costs vary by transaction. For launches, 0.0015 to 0.002 ETH is a safe margin for gas and the Pons launch fee.");
+    expect(message).toBe("⛽ Gas costs vary by transaction. Attempt a transaction for a simulated gas cost.");
     expect(xWeightedLength(message)).toBeLessThanOrEqual(280);
     expect(message).not.toMatch(/costs can rise/i);
     expect(message).not.toContain("—");
