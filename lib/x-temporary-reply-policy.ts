@@ -17,7 +17,9 @@ export function temporaryXReplySuppressionReason(
   const opening = replyOpening(text);
   // Insufficient-ETH notices now have their own one-per-minute publication
   // budget. Historical suppressed records remain sealed by their stored reason.
-  if (/^(?:Token )?launches are (?:currently )?(?:available to verified X accounts|(?:only )?available (?:through|on) X(?: posts)? only|only available (?:through|on) X(?: posts)?)[.!\s]/i.test(opening))
+  // Unverified launch attempts need a clear explanation. Continue suppressing
+  // only the temporary "X-only" availability notice.
+  if (/^(?:Token )?launches are (?:currently )?(?:(?:only )?available (?:through|on) X(?: posts)? only|only available (?:through|on) X(?: posts)?)[.!\s]/i.test(opening))
     return "launch_x_restriction";
   if (/^I couldn't quite make that out\b/i.test(opening)) return "ai_ambiguity";
   if (/^This request did not complete\b/i.test(opening)) return "request_not_completed";

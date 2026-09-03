@@ -3599,8 +3599,7 @@ export const executeCommand = internalAction({
       });
       return {
         ok: false,
-        message:
-          "🔒 Token launches are currently available to verified X accounts. Once verified, you'll be ready to launch!",
+        message: "🔒 Only verified X accounts can launch.",
       };
     }
     if (command.kind === "launch" && !walletCanLaunch(wallet.launchEnabled)) {

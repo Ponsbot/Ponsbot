@@ -10,6 +10,8 @@ const check = (overrides: Partial<Parameters<typeof exceedsXReplyDepthLimit>[0]>
     contextualGasHelp: false,
     expectedGasResumeReply: false,
     ownedBotSelfWalletRequest: false,
+    directedInformationalHelp: false,
+    explicitBotMention: false,
     ...overrides,
   });
 
@@ -36,5 +38,13 @@ describe("X reply-depth policy", () => {
 
   it("does not enforce the cutoff anywhere under an active prompt waiting for a gas-resume response", () => {
     expect(check({ replyDepth: 50, expectedGasResumeReply: true })).toBe(false);
+  });
+
+  it("allows explicitly directed informational help at any reply depth", () => {
+    expect(check({ replyDepth: 50, directedInformationalHelp: true })).toBe(false);
+  });
+
+  it("allows a genuine direct bot mention at any reply depth", () => {
+    expect(check({ replyDepth: 50, explicitBotMention: true })).toBe(false);
   });
 });

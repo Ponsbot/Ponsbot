@@ -1703,7 +1703,7 @@ export const retryInteraction = internalAction({
           return;
         }
         if (!current.user.verified) {
-          const message = "🔒 Token launches are currently available to verified X accounts. Once verified, you'll be ready to launch!";
+          const message = "🔒 Only verified X accounts can launch.";
           const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: false, kind: "reply" });
           await ctx.runMutation(internal.xReplies.updateInteraction, {
             postId, status: "rejected", commandKind: guidedHelpCommandKind("root"), responsePostId, safeError: message,
@@ -2896,10 +2896,10 @@ export function shouldHandlePassiveChainText(text: string) {
 
 export function shouldHandleDirectedChainHelp(
   text: string,
-  replyDepth: number,
+  _replyDepth: number,
   passiveBotReply: boolean,
 ) {
-  if (passiveBotReply || replyDepth > 2) return false;
+  if (passiveBotReply) return false;
   const direct = directPostCommandText(text);
   // Only a recognizable information request qualifies. Greetings, praise,
   // promotional chatter, and generic mentions have no help topic and remain
@@ -3143,6 +3143,15 @@ export const pollMentions = internalAction({
         // recognized resume response.
         const ownedBotSelfWalletRequest = ownedBotReply === true
           && (directOperation === "show_wallet" || directOperation === "show_balance");
+        const directedInformationalHelp = shouldHandleDirectedChainHelp(
+          directText,
+          replyDepth,
+          passiveBotReply,
+        );
+        const explicitBotMention = hasExplicitBotMention(
+          directText,
+          mention.referenced_tweets,
+        );
         const workflowAdmission = guidedHelpContinuation?.allowed || liquidityContinuation || ownedBotReply
           ? await ctx.runMutation(internal.xReplies.admitWorkflowContinuation, {
               ownerXUserId: mention.author_id || "", postId: mention.id,
@@ -3163,6 +3172,8 @@ export const pollMentions = internalAction({
           // of the suggested word "resume".
           expectedGasResumeReply: insufficientContext?.resumable === true,
           ownedBotSelfWalletRequest,
+          directedInformationalHelp,
+          explicitBotMention,
         })) continue;
         if (shouldSuppressXResponse(directText)) continue;
         // Replies can inherit every participant in a long conversation and
@@ -3171,11 +3182,7 @@ export const pollMentions = internalAction({
         // publication. Transactions and self-wallet requests remain eligible.
         const directedHelp =
           restrictedReply &&
-          (contextualGasHelp || Boolean(gasResume) || shouldHandleDirectedChainHelp(
-            directText,
-            replyDepth,
-            passiveBotReply,
-          ));
+          (contextualGasHelp || Boolean(gasResume) || directedInformationalHelp);
         if (
           restrictedReply &&
           !directedHelp &&

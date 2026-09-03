@@ -54,6 +54,12 @@ describe("passive X chain filtering", () => {
     expect(hasExplicitBotMention("@Ponsbotfamily launch North Star ticker NSTAR", reply)).toBe(true);
   });
 
+  it("distinguishes a direct tag from X-carried participants in deep chains", () => {
+    expect(hasExplicitBotMention("@Ponsbotfamily please help", reply)).toBe(true);
+    expect(hasExplicitBotMention("@alice @Ponsbotfamily please help", reply)).toBe(false);
+    expect(hasExplicitBotMention("@alice @Ponsbotfamily please help @Ponsbotfamily", reply)).toBe(true);
+  });
+
   it("authorizes a launch when the direct parent is a verified bot post", () => {
     expect(launchPostAuthorized("launch North Star ticker NSTAR", reply, true)).toBe(true);
     expect(launchPostAuthorized("@alice @Ponsbotfamily launch North Star ticker NSTAR", reply, true)).toBe(true);
@@ -94,6 +100,8 @@ describe("passive X chain filtering", () => {
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily hello", 1, false)).toBe(false);
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily great launch", 1, false)).toBe(false);
     expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily how do launches work?", 1, true)).toBe(false);
-    expect(shouldHandleDirectedChainHelp("@Ponsbotfamily how do launches work?", 3, false)).toBe(false);
+    expect(shouldHandleDirectedChainHelp("@Ponsbotfamily how do launches work?", 30, false)).toBe(true);
+    expect(shouldHandleDirectedChainHelp("@Ponsbotfamily what assets can you pair with", 30, false)).toBe(true);
+    expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily what assets can you pair with", 30, true)).toBe(false);
   });
 });

@@ -4,7 +4,6 @@ import { temporaryXReplySuppressionReason as reason, isInsufficientEthReply } fr
 afterEach(() => vi.unstubAllEnvs());
 describe("temporary X response suppression", () => {
   it.each([
-    ["🔒 Token launches are currently available to verified X accounts. Once verified, you'll be ready to launch!", "launch_x_restriction"],
     ["Token launches are only available through X posts.", "launch_x_restriction"],
     ["🤔 I couldn't quite make that out. Try “show my wallet.”", "ai_ambiguity"],
     ["❌ This request did not complete. Check the earlier reply or try a new post.", "request_not_completed"],
@@ -22,6 +21,9 @@ describe("temporary X response suppression", () => {
     "❌ I couldn't complete that wallet request. Check the details and give it another try!",
     "❌ You don't have enough of this token's paired asset yet.",
   ])("preserves unrelated replies: %s", message => expect(reason(message, true)).toBeUndefined());
+  it("publishes the unverified-launch explanation even while routine failures are suppressed", () => {
+    expect(reason("🔒 Only verified X accounts can launch.", true)).toBeUndefined();
+  });
   it("uses an explicit reversible environment switch", () => {
     vi.stubEnv("X_SUPPRESS_ROUTINE_FAILURE_REPLIES", "false");
     expect(reason("This request did not complete.")).toBeUndefined();
