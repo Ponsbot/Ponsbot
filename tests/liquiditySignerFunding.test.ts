@@ -20,7 +20,7 @@ vi.mock("../lib/wallet-signer/service", () => ({
   quoteLiquidityPurchase: (...args: unknown[]) => mock.purchase(...args), quoteLiquidityUsdgToEth: (...args: unknown[]) => mock.convert(...args),
 }));
 vi.mock("../lib/wallet-signer/liquidity-status", () => ({ inspectLiquidityPosition: (...args: unknown[]) => mock.inspectStatus(...args) }));
-import { assessLiquidityFunding, liquidityPriceConsensus, liquidityPriceConsensusBySource, prepareLiquidityStep, prepareLiquidityEnvelope, signLiquidityEnvelope, quoteLiquidity } from "../lib/wallet-signer/liquidity";
+import { assessLiquidityFunding, liquidityPriceConsensus, liquidityPriceConsensusBySource, liquidityWithdrawalMinimum, prepareLiquidityStep, prepareLiquidityEnvelope, signLiquidityEnvelope, quoteLiquidity } from "../lib/wallet-signer/liquidity";
 let heldToken: bigint, heldUsdg: bigint, eth: bigint;
 describe("new-pool price consensus", () => {
   it("uses the median of agreeing independent prices", () => expect(liquidityPriceConsensus([1, 1.05, 1.1])).toBe(1.05));
@@ -29,6 +29,12 @@ describe("new-pool price consensus", () => {
   it("does not count duplicate observations from one provenance as independent", () => expect(() => liquidityPriceConsensusBySource([
     { source: "pons_onchain", value: 1 }, { source: "pons_onchain", value: 1.01 },
   ])).toThrow("LP_NEW_POOL_PRICE_UNVERIFIED"));
+});
+
+describe("liquidity withdrawal protection", () => {
+  it("requires at least 98% of each quoted withdrawal asset", () => {
+    expect(liquidityWithdrawalMinimum(1_000_000n)).toBe(980_000n);
+  });
 });
 describe("public authenticated signer access", () => {
   const bot = { ownerXUserId: LIQUIDITY_TERMINAL_TEST_OWNER, walletRef: LIQUIDITY_TERMINAL_TEST_WALLET, expectedFrom: LIQUIDITY_TERMINAL_TEST_WALLET };

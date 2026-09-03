@@ -20,6 +20,11 @@ import { liquidityExecutionWindowOpen } from "../liquidity-recovery";
 import { LIQUIDITY_CALLDATA_DEADLINE_MS, LIQUIDITY_MINIMUM_QUOTE_LIFETIME_MS, LIQUIDITY_QUOTE_EXECUTION_ALLOWANCE_MS } from "../liquidity-timing";
 export type { LiquidityQuotePlan } from "../liquidity-quote";
 
+export const LIQUIDITY_WITHDRAWAL_MINIMUM_BPS = 9_800;
+export function liquidityWithdrawalMinimum(amount: bigint) {
+  return amount * BigInt(LIQUIDITY_WITHDRAWAL_MINIMUM_BPS) / 10_000n;
+}
+
 const address = z.string().regex(/^0x[a-fA-F0-9]{40}$/);
 const leg = z.object({ tokenId: z.string().regex(/^[1-9]\d*$/), tickLower: z.number().int(), tickUpper: z.number().int(), liquidity: z.string().regex(/^\d+$/) }).strict();
 const accessFields = { ownerXUserId: z.string().regex(/^[1-9]\d{0,31}$/), source: z.enum(["x", "terminal"]).default("x") };
@@ -372,8 +377,8 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
         const actual = version === 3
           ? (await c.readContract({ address: A.v3Npm, abi: liquidityReadAbi, functionName: "positions", args: [BigInt(leg.tokenId)], blockNumber: block.number }))[7]
           : await c.readContract({ address: A.v4Npm, abi: liquidityReadAbi, functionName: "getPositionLiquidity", args: [BigInt(leg.tokenId)], blockNumber: block.number });
-        const [a, b] = liquidityAmounts(actual, leg.tickLower, leg.tickUpper, sqrt, false), factor = BigInt(10000 - (f.slippageBps ?? 100));
-        minimums.push({ amount0: (a * factor / 10000n).toString(), amount1: (b * factor / 10000n).toString() });
+        const [a, b] = liquidityAmounts(actual, leg.tickLower, leg.tickUpper, sqrt, false);
+        minimums.push({ amount0: liquidityWithdrawalMinimum(a).toString(), amount1: liquidityWithdrawalMinimum(b).toString() });
       }
       if (claimable !== false) calls.push(prepareLiquidityClaim(version, input.legs));
       calls.push(prepareLiquidityClose(version, input.legs, minimums, 100));
