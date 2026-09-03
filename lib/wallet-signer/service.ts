@@ -2,13 +2,15 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
-import { checkedUsdToEthWei } from "./pricing";
+import { checkedUsdToEthWei, ethUsdPrice } from "./pricing";
 import { estimateActualFees, estimateResilientAutomationFees, insufficientGasError, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
 import { requireNativeGasBalance, requireWalletNativeGas } from "../wallet-native-gas";
 import { nativeTokenOperationError } from "../native-token-operation";
 import { reliableHttp } from "../rpc-http";
 import { rememberWalletExecutionCache, sharedWalletExecutionCache, walletExecutionCacheKey } from "../shared-wallet-execution-cache";
-import { tokenMarketCapUsd } from "../token-market-cap";
+import { tokenMarketCapUsd, tokenUnitPriceUsd } from "../token-market-cap";
+import { geckoTokenMarkets, GECKO_TOKEN_BATCH_SIZE } from "../gecko-token-market";
+import { balanceWithUsd } from "../balance-display";
 import { indexedNativeV4Pools, type IndexedV4PoolKey } from "../indexed-v4-routes";
 import { PONS_PAIR_CATALOG } from "../pair-catalog";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../automated-fee-pair-routes";
@@ -1431,16 +1433,32 @@ export async function freeLaunchDevBuyEligibility(input: {
 export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string; raw?: string; decimals?: number; symbol?: string }> {
   const client = rpcClient();
   if (!token || /^eth$/i.test(token)) {
-    const eth = formatEther(await client.getBalance({ address }));
-    if (token) return { display: `${trimDecimal(eth)} ETH`, symbol: "ETH" };
-    const holdings = [`${trimDecimal(eth)} ETH`];
-    const tokenHoldings = await Promise.all([...new Set(knownTokens.map((value) => value.toLowerCase()))].map(async (tokenAddress) => {
+    const [ethRaw, ethPrice] = await Promise.all([
+      client.getBalance({ address }),
+      ethUsdPrice(AbortSignal.timeout(5_000)).catch(() => undefined),
+    ]);
+    const eth = formatEther(ethRaw);
+    const ethDisplay = balanceWithUsd(`${trimDecimal(eth)} ETH`, ethPrice === undefined ? undefined : Number(eth) * ethPrice);
+    if (token) return { display: ethDisplay, symbol: "ETH" };
+    const holdings = [ethDisplay];
+    const tokenAddresses = [...new Set(knownTokens.map((value) => value.toLowerCase()))] as Address[];
+    const marketEntries = new Map<string, number>();
+    for (let offset = 0; offset < tokenAddresses.length; offset += GECKO_TOKEN_BATCH_SIZE) {
+      const batch = tokenAddresses.slice(offset, offset + GECKO_TOKEN_BATCH_SIZE);
+      const markets = await geckoTokenMarkets(batch, { ttlMs: 60_000, timeoutMs: 5_000, allowStale: true, priority: "interactive" }).catch(() => new Map());
+      for (const [key, value] of markets) if (value.priceUsd !== undefined) marketEntries.set(key, value.priceUsd);
+    }
+    const tokenHoldings = await Promise.all(tokenAddresses.map(async (tokenAddress) => {
       try {
         const [balance, metadata] = await Promise.all([
-          client.readContract({ address: tokenAddress as Address, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
-          tokenMetadata(tokenAddress as Address),
+          client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
+          tokenMetadata(tokenAddress),
         ]);
-        return balance > 0n ? `${trimDecimal(formatUnits(balance, metadata.decimals))} ${metadata.symbol}` : undefined;
+        if (balance <= 0n) return undefined;
+        const amount = formatUnits(balance, metadata.decimals);
+        let unitUsd = /^USDG$/i.test(metadata.symbol) ? 1 : marketEntries.get(tokenAddress.toLowerCase());
+        if (unitUsd === undefined) unitUsd = await tokenUnitPriceUsd(tokenAddress, AbortSignal.timeout(5_000)).catch(() => undefined);
+        return balanceWithUsd(`${trimDecimal(amount)} ${metadata.symbol}`, unitUsd === undefined ? undefined : Number(amount) * unitUsd);
       } catch { return undefined; }
     }));
     holdings.push(...tokenHoldings.filter((value): value is string => Boolean(value)));
@@ -1448,11 +1466,15 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
   }
   if (!/^0x[a-fA-F0-9]{40}$/.test(token)) throw new Error("token lookup was not resolved by the registry");
   const tokenAddress = token as Address;
-  const [balance, metadata] = await Promise.all([
+  const [balance, metadata, market] = await Promise.all([
     client.readContract({ address: tokenAddress, abi: tokenAbi, functionName: "balanceOf", args: [address] }),
     tokenMetadata(tokenAddress),
+    geckoTokenMarkets([tokenAddress], { ttlMs: 60_000, timeoutMs: 5_000, allowStale: true, priority: "interactive" }).catch(() => new Map()),
   ]);
-  return { display: `${trimDecimal(formatUnits(balance, metadata.decimals))} ${metadata.symbol}`, raw: balance.toString(), decimals: metadata.decimals, symbol: metadata.symbol };
+  const amount = formatUnits(balance, metadata.decimals);
+  let unitUsd = /^USDG$/i.test(metadata.symbol) ? 1 : market.get(tokenAddress.toLowerCase())?.priceUsd;
+  if (unitUsd === undefined) unitUsd = await tokenUnitPriceUsd(tokenAddress, AbortSignal.timeout(5_000)).catch(() => undefined);
+  return { display: balanceWithUsd(`${trimDecimal(amount)} ${metadata.symbol}`, unitUsd === undefined ? undefined : Number(amount) * unitUsd), raw: balance.toString(), decimals: metadata.decimals, symbol: metadata.symbol };
 }
 
 export async function spendableEthBalance(address: Address, reservedGasUnits: number, requestedEth?: string) {

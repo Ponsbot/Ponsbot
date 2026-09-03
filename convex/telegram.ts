@@ -364,7 +364,7 @@ export const processUpdate = internalAction({
         });
         const site = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "");
         if (!site) throw new Error("Telegram linking is not configured");
-        await sendMessage(chatId, "Link your X account to use your existing Pons Bot wallet in Telegram.", {
+        await sendMessage(chatId, "Link your X account to use your Pons Bot wallet in Telegram.", {
           inline_keyboard: [[{ text: "Link X Account", url: `${site}/api/auth/x/start?telegramLink=${nonce}` }]],
         });
       } else if (command === "/start" || command === "/help" || /^(?:what can you do\??|help)$/i.test(text)) {
