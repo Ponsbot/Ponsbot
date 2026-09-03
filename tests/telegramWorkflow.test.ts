@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { telegramCommandText, telegramGuideOperation, telegramMenuGuideOperation, telegramRecipientAllowed } from "../convex/telegram";
+import { telegramCommandText, telegramGuideOperation, telegramLiquidityText, telegramMenuGuideOperation, telegramRecipientAllowed } from "../convex/telegram";
 
 describe("Telegram command routing", () => {
   it.each([
@@ -37,5 +37,11 @@ describe("Telegram command routing", () => {
     expect(telegramRecipientAllowed({ kind: "send", amount: "1", unit: "eth", recipient: "0x1111111111111111111111111111111111111111" })).toBe(true);
     expect(telegramRecipientAllowed({ kind: "buy_and_send", amount: "5", unit: "usd", token: "PONSBOT", recipient: "@alice", slippageBps: 250 })).toBe(false);
     expect(telegramRecipientAllowed({ kind: "buy", amount: "5", unit: "usd", token: "PONSBOT", slippageBps: 250 })).toBe(true);
+  });
+
+  it("bridges a bare first liquidity answer into the shared workflow without rewriting later answers", () => {
+    expect(telegramLiquidityText("PONSBOT", false)).toBe("create liquidity PONSBOT");
+    expect(telegramLiquidityText("$100", true)).toBe("$100");
+    expect(telegramLiquidityText("check my positions", false)).toBe("check my positions");
   });
 });

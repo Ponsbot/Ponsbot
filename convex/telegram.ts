@@ -5,6 +5,7 @@ import { isTerminalCommand, type WalletCommand } from "./walletCommands";
 import { parseXWalletIntent, walletHelpMessage } from "./xWalletIntent";
 import { parseXHoudiniCommand } from "./xHoudini";
 import { GENERAL_GUIDED_HELP_MESSAGE, guidedHelpCancelled, guidedHelpClaimLpOfferSelection, guidedHelpClaimSelection, guidedHelpCommandText, guidedHelpPrompt, guidedHelpQuestion, guidedHelpQuestionResponse, guidedHelpSelection, type GuidedHelpOperation } from "../lib/guided-help-workflow";
+import { isLiquidityMessage } from "../lib/liquidity-workflow";
 
 const LINK_TTL_MS = 10 * 60 * 1_000;
 
@@ -143,6 +144,11 @@ export function telegramRecipientAllowed(command: WalletCommand) {
   return /^0x[a-fA-F0-9]{40}$/.test(command.recipient);
 }
 
+export function telegramLiquidityText(text: string, hasActiveLiquidityConversation: boolean) {
+  if (hasActiveLiquidityConversation || isLiquidityMessage(text)) return text;
+  return `create liquidity ${text}`;
+}
+
 export const reserveUpdate = internalMutation({
   args: { updateId: v.string(), telegramUserId: v.optional(v.string()), telegramChatId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -200,6 +206,16 @@ export const activeConversation = internalQuery({
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
     return rows.filter(row => row.expiresAt > Date.now()).sort((a, b) => b.updatedAt - a.updatedAt)[0] || null;
+  },
+});
+
+export const activeLiquidityConversation = internalQuery({
+  args: { scope: v.string(), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db.query("liquidityConversations")
+      .withIndex("by_scope_active", q => q.eq("scope", args.scope).eq("active", true))
+      .order("desc").first();
+    return Boolean(row && row.ownerXUserId === args.ownerXUserId && row.source === "telegram" && row.expiresAt > Date.now());
   },
 });
 
@@ -404,12 +420,17 @@ export const processUpdate = internalAction({
         const lpOfferChoice = conversation?.operation === "claim_lp_offer" ? guidedHelpClaimLpOfferSelection(text) : null;
         const effectiveText = telegramCommandText(operation && operation !== "liquidity" ? guidedHelpCommandText(text, operation) : text);
         const liquidityScope = `telegram:telegram_${telegramUserId}`;
+        const hasActiveLiquidityConversation = operation === "liquidity"
+          ? await ctx.runQuery(internal.telegram.activeLiquidityConversation, { scope: liquidityScope, ownerXUserId: link.ownerXUserId })
+          : false;
         const liquidity = await ctx.runAction(internal.liquidity.handle, {
           ownerXUserId: link.ownerXUserId,
           source: "telegram",
           scope: liquidityScope,
           requestKey: `telegram:${telegramUserId}:${args.updateId}`,
-          text: claimChoice === "lp" || lpOfferChoice === "lp" ? "claim LP fees" : operation === "liquidity" ? text : effectiveText,
+          text: claimChoice === "lp" || lpOfferChoice === "lp" ? "claim LP fees" : operation === "liquidity"
+            ? telegramLiquidityText(text, hasActiveLiquidityConversation)
+            : effectiveText,
         });
         if (liquidity.handled) {
           if (liquidity.message) await sendMessage(chatId, liquidity.message);
