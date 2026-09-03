@@ -3,7 +3,7 @@ import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
 import { checkedUsdToEthWei, ethUsdPrice } from "./pricing";
-import { estimateActualFees, estimateResilientAutomationFees, insufficientGasError, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
+import { estimateActualFees, estimateResilientAutomationFees, insufficientGasError, recheckLaunchGas, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
 import { requireNativeGasBalance, requireWalletNativeGas } from "../wallet-native-gas";
 import { nativeTokenOperationError } from "../native-token-operation";
 import { reliableHttp, resilientRobinhoodHttp } from "../rpc-http";
@@ -2093,7 +2093,7 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   return { value, gasQuote: { estimatedGas: gas, fees } satisfies TransactionGasQuote };
 }
 
-async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, minimumBlock?: bigint, gasQuote?: TransactionGasQuote) {
+async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, minimumBlock?: bigint, gasQuote?: TransactionGasQuote, launchFee?: bigint) {
   const client = rpcClient();
   if (await client.getChainId() !== ROBINHOOD_CHAIN_ID) throw new Error("RPC chain mismatch");
   const account = await cdp().evm.getOrCreateAccount({ name: accountName(request.ownerReference) });
@@ -2105,12 +2105,19 @@ async function prepareUnsignedWithAccount(request: Omit<ExecutionRequest, "opera
   const simulationBalance = value + parseEther("100");
   const stateOverride = [{ address: account.address, balance: simulationBalance }];
   await client.call({ account: account.address, to, data, value, stateOverride });
-  const [estimatedGas, fees, rpcNonce, balance] = await Promise.all([
+  const [firstGas, firstFees, rpcNonce, balance] = await Promise.all([
     gasQuote?.estimatedGas ?? client.estimateGas({ account: account.address, to, data, value, stateOverride }),
     gasQuote?.fees ?? estimateActualFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }),
     client.getBalance({ address: account.address }),
   ]);
+  const { estimatedGas, fees } = await recheckLaunchGas({ estimatedGas: firstGas, fees: firstFees }, launchFee, async () => {
+    const [estimatedGas, fees] = await Promise.all([
+      client.estimateGas({ account: account.address, to, data, value, stateOverride }),
+      estimateActualFees(client),
+    ]);
+    return { estimatedGas, fees };
+  });
   const nonce = Math.max(rpcNonce, request.minimumNonce || 0);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
   // Nodes require the sender to cover value plus the transaction's maximum
@@ -2151,12 +2158,12 @@ export async function signPreparedEnvelope(request: Omit<ExecutionRequest, "oper
     signedTransaction: signature, valueWei: envelope.valueWei, nonce: envelope.nonce,
   };
 }
-export async function prepareSigned(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, gasQuote?: TransactionGasQuote) {
+export async function prepareSigned(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, gasQuote?: TransactionGasQuote, launchFee?: bigint) {
   // CDP's account endpoint is case-sensitive. Reuse its exact verified address,
   // not a lowercased request address, without doing a second account lookup.
   // ETH sends reserve and sign with the same fresh quote, instead of making
   // a second estimate that can consume the entire send-all balance cushion.
-  const { envelope, accountAddress } = await prepareUnsignedWithAccount(request, to, data, value, undefined, gasQuote);
+  const { envelope, accountAddress } = await prepareUnsignedWithAccount(request, to, data, value, undefined, gasQuote, launchFee);
   const { signature } = await cdp().evm.signTransaction({ address: accountAddress, transaction: envelope.unsignedTransaction, idempotencyKey: request.idempotencyKey });
   return { transactionHash: keccak256(signature), status: "prepared" as const, toAddress: to, signedTransaction: signature, valueWei: value.toString(), nonce: envelope.nonce };
 }
@@ -2447,7 +2454,7 @@ async function preparePonsLaunch(
     if (fundingEstimateOnly) {
       return estimateFreeLaunchGrant(client, owner, factory, data, launchFee, launchFee);
     }
-    const prepared = await prepareSigned(request, factory, data, launchFee)
+    const prepared = await prepareSigned(request, factory, data, launchFee, undefined, launchFee)
       .catch(error => { throw includeLaunchFeeInGasError(error, launchFee); });
     if (simulation.result[0].toLowerCase() !== vanity.tokenAddress.toLowerCase() || simulation.result[1].toLowerCase() !== vanity.curveAddress.toLowerCase()) throw new Error("Pons expected launch address did not match the b07 prediction");
     return {
@@ -2493,7 +2500,7 @@ async function preparePonsLaunch(
   if (fundingEstimateOnly) {
     return estimateFreeLaunchGrant(client, owner, router, data, value, launchFee);
   }
-  const prepared = await prepareSigned(request, router, data, value)
+  const prepared = await prepareSigned(request, router, data, value, undefined, launchFee)
     .catch(error => { throw includeLaunchFeeInGasError(error, launchFee); });
   return {
     ...prepared,

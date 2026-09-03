@@ -338,6 +338,43 @@ function authorizeImport(secret: string) {
   if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("lifetime volume import authorization failed");
 }
 
+/** Repair only a zero-history curve, without pausing or replacing the global
+ * catalog. A revision guard invalidates concurrent Gecko work for this row. */
+export const repairMissingCurveHistory = mutation({
+  args: { secret: v.string(), tokenAddress: v.string(), poolAddress: v.string(), expectedRevision: v.number(),
+    through: v.number(), confirmedVolumeUsd: v.number() },
+  handler: async (ctx, args) => {
+    authorizeImport(args.secret);
+    if (!Number.isFinite(args.confirmedVolumeUsd) || args.confirmedVolumeUsd < 0
+      || !Number.isSafeInteger(args.through) || (args.through + 1) % HOUR_MS !== 0
+      || args.through >= Date.now() || Date.now() - args.through > 24 * HOUR_MS) throw new Error("invalid scoped backfill");
+    const row = await ctx.db.query("tokenLifetimeVolumes").withIndex("by_pool", q => q.eq("normalizedPoolAddress", args.poolAddress.toLowerCase())).unique();
+    if (!row || row.normalizedTokenAddress !== args.tokenAddress.toLowerCase() || row.enabled !== true
+      || row.source !== "bonding_curve" || row.frozen || isTokenIndexExcluded(row.tokenAddress)) throw new Error("ineligible curve repair");
+    if (row.volumeProvider === "onchain" && row.onchainTrackingStartedAt === args.through) return { status: "already_repaired", token: row.tokenAddress };
+    if ((row.revision ?? 0) !== args.expectedRevision || row.backfillComplete || row.confirmedVolumeUsd !== 0
+      || row.provisionalVolumeUsd !== 0 || !row.lastError?.includes("onchain historical backfill required")) throw new Error("curve changed; review before repair");
+    if (args.through < row.launchCreatedAt) throw new Error("cutoff predates launch");
+    const now = Date.now();
+    await ctx.db.patch(row._id, { confirmedVolumeUsd: args.confirmedVolumeUsd, provisionalVolumeUsd: 0,
+      volumeProvider: "onchain", backfillComplete: true, backfillBeforeTimestamp: undefined,
+      oldestBackfilledHour: Math.floor(row.launchCreatedAt / HOUR_MS) * HOUR_MS,
+      latestCompletedHour: Math.floor(args.through / HOUR_MS) * HOUR_MS,
+      bucketedThroughAt: args.through, onchainTrackingStartedAt: args.through, bucketRecentJson: "[]", recentHoursJson: "[]",
+      nextCheckAt: now, lastSuccessAt: now, lastAttemptAt: now, lastError: undefined,
+      revision: (row.revision ?? 0) + 1, updatedAt: now });
+    const cache = await ctx.db.query("platformStatsCache").withIndex("by_key", q => q.eq("key", "public")).unique();
+    if (cache) {
+      const rows = await ctx.db.query("tokenLifetimeVolumes").collect();
+      const summary = lifetimeVolumeSummary(rows.filter(r => r.enabled !== false));
+      await ctx.db.patch(cache._id, { lifetimeVolumeUsd: summary.totalUsd, lifetimeVolumeCoverage: summary.tokenCoverage,
+        marketUpdatedAt: now, computedAt: now });
+    }
+    await queueRefresh(ctx);
+    return { status: "repaired", token: row.tokenAddress, volumeUsd: args.confirmedVolumeUsd, through: args.through };
+  },
+});
+
 export const beginBackfillImport = mutation({
   args: { secret: v.string(), manifestId: v.string(), cutoffHour: v.number(), expectedSources: v.number() },
   handler: async (ctx, args) => {

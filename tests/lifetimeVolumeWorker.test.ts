@@ -59,6 +59,30 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(start); mocks.gecko.mock
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("one durable volume worker", () => {
+  it("repairs only a missing curve and is idempotent", async () => {
+    vi.stubEnv("MARKET_INDEX_SECRET", "repair-test");
+    try {
+      const f = fixture();
+      await f.add(1, { backfillComplete: false, revision: 3, lastError: "GeckoTerminal OHLCV empty; onchain historical backfill required" });
+      await f.add(2, { confirmedVolumeUsd: 99 });
+      const args = { secret: "repair-test", tokenAddress: addr(1), poolAddress: addr(101), expectedRevision: 3, through: Math.floor(start / HOUR_MS) * HOUR_MS - 1, confirmedVolumeUsd: 42 };
+      expect((await f.call("repairMissingCurveHistory", args)).status).toBe("repaired");
+      expect((await f.call("repairMissingCurveHistory", args)).status).toBe("already_repaired");
+      expect(f.tables.tokenLifetimeVolumes[0]).toMatchObject({ confirmedVolumeUsd: 42, volumeProvider: "onchain", backfillComplete: true, onchainTrackingStartedAt: args.through });
+      expect(f.tables.tokenLifetimeVolumes[1].confirmedVolumeUsd).toBe(99);
+      await expect(f.call("repairMissingCurveHistory", { ...args, secret: "wrong" })).rejects.toThrow("authorization");
+    } finally { vi.unstubAllEnvs(); }
+  });
+  it("rejects repairs over existing or concurrently changed history", async () => {
+    vi.stubEnv("MARKET_INDEX_SECRET", "repair-test");
+    try {
+      const f = fixture(); await f.add(1, { backfillComplete: false, revision: 4, lastError: "onchain historical backfill required" });
+      const args = { secret: "repair-test", tokenAddress: addr(1), poolAddress: addr(101), expectedRevision: 3, through: Math.floor(start / HOUR_MS) * HOUR_MS - 1, confirmedVolumeUsd: 42 };
+      await expect(f.call("repairMissingCurveHistory", args)).rejects.toThrow("curve changed");
+      await f.db.patch(f.tables.tokenLifetimeVolumes[0]._id, { revision: 3, confirmedVolumeUsd: 1 });
+      await expect(f.call("repairMissingCurveHistory", args)).rejects.toThrow("curve changed");
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("yields for a minute on local budget denial without escalating provider throttling", async () => {
     const f = fixture(); await f.add(1); const work = await f.begin();
     await f.db.patch(f.state()._id, { throttleCount: 26, discoveryAt: start });

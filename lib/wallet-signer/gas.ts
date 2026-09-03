@@ -4,6 +4,15 @@ const TOTAL_COST_PERCENT = 110n;
 // Applying 10% independently to both would silently become 21%.
 const GAS_UNITS_PERCENT = 104n;
 
+/** Recheck unusually expensive launches once, using the fresh quote even if
+ * it rises. Developer-buy principal is deliberately excluded from this test. */
+export async function recheckLaunchGas<T extends { estimatedGas: bigint; fees: { maxFeePerGas: bigint } }>(
+  first: T, launchFee: bigint | undefined, refresh: () => Promise<T>,
+): Promise<T> {
+  if (launchFee === undefined || launchFee + sendAllGasReserve(first.estimatedGas, first.fees.maxFeePerGas) <= 2_000_000_000_000_000n) return first;
+  return refresh();
+}
+
 type ActualFeeClient = {
   getBlock: () => Promise<{ baseFeePerGas?: bigint | null }>;
   estimateMaxPriorityFeePerGas: () => Promise<bigint>;
