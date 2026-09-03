@@ -6,7 +6,7 @@ import { createPublicClient, formatEther, formatUnits, isAddress, parseAbi, type
 import { api } from "@/convex/_generated/api";
 import { tokenUnitPriceUsd, type MarketInfrastructure } from "@/lib/token-market-cap";
 import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
-import { coinGeckoFetch } from "@/lib/coingecko-client";
+import { geckoTokenMarkets } from "@/lib/gecko-token-market";
 import { reliableHttp, retryingRpcFetch } from "@/lib/rpc-http";
 import { mergeWalletTokenHoldings, parseExplorerHoldings, walletBalanceTokens, type PublicHolding, type KnownWalletToken, type RpcTokenHoldings } from "./wallet-holdings";
 export type { PublicHolding } from "./wallet-holdings";
@@ -259,16 +259,9 @@ async function enrichHoldingDisplay(holdings: PublicHolding[], signal: AbortSign
     fetch("https://api.robinhood.com/rhj/assets", { next: { revalidate: 300 }, signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]) })
       .then(async (response) => response.ok ? (await response.json() as { assets?: StockAsset[] }).assets || [] : [])
       .catch(() => [] as StockAsset[]),
-    tokenAddresses.length ? coinGeckoFetch(`https://api.coingecko.com/api/v3/onchain/simple/networks/robinhood/token_price/${tokenAddresses.join(",")}`, {
-      signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]), cache: "no-store",
-    }).then(async response => {
-      if (!response.ok) return new Map<string, number>();
-      const payload = await response.json() as { data?: { attributes?: { token_prices?: Record<string, string> } } };
-      return new Map(Object.entries(payload.data?.attributes?.token_prices ?? {}).flatMap(([address, raw]) => {
-        const price = Number(raw);
-        return Number.isFinite(price) && price >= 0 ? [[address.toLowerCase(), price] as const] : [];
-      }));
-    }).catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
+    tokenAddresses.length ? geckoTokenMarkets(tokenAddresses, { ttlMs: 60_000, timeoutMs: 5_000, allowStale: true })
+      .then(markets => new Map([...markets].flatMap(([address, market]) => market.priceUsd === undefined ? [] : [[address, market.priceUsd] as const])))
+      .catch(() => new Map<string, number>()) : Promise.resolve(new Map<string, number>()),
   ]);
   const byAddress = new Map<string, StockAsset>();
   for (const asset of stockAssets) {

@@ -240,7 +240,10 @@ export async function discoverLiquidityPools(token: Address, budgetUsd?: number,
         diagnostics.add("ANALYSIS_TIME_BUDGET");
         break;
       }
-      const url = `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${token}/pools?page=${page}`;
+      // Paid CoinGecko returns the broadest indexed pool set. The shared client
+      // falls back to public GeckoTerminal and retained snapshots. Including an
+      // inactive source prevents a quiet but valid pool from disappearing.
+      const url = `https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${token}/pools?page=${page}&include_inactive_source=true`;
       // A fresh request is made only when the shared slot is available now.
       // Otherwise geckoSharedFetch returns the latest cached provider payload,
       // including after an upstream timeout. Never wait behind the shared

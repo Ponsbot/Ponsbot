@@ -895,6 +895,7 @@ export default defineSchema({
     ),
     volume24hUsd: v.optional(v.number()),
     volume24hUpdatedAt: v.optional(v.number()),
+    lastTradeAt: v.optional(v.number()),
     graduated: v.optional(v.boolean()),
     graduationUpdatedAt: v.optional(v.number()),
     poolFee: v.optional(v.number()),

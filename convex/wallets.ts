@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { geckoSharedFetch } from "../lib/gecko-shared";
+import { geckoTokenMarkets } from "../lib/gecko-token-market";
 import { terminalFeeReceipts } from "./lib/terminalFeeReceipts";
 import type { TerminalFeeReceipt } from "../lib/terminal-fee-receipt";
 import { internal } from "./_generated/api";
@@ -346,22 +346,10 @@ async function currentTokenUsdValue(
   const amount = Number(tradeDisplayAmount(tradeOutputDisplay));
   if (!Number.isFinite(amount) || amount <= 0) return undefined;
   try {
-    const response = await geckoSharedFetch(
-      `https://api.geckoterminal.com/api/v2/simple/networks/robinhood/token_price/${tokenAddress.toLowerCase()}`,
-      30_000, 4_000,
-    );
-    if (!response.ok) return undefined;
-    const payload = (await response.json()) as {
-      data?: { attributes?: { token_prices?: Record<string, string | null> } };
-    };
-    const prices = payload.data?.attributes?.token_prices || {};
-    const rawPrice =
-      prices[tokenAddress.toLowerCase()] ??
-      Object.entries(prices).find(
-        ([address]) => address.toLowerCase() === tokenAddress.toLowerCase(),
-      )?.[1];
-    if (typeof rawPrice !== "string" || !rawPrice.trim()) return undefined;
-    const price = Number(rawPrice);
+    const market = (await geckoTokenMarkets([tokenAddress], { ttlMs: 30_000, timeoutMs: 4_000, allowStale: true }))
+      .get(tokenAddress.toLowerCase());
+    const price = market?.priceUsd;
+    if (price === undefined) return undefined;
     return Number.isFinite(price) && price >= 0
       ? usdValueDisplay(amount * price)
       : undefined;
@@ -5306,7 +5294,7 @@ export const executeCommand = internalAction({
             throw new Error("wallet execution lease was lost after launch sponsorship");
           }
         }
-        workflowStage = "signer_submission";
+        workflowStage = `signer_submission_${command.kind}`;
         await ctx.runMutation(internal.wallets.updateWalletRequest, {
           requestId,
           status: "simulating",

@@ -2,9 +2,10 @@ import { v } from "convex/values";
 import { mutation, query, internalAction, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
-import { newerSnapshot, reserveProviderAttempt, snapshotFresh, WEBSITE_MARKET_TTL_MS, WEBSITE_REFRESH_LEASE_MS, WEBSITE_REFRESH_RETRY_MS } from "../lib/website-refresh-policy";
+import { newerSnapshot, reserveProviderAttempt, WEBSITE_REFRESH_LEASE_MS, WEBSITE_REFRESH_RETRY_MS } from "../lib/website-refresh-policy";
 import { COINGECKO_PAID_REQUESTS_PER_MINUTE, GECKO_REQUESTS_PER_MINUTE, coinGeckoMonthlyPaceRetryAt, geckoBudgetRetryAt, geckoRetryAt } from "../lib/gecko-budget-policy";
 import { activityDue, ACTIVITY_LEASE_MS } from "../lib/token-activity-policy";
+import { marketRefreshTtl } from "../lib/gecko-token-market";
 
 function authorize(secret: string) {
   if (!process.env.MARKET_INDEX_SECRET || secret !== process.env.MARKET_INDEX_SECRET) throw new Error("market data authorization failed");
@@ -40,8 +41,9 @@ export const acquire = mutation({
       const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", q => q.eq("normalizedTokenAddress", token)).unique();
       const capAt = Math.max(state?.marketCapUpdatedAt ?? 0, launch.publicMarketCapUpdatedAt ?? 0);
       const cap = (state?.marketCapUpdatedAt ?? 0) >= (launch.publicMarketCapUpdatedAt ?? 0) ? state?.marketCapUsd : launch.publicMarketCapUsd;
-      if (snapshotFresh(cap, capAt, now)) {
-        const fresh = { token, leaseId, leaseUntil: 0, retryAt: capAt + WEBSITE_MARKET_TTL_MS };
+      const refreshTtl = marketRefreshTtl(state?.lastTradeAt, now);
+      if (typeof cap === "number" && Number.isFinite(cap) && cap >= 0 && capAt > 0 && now - capAt < refreshTtl) {
+        const fresh = { token, leaseId, leaseUntil: 0, retryAt: capAt + refreshTtl };
         if (job) await ctx.db.patch(job._id, fresh); else await ctx.db.insert("websiteRefreshJobs", fresh);
         continue;
       }
@@ -68,6 +70,7 @@ export const acquire = mutation({
 
 const snapshot = v.object({ tokenAddress: v.string(), observedAt: v.number(), marketCapUsd: v.optional(v.number()),
   marketCapSource: v.optional(v.union(v.literal("gecko"), v.literal("onchain"))), volume24hUsd: v.optional(v.number()), volumeObservedAt: v.optional(v.number()),
+  lastTradeAt: v.optional(v.number()),
   graduated: v.optional(v.boolean()), poolFee: v.optional(v.number()), tickSpacing: v.optional(v.number()),
 });
 export const complete = mutation({
@@ -83,11 +86,12 @@ export const complete = mutation({
       const next = snapshots.find(s => s.tokenAddress.toLowerCase() === normalized);
       const valid = next && next.observedAt <= now && next.observedAt >= now - 120_000;
       const capValid = valid && next.marketCapUsd !== undefined && Number.isFinite(next.marketCapUsd) && next.marketCapUsd > 0;
-      await ctx.db.patch(job._id, { leaseUntil: 0, retryAt: capValid ? next.observedAt + WEBSITE_MARKET_TTL_MS : now + WEBSITE_REFRESH_RETRY_MS });
+      const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", q => q.eq("normalizedTokenAddress", normalized)).unique();
+      const refreshTtl = marketRefreshTtl(next?.lastTradeAt ?? state?.lastTradeAt, now);
+      await ctx.db.patch(job._id, { leaseUntil: 0, retryAt: capValid ? next.observedAt + refreshTtl : now + WEBSITE_REFRESH_RETRY_MS });
       if (!valid || isTokenIndexExcluded(normalized)) continue;
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", q => q.eq("normalizedTokenAddress", normalized)).unique();
       if (!launch?.publicPublished) continue;
-      const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", q => q.eq("normalizedTokenAddress", normalized)).unique();
       const cap = capValid && newerSnapshot(Math.max(state?.marketCapUpdatedAt ?? 0, launch.publicMarketCapUpdatedAt ?? 0), next.observedAt);
       const volumeAt = next.volumeObservedAt ?? next.observedAt;
       const volume = next.volume24hUsd !== undefined && Number.isFinite(next.volume24hUsd) && next.volume24hUsd >= 0 && volumeAt <= now && volumeAt >= now - 120_000
@@ -96,6 +100,7 @@ export const complete = mutation({
       const graduated = state?.graduated === true || launch.publicGraduated === true || next.graduated === true;
       const fields = { ...(cap ? { marketCapUsd: next.marketCapUsd, marketCapUpdatedAt: next.observedAt, marketCapSource: next.marketCapSource } : {}),
         ...(volume ? { volume24hUsd: next.volume24hUsd, volume24hUpdatedAt: volumeAt } : {}),
+        ...(next.lastTradeAt !== undefined && Number.isFinite(next.lastTradeAt) && next.lastTradeAt <= now + 60_000 ? { lastTradeAt: next.lastTradeAt } : {}),
         ...(phase ? { graduated, graduationUpdatedAt: next.observedAt, graduationCheckedAt: next.observedAt,
           ...(next.poolFee === undefined ? {} : { poolFee: next.poolFee }), ...(next.tickSpacing === undefined ? {} : { tickSpacing: next.tickSpacing }) } : {}),
       };
@@ -150,7 +155,8 @@ export const recordCatalog = mutation({
         && newerSnapshot(Math.max(state?.volume24hUpdatedAt ?? 0, launch.publicVolume24hUpdatedAt ?? 0), next.observedAt);
       if (!cap && !volume) continue;
       const fields = { ...(cap ? { marketCapUsd: next.marketCapUsd, marketCapUpdatedAt: next.observedAt, marketCapSource: "gecko" as const } : {}),
-        ...(volume ? { volume24hUsd: next.volume24hUsd, volume24hUpdatedAt: next.observedAt } : {}) };
+        ...(volume ? { volume24hUsd: next.volume24hUsd, volume24hUpdatedAt: next.observedAt } : {}),
+        ...(next.lastTradeAt !== undefined && Number.isFinite(next.lastTradeAt) && next.lastTradeAt <= now + 60_000 ? { lastTradeAt: next.lastTradeAt } : {}) };
       if (state) await ctx.db.patch(state._id, { ...fields, updatedAt: now });
       else await ctx.db.insert("tokenMarketState", { tokenAddress: token, normalizedTokenAddress: token, ...fields, updatedAt: now });
       await ctx.db.patch(launch._id, {

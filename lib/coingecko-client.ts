@@ -7,6 +7,13 @@ export function coinGeckoPaidKey() {
   return process.env.COINGECKO_PRO_API_KEY?.trim() || undefined;
 }
 
+/** Endpoints CoinGecko currently reserves for Analyst and higher. Keep Basic
+ * deployments on their established pool/RPC paths without spending calls on
+ * predictable entitlement failures. */
+export function coinGeckoAnalystOnchainEnabled() {
+  return /^(1|true|yes|on)$/i.test(process.env.COINGECKO_ANALYST_ONCHAIN_ENABLED?.trim() ?? "");
+}
+
 export function paidCoinGeckoUrl(freeUrl: string) {
   if (freeUrl.startsWith(FREE_ONCHAIN)) return PAID_ONCHAIN + freeUrl.slice(FREE_ONCHAIN.length);
   if (freeUrl.startsWith(FREE_API)) return PAID_API + freeUrl.slice(FREE_API.length);

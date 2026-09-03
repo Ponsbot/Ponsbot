@@ -3,6 +3,7 @@ import type { FunctionReturnType } from "convex/server";
 import { createPublicClient, http, parseAbi, parseAbiItem, formatUnits, isAddress, zeroAddress, type Address, type Hash } from "viem";
 import { api } from "../convex/_generated/api";
 import { geckoSharedFetch } from "./gecko-shared";
+import { coinGeckoAnalystOnchainEnabled } from "./coingecko-client";
 import { mapWithConcurrency } from "./bounded-concurrency";
 import { holderTag } from "./holder-tags";
 import { ponsV4PoolId } from "./lifetime-volume";
@@ -104,24 +105,43 @@ export async function refreshTokenActivity(client: ConvexHttpClient, secret: str
   }
 
   if (kind === "trades") {
-    const [metadataResult, poolResult, indexResult] = await Promise.allSettled([
-      metadata(), pools(), client.query(api.site.tokenActivity, { tokenAddress: token, limit: 100 }),
+    const [metadataResult, indexResult] = await Promise.allSettled([
+      metadata(), client.query(api.site.tokenActivity, { tokenAddress: token, limit: 100 }),
     ]);
     const meta = metadataResult.status === "fulfilled" ? metadataResult.value : undefined;
-    const selected = poolResult.status === "fulfilled" ? poolResult.value : [];
-    if (!selected.length && launch.poolAddress && POOL.test(launch.poolAddress)) selected.push(launch.poolAddress.toLowerCase());
     const supply = meta ? positiveNumber(formatUnits(BigInt(meta.supply), meta.decimals)) : undefined;
     let geckoGood = false;
     const geckoRows: PageTrade[] = [];
-    await mapWithConcurrency(selected, 2, async pool => {
-      try {
-        const response = await geckoSharedFetch(`${GECKO}/pools/${pool}/trades`, 60_000, 4_000, true);
-        const payload = response.ok ? await response.json() : null;
-        if (!Array.isArray(payload?.data)) return;
-        if (response.headers.get("x-market-stale") !== "1") geckoGood = true;
-        geckoRows.push(...normalizeGeckoTrades(payload.data, token, supply).map(row => ({ ...row, pool })));
-      } catch { /* Other venues and the public recent tail remain independent. */ }
-    });
+    let selected: string[] = [];
+    // Paid token-wide trades cover every indexed venue in one request. If the
+    // endpoint or entitlement is unavailable, retain the former pool discovery
+    // and per-pool public GeckoTerminal path below.
+    try {
+      if (!coinGeckoAnalystOnchainEnabled()) throw new Error("token-wide trades unavailable on configured plan");
+      const response = await geckoSharedFetch(`${GECKO}/tokens/${token}/trades`, 60_000, 6_000, true, false,
+        undefined, "interactive", "paid");
+      const payload = response.ok ? await response.json() : null;
+      if (Array.isArray(payload?.data)) {
+        geckoGood = response.headers.get("x-market-stale") !== "1";
+        geckoRows.push(...normalizeGeckoTrades(payload.data, token, supply).map(row => {
+          const source = payload.data.find((item: GeckoTrade) => (item.id || "") === row.id)?.attributes?.pool_address;
+          return typeof source === "string" && POOL.test(source) ? { ...row, pool: source.toLowerCase() } : row;
+        }));
+      }
+    } catch { /* Public pool fallback below. */ }
+    if (!geckoRows.length) {
+      selected = await pools().catch(() => []);
+      if (!selected.length && launch.poolAddress && POOL.test(launch.poolAddress)) selected.push(launch.poolAddress.toLowerCase());
+      await mapWithConcurrency(selected, 2, async pool => {
+        try {
+          const response = await geckoSharedFetch(`${GECKO}/pools/${pool}/trades`, 60_000, 4_000, true);
+          const payload = response.ok ? await response.json() : null;
+          if (!Array.isArray(payload?.data)) return;
+          if (response.headers.get("x-market-stale") !== "1") geckoGood = true;
+          geckoRows.push(...normalizeGeckoTrades(payload.data, token, supply).map(row => ({ ...row, pool })));
+        } catch { /* Onchain recent tail remains independent. */ }
+      });
+    }
     const indexed: PageTrade[] = indexResult.status === "fulfilled" ? indexResult.value.filter(r => r.kind !== "burn").map(r => ({
       id: `${r.transactionHash}:${r.logIndex}`, transactionHash: r.transactionHash, logIndex: r.logIndex,
       kind: r.kind as "buy" | "sell", walletAddress: r.walletAddress, tokenAmount: r.tokenAmount, timestamp: r.timestamp,

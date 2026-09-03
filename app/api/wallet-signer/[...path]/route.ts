@@ -42,7 +42,7 @@ function errorResponse(error: unknown) {
       ? error.message
       : String(error);
 
-  const diagnosticCode = message === "nothing to sweep" ? "EMPTY_CURVE_SWEEP" : /^(?:LP_|LIQUIDITY_|DELTA_)[A-Z0-9_]+/.exec(message)?.[0] || (/insufficient|exceeds the balance/i.test(message) ? "INSUFFICIENT_FUNDS"
+  const diagnosticCode = message === "nothing to sweep" ? "EMPTY_CURVE_SWEEP" : /^(?:LP_|LIQUIDITY_|DELTA_|V3_ROUTE_)[A-Z0-9_]+/.exec(message)?.[0] || (/insufficient|exceeds the balance/i.test(message) ? "INSUFFICIENT_FUNDS"
     : /no claimable creator fees/i.test(message) ? "NO_CLAIMABLE_CREATOR_FEES"
       : /creator fee recipient|fee beneficiary/i.test(message) ? "CREATOR_FEE_AUTHORIZATION_FAILED"
         : /simulation|revert/i.test(message) ? "SIMULATION_OR_REVERT"
@@ -56,7 +56,8 @@ function errorResponse(error: unknown) {
     diagnosticDetail,
   });
 
-  const safe = message === "nothing to sweep" || /LP_INSUFFICIENT_FUNDING|LP_INSUFFICIENT_GAS|DELTA_PARTIAL_WITHDRAWAL_UNVERIFIED|DELTA_COMPOUNDING_UNVERIFIED|DELTA_NATIVE_ADD_UNVERIFIED|insufficient|slippage|revert|allowance|balance|gas|limit|mismatch|not found|no completed Pons launch|not the launch creator|creator fee|claimable|paired asset|confirmation|unsupported token|quote returned no output/i.test(message)
+  const safe = diagnosticCode === "V3_ROUTE_NO_QUOTE" ? "quote returned no output"
+    : message === "nothing to sweep" || /LP_INSUFFICIENT_FUNDING|LP_INSUFFICIENT_GAS|DELTA_PARTIAL_WITHDRAWAL_UNVERIFIED|DELTA_COMPOUNDING_UNVERIFIED|DELTA_NATIVE_ADD_UNVERIFIED|insufficient|slippage|revert|allowance|balance|gas|limit|mismatch|not found|no completed Pons launch|not the launch creator|creator fee|claimable|paired asset|confirmation|unsupported token|quote returned no output/i.test(message)
     ? redactSignerDiagnostic(message, 240)
     : "wallet signer request failed";
   return NextResponse.json({ error: safe, diagnosticCode, diagnosticDetail }, { status: 400 });

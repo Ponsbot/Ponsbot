@@ -7,10 +7,11 @@ import { mapWithConcurrency } from "./bounded-concurrency";
 import { ponsV4PoolId } from "./lifetime-volume";
 import { quoteDetails } from "./token-market-cap";
 import { WEBSITE_METADATA_TTL_MS } from "./website-refresh-policy";
+import { geckoTokenMarkets } from "./gecko-token-market";
 
 type Rpc = ReturnType<typeof createPublicClient>;
 export type WebsiteMarketTarget = { tokenAddress: string; curveAddress: string; pairToken: string; graduated: boolean; poolFee?: number; tickSpacing?: number };
-export type WebsiteSnapshot = { tokenAddress: string; observedAt: number; marketCapUsd?: number; marketCapSource?: "gecko" | "onchain"; volume24hUsd?: number; volumeObservedAt?: number; graduated?: boolean; poolFee?: number; tickSpacing?: number };
+export type WebsiteSnapshot = { tokenAddress: string; observedAt: number; marketCapUsd?: number; marketCapSource?: "gecko" | "onchain"; volume24hUsd?: number; volumeObservedAt?: number; lastTradeAt?: number; graduated?: boolean; poolFee?: number; tickSpacing?: number };
 const factoryAbi = parseAbi([
   "function getLaunchedToken(address token) view returns ((address token,address curve,address deployer,address creatorFeeRecipient,address pairToken,uint256 graduationThreshold,uint24 poolFee,int24 tickSpacing,uint16 creatorTaxBps,bool buybackEnabled,uint8 phase,uint256 sweptQuote,uint256 sweptTokens,uint256 sweptAt,bool exists))",
   "function memeHook() view returns(address)",
@@ -105,7 +106,21 @@ export async function refreshWebsiteMarkets(client: ConvexHttpClient, secret: st
       pools.set(pool.toLowerCase(), token);
     } catch { /* Missing pool configuration does not discard other tokens. */ }
   });
-  const poolIds = [...pools.keys()].sort();
+  // Token-level batching supplies price/cap/volume/activity in one request and
+  // follows the active venue after migrations. Pool data remains the fallback.
+  const tokenMarkets = await geckoTokenMarkets([...resolved.keys()], { allowStale: true }).catch(() => new Map());
+  for (const [token, market] of tokenMarkets) {
+    snapshots.set(token, { ...snapshots.get(token), tokenAddress: token, observedAt: market.observedAt,
+      ...(market.marketCapUsd === undefined ? {} : { marketCapUsd: market.marketCapUsd, marketCapSource: "gecko" }),
+      ...(market.volume24hUsd === undefined ? {} : { volume24hUsd: market.volume24hUsd, volumeObservedAt: market.observedAt }),
+      ...(market.lastTradeAt === undefined ? {} : { lastTradeAt: market.lastTradeAt }),
+    });
+  }
+  const fallbackTokens = new Set([...resolved.keys()].filter(token => {
+    const snapshot = snapshots.get(token);
+    return snapshot?.marketCapUsd === undefined || snapshot.volume24hUsd === undefined;
+  }));
+  const poolIds = [...pools.entries()].filter(([, token]) => fallbackTokens.has(token)).map(([pool]) => pool).sort();
   if (poolIds.length) {
     const response = await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/pools/multi/${poolIds.join(",")}`).catch(() => undefined);
     const payload = response?.ok ? await response.json().catch(() => undefined) as { data?: Array<{ attributes?: { address?: string; market_cap_usd?: string | null; fdv_usd?: string | null; volume_usd?: { h24?: string } } }> } | undefined : undefined;
@@ -116,9 +131,10 @@ export async function refreshWebsiteMarkets(client: ConvexHttpClient, secret: st
       const cap = geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd);
       const rawVolume = pool.attributes?.volume_usd?.h24;
       const volume = rawVolume === undefined || rawVolume === null || rawVolume === "" ? NaN : Number(rawVolume);
-      snapshots.set(token, { ...snapshots.get(token), tokenAddress: token, observedAt,
-        ...(cap === undefined ? {} : { marketCapUsd: cap, marketCapSource: "gecko" }),
-        ...(Number.isFinite(volume) && volume >= 0 ? { volume24hUsd: volume, volumeObservedAt: observedAt } : {}),
+      const existing = snapshots.get(token);
+      snapshots.set(token, { ...existing, tokenAddress: token, observedAt: Math.max(existing?.observedAt ?? 0, observedAt),
+        ...(existing?.marketCapUsd !== undefined || cap === undefined ? {} : { marketCapUsd: cap, marketCapSource: "gecko" }),
+        ...(existing?.volume24hUsd !== undefined || !Number.isFinite(volume) || volume < 0 ? {} : { volume24hUsd: volume, volumeObservedAt: observedAt }),
       });
     }
   }

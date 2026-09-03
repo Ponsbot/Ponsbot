@@ -1755,9 +1755,11 @@ async function bestV3Route(tokenIn: Address, tokenOut: Address, quoter: Address,
   // A cached path is a route hint, never a cached quote. Re-quote it against
   // current chain state for every transaction and only skip discovery when it
   // still returns a live positive output.
+  let cachedFailure: string | undefined;
   if (cachedPath) {
-    const cachedQuote = await quoteV3Path(cachedPath, quoter, amountIn);
-    if (cachedQuote) return cachedQuote;
+    const cachedAttempt = await quoteV3Path(cachedPath, quoter, amountIn);
+    if (cachedAttempt.quote) return cachedAttempt.quote;
+    cachedFailure = cachedAttempt.failure;
     routeCache.delete(cacheKey);
   }
 
@@ -1772,13 +1774,32 @@ async function bestV3Route(tokenIn: Address, tokenOut: Address, quoter: Address,
     }
   }
   const uniqueCandidates = [...new Set(candidates)].filter((path) => path !== cachedPath);
-  const quoted: Array<{ path: Hex; amountOut: bigint } | undefined> = [];
+  const quoted: Array<{ quote?: { path: Hex; amountOut: bigint }; failure?: string }> = [];
   for (let offset = 0; offset < uniqueCandidates.length; offset += 5) {
     quoted.push(...await Promise.all(uniqueCandidates.slice(offset, offset + 5).map((path) => quoteV3Path(path, quoter, amountIn))));
   }
-  const best = quoted.filter((item): item is { path: Hex; amountOut: bigint } => Boolean(item))
+  const best = quoted.flatMap(item => item.quote ? [item.quote] : [])
     .reduce<{ path: Hex; amountOut: bigint } | undefined>((current, item) => !current || item.amountOut > current.amountOut ? item : current, undefined);
-  if (!best) throw new Error("quote returned no output");
+  if (!best) {
+    const failures = quoted.reduce<Record<string, number>>((counts, item) => {
+      const reason = item.failure || "unknown";
+      counts[reason] = (counts[reason] || 0) + 1;
+      return counts;
+    }, {});
+    const direct = uniqueCandidates.filter(path => path.length === 88).length;
+    const detail = [
+      "V3_ROUTE_NO_QUOTE",
+      `token_in=${tokenIn.toLowerCase()}`,
+      `token_out=${tokenOut.toLowerCase()}`,
+      `amount_in=${amountIn}`,
+      `candidates=${uniqueCandidates.length}`,
+      `direct=${direct}`,
+      `via_usdg=${Math.max(0, uniqueCandidates.length - direct)}`,
+      `failures=${Object.entries(failures).sort().map(([reason, count]) => `${reason}:${count}`).join(",") || "none"}`,
+      ...(cachedFailure ? [`cached_route=${cachedFailure}`] : []),
+    ].join(" ");
+    throw new Error(detail);
+  }
   routeCache.set(cacheKey, { path: best.path, expiresAt: Date.now() + ROUTE_MEMORY_CACHE_MS });
   await rememberWalletExecutionCache(cacheKey, "v3_route", { path: best.path }, ROUTE_SHARED_CACHE_MS);
   return best;
@@ -1789,8 +1810,18 @@ async function quoteV3Path(path: Hex, quoter: Address, amountIn: bigint) {
     const result = await rpcClient().simulateContract({
       address: quoter, abi: quoterAbi, functionName: "quoteExactInput", args: [path, amountIn],
     });
-    return result.result[0] > 0n ? { path, amountOut: result.result[0] } : undefined;
-  } catch { return undefined; }
+    return result.result[0] > 0n
+      ? { quote: { path, amountOut: result.result[0] } }
+      : { failure: "zero_output" };
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name} ${error.message}` : String(error);
+    const failure = /timeout|timed out|abort/i.test(message) ? "rpc_timeout"
+      : /429|rate.?limit|too many requests/i.test(message) ? "rpc_rate_limited"
+        : /revert/i.test(message) ? "quote_reverted"
+          : /network|fetch|transport|socket/i.test(message) ? "rpc_transport"
+            : "quote_call_failed";
+    return { failure };
+  }
 }
 
 async function inputForTokenTarget(target: bigint, seed: bigint, quote: (amountIn: bigint) => Promise<bigint>) {

@@ -620,10 +620,23 @@ export const runRefreshBatch = internalAction({
             break;
           }
           if (!response.ok) throw new Error(`GeckoTerminal OHLCV ${response.status}`);
-          const payload = await response.json() as { data?: { attributes?: { ohlcv_list?: unknown } } };
+          let payload = await response.json() as { data?: { attributes?: { ohlcv_list?: unknown } } };
           if (!Array.isArray(payload.data?.attributes?.ohlcv_list)) throw new Error("GeckoTerminal OHLCV invalid response");
-          const candles = parseOhlcvCandles(payload.data.attributes.ohlcv_list);
+          let candles = parseOhlcvCandles(payload.data.attributes.ohlcv_list);
           if (payload.data.attributes.ohlcv_list.length && !candles.length) throw new Error("GeckoTerminal OHLCV invalid candles");
+          // A migrated pool can briefly disappear from the pool endpoint while
+          // CoinGecko still has token-level OHLCV for its most liquid venue.
+          // Use that only for an empty V4 result; bonding-curve accounting and
+          // every non-empty pool history keep their exact source identity.
+          if (!candles.length && candidate.source === "v4_pool"
+            && /^(1|true|yes|on)$/i.test(process.env.COINGECKO_ANALYST_ONCHAIN_ENABLED?.trim() ?? "")) {
+            const tokenUrl = `https://api.geckoterminal.com/api/v2/networks/${NETWORK}/tokens/${candidate.tokenAddress.toLowerCase()}/ohlcv/hour?aggregate=1&before_timestamp=${before}&limit=${candleLimit}&currency=usd&include_inactive_source=true`;
+            const tokenResponse = await geckoSharedFetch(tokenUrl, 60_000, 15_000, false, true, undefined, "background", "paid", "lifetime_volume");
+            if (tokenResponse.ok) {
+              payload = await tokenResponse.json() as { data?: { attributes?: { ohlcv_list?: unknown } } };
+              if (Array.isArray(payload.data?.attributes?.ohlcv_list)) candles = parseOhlcvCandles(payload.data.attributes.ohlcv_list);
+            }
+          }
           if (!candidate.backfillComplete && candles.length === 0) {
             throw new Error("GeckoTerminal OHLCV empty; onchain historical backfill required");
           }
