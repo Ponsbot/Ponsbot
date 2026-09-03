@@ -4,6 +4,7 @@ import { internalMutation, internalQuery, type MutationCtx } from "./_generated/
 import type { Doc, Id } from "./_generated/dataModel";
 import { automatedFeeEngineConfiguration, automatedFeeProcessingAllowed, type AutomatedFeeEngineEnvironment } from "../lib/automated-fee-policy";
 import { FEE_WORKERS, FEE_WORK_LEASE_MS, nextFeeCheck } from "../lib/automated-fee-scheduling";
+import { automatedFeeRejectedPreBroadcastStage } from "../lib/automated-fee-workflow";
 
 const enabled = () => automatedFeeProcessingAllowed(automatedFeeEngineConfiguration(process.env as AutomatedFeeEngineEnvironment));
 const activeStatuses = ["reserved", "submitted", "uncertain", "deferred"] as const;
@@ -85,6 +86,40 @@ export const dispatch = internalMutation({
     const heartbeat = { lastStartedAt: now, lastCompletedAt: now, lastStatus: "completed" as const, updatedAt: now };
     if (engine) await ctx.db.patch(engine._id, heartbeat);
     else await ctx.db.insert("automatedFeeEngineState", { key: "ponsbot-automated-buyback-burn-v1", ...heartbeat });
+    // A base-fee spike can invalidate a signed envelope before the RPC accepts
+    // it. There is no possible onchain transaction in this exact state, so it
+    // is safe to discard that envelope and prepare a new one. Recover it here
+    // automatically; otherwise its unconfirmed hash conservatively blocks the
+    // shared keeper and every unrelated fee cycle.
+    const oldPreBroadcastReviews = await ctx.db.query("automatedFeeRuns")
+      .withIndex("by_status_next_retry", q => q.eq("status", "manual_review")).take(20);
+    for (const run of oldPreBroadcastReviews) {
+      const stage = automatedFeeRejectedPreBroadcastStage(run.diagnosticDetail ?? "");
+      if (!stage) continue;
+      const hash = stage === "sweep" ? run.sweepTransactionHash
+        : stage === "processing" ? run.processingTransactionHash : run.deliveryTransactionHash;
+      const broadcastAt = stage === "sweep" ? run.sweepBroadcastAt
+        : stage === "processing" ? run.processingBroadcastAt : run.deliveryBroadcastAt;
+      const blockNumber = stage === "sweep" ? run.sweepBlockNumber
+        : stage === "processing" ? run.processingBlockNumber : run.deliveryBlockNumber;
+      if (!hash || broadcastAt !== undefined || blockNumber !== undefined) continue;
+      const stagePatch = stage === "sweep" ? {
+        sweepTransactionHash: undefined, sweepSignedTransaction: undefined, sweepTransactionNonce: undefined,
+        sweepPreparedAt: undefined,
+      } : stage === "processing" ? {
+        transactionHash: undefined, processingTransactionHash: undefined, processingSignedTransaction: undefined,
+        processingTransactionNonce: undefined, processingPreparedAt: undefined,
+      } : {
+        deliveryTransactionHash: undefined, deliverySignedTransaction: undefined, deliveryTransactionNonce: undefined,
+        deliveryPreparedAt: undefined,
+      };
+      await ctx.db.patch(run._id, { ...stagePatch, status: "deferred", workflowStage: `${stage}_reprepare_required`,
+        nextRetryAt: now, diagnosticCode: "AUTOMATED_FEE_FEE_ENVELOPE_REPREPARE", diagnosticDetail: undefined,
+        leaseId: undefined, leaseUntil: undefined, updatedAt: now });
+      const program = await ctx.db.get(run.programId);
+      if (program) await ctx.db.patch(program._id, { status: "enrolled", workState: "waiting", workRunId: run._id,
+        workDueAt: now, nextProcessAt: now, processingDiagnosticCode: "RPC_RETRY", updatedAt: now });
+    }
     // Backward-compatible recovery for pre-queue runs and lost continuations.
     // Never create a replacement run or sign a replacement transaction here.
     for (const status of activeStatuses) {

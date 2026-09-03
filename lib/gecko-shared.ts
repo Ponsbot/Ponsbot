@@ -14,7 +14,14 @@ export type GeckoProvider = "auto" | "paid" | "free";
 export type GeckoWorkload = "lifetime_volume";
 export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 8_000, allowStale = false, waitForSlot = false, freshAfter?: number, priority: GeckoPriority = "background", provider: GeckoProvider = "auto", workload?: GeckoWorkload): Promise<Response> {
   if (!url.startsWith(COINGECKO_FREE_ONCHAIN_PREFIX)) throw new Error("invalid Gecko URL");
-  const paid = provider !== "free" && Boolean(coinGeckoPaidKey());
+  const paidKey = coinGeckoPaidKey();
+  // Explicit paid-only workloads must never silently fall back to the public
+  // GeckoTerminal endpoint. That masks a deployment configuration problem as
+  // provider throttling and can leave background workers in repeated cooldowns.
+  if (provider === "paid" && !paidKey) {
+    return new Response(null, { status: 503, headers: { "x-gecko-configuration-error": "missing-paid-key" } });
+  }
+  const paid = provider !== "free" && Boolean(paidKey);
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL || process.env.CONVEX_URL;
   const secret = process.env.MARKET_INDEX_SECRET;
   if (!convexUrl || !secret) return new Response(null, { status: 503 });

@@ -14,15 +14,14 @@ it("only enables the wallet-balance exclusion on explicit true", () => {
   vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false"); expect(walletBalanceReadsExcluded()).toBe(false);
   vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "true"); expect(walletBalanceReadsExcluded()).toBe(true);
 });
-it("supports independent and combined verified-only filtering", () => {
+it("keeps the retired verified-only setting and query argument inert", () => {
   vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "false");
   vi.stubEnv("X_READ_VERIFIED_ONLY", "true");
-  expect(verifiedXReadsOnly()).toBe(true);
-  expect(restrictedXIntakeEnabled()).toBe(true);
-  expect(restrictedXSearchQuery(false, true)).toBe("(@ponsbotfamily OR to:ponsbotfamily) is:verified -is:retweet -from:ponsbotfamily");
-  expect(restrictedXSearchQuery(true, true)).toContain("-wallet -balance is:verified");
-  expect(intakeSourceTransition("filtered_wallet_balance", true, Date.now(), true)?.intakeSource).toBe("filtered_wallet_balance_verified");
-  expect(intakeSourceTransition("filtered_wallet_balance_verified", true, Date.now(), false)?.intakeSource).toBe("filtered_wallet_balance");
+  expect(verifiedXReadsOnly()).toBe(false);
+  expect(restrictedXIntakeEnabled()).toBe(false);
+  expect(restrictedXSearchQuery(false, true)).toBe("(@ponsbotfamily OR to:ponsbotfamily) -is:retweet -from:ponsbotfamily");
+  expect(restrictedXSearchQuery(true, true)).toContain("-wallet -balance -is:retweet");
+  expect(intakeSourceTransition("filtered_wallet_balance_verified", true, Date.now(), true)?.intakeSource).toBe("filtered_wallet_balance");
 });
 it("excludes wallet and balance at API level while preserving direct reply discovery", () => {
   expect(restrictedXSearchQuery()).toBe("(@ponsbotfamily OR to:ponsbotfamily) -wallet -balance -is:retweet -from:ponsbotfamily");
@@ -50,10 +49,10 @@ it("supports a standalone exact phrase filter without excluding other wallet or 
 });
 it("resets endpoint pagination when the phrase filter changes, including alongside broader restrictions", () => {
   const changed = intakeSourceTransition("filtered_wallet_balance_verified", true, Date.now(), true, [], true)!;
-  expect(changed.intakeSource).toBe("filtered_wallet_balance_verified_no_show_my_wallet");
+  expect(changed.intakeSource).toBe("filtered_wallet_balance_no_show_my_wallet");
   expect(changed.backlogPaginationToken).toBeUndefined();
   expect(intakeSourceTransition(changed.intakeSource, true, Date.now(), true, [], true)).toBeUndefined();
   expect(intakeSourceTransition(changed.intakeSource, true, Date.now(), true, [], false)).toBeDefined();
   expect(intakeSourceTransition(undefined, false, Date.now(), false, [], true)?.intakeSource).toBe("filtered_no_show_my_wallet");
-  expect(restrictedXSearchQuery(true, true, [], true).length).toBeLessThanOrEqual(512);
+  expect(restrictedXSearchQuery(true, true, [], true)).not.toContain("is:verified");
 });

@@ -87,8 +87,8 @@ describe("automatic X intake spike policy", () => {
     vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", String(wallet));
     vi.stubEnv("X_READ_VERIFIED_ONLY", String(verified));
     vi.stubEnv("X_READ_EXCLUDED_COUNTRIES", "IN,BD");
-    expect(effectiveXIntakeFilters(both)).toEqual({ excludeWalletBalance: true, verifiedOnly: true, countries: [], excludeShowMyWallet: false, restricted: true });
-    expect(effectiveXIntakeFilters(none)).toEqual({ excludeWalletBalance: wallet, verifiedOnly: verified, countries: [], excludeShowMyWallet: false, restricted: wallet || verified });
+    expect(effectiveXIntakeFilters(both)).toEqual({ excludeWalletBalance: true, verifiedOnly: false, countries: [], excludeShowMyWallet: false, restricted: true });
+    expect(effectiveXIntakeFilters(none)).toEqual({ excludeWalletBalance: wallet, verifiedOnly: false, countries: [], excludeShowMyWallet: false, restricted: wallet });
     expect(process.env.X_READ_EXCLUDE_WALLET_BALANCE).toBe(String(wallet));
   });
 });
@@ -110,7 +110,7 @@ describe("independent automatic filter ownership", () => {
     const expired = advance(first.state, now + HOLD, [], true, manual);
     expect(expired.filters).toEqual(none);
     vi.stubEnv(key === "verifiedOnly" ? "X_READ_VERIFIED_ONLY" : "X_READ_EXCLUDE_WALLET_BALANCE", "true");
-    expect(effectiveXIntakeFilters(expired.filters)).toMatchObject(manual);
+    expect(effectiveXIntakeFilters(expired.filters)).toMatchObject({ excludeWalletBalance: manual.excludeWalletBalance, verifiedOnly: false });
   });
   it.each(keys)("manual takeover of %s relinquishes only that overlay", key => {
     const other = key === "verifiedOnly" ? "excludeWalletBalance" : "verifiedOnly";
@@ -150,7 +150,7 @@ describe("independent automatic filter ownership", () => {
     vi.stubEnv("X_READ_EXCLUDED_COUNTRIES", "IN,BD");
     const stopped = advance(first.state, now + 1, [], false, { ...none, verifiedOnly: true });
     for (const key of keys) expect(stopped.state?.[key]?.ownedUntil).toBeUndefined();
-    expect(effectiveXIntakeFilters(stopped.filters)).toEqual({ excludeWalletBalance: false, verifiedOnly: true, countries: [], excludeShowMyWallet: false, restricted: true });
+    expect(effectiveXIntakeFilters(stopped.filters)).toEqual({ excludeWalletBalance: false, verifiedOnly: false, countries: [], excludeShowMyWallet: false, restricted: false });
   });
 });
 
@@ -173,11 +173,8 @@ describe("durable poll integration (no X/network calls)", () => {
       vi.mocked(Date.now).mockReturnValue(time);
       f.row.leaseUntil = time + 60_000;
       const ready = await handler(preparePollSource)(f.ctx, {});
-      expect(ready.effectiveFilters).toMatchObject(both);
-      expect(f.row.intakeSpikeGuard).toBeUndefined();
-      expect(f.row.backlogPaginationToken).toBe("existing-page");
+      expect(ready.effectiveFilters).toMatchObject({ excludeWalletBalance: true, verifiedOnly: false });
     }
-    expect(f.ctx.db.patch).not.toHaveBeenCalled();
     expect(f.ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });
   it.each(["excludeWalletBalance", "verifiedOnly"] as const)("keeps manual %s search when only the auto filter expires", async key => {
@@ -189,8 +186,8 @@ describe("durable poll integration (no X/network calls)", () => {
     vi.mocked(Date.now).mockReturnValue(now + HOLD);
     f.row.leaseUntil = now + HOLD + 60_000;
     const expired = await handler(preparePollSource)(f.ctx, {});
-    expect(expired.effectiveFilters).toMatchObject({ ...none, [key]: true });
-    expect(f.row.intakeSource).toBe(key === "verifiedOnly" ? "filtered_verified" : "filtered_wallet_balance");
+    expect(expired.effectiveFilters).toMatchObject({ excludeWalletBalance: key === "excludeWalletBalance", verifiedOnly: false });
+    expect(f.row.intakeSource).toBe(key === "verifiedOnly" ? "mentions" : "filtered_wallet_balance");
   });
   it("disabled observation touches no live state and manual filters get no expiry", async () => {
     vi.stubEnv("X_READ_EXCLUDE_WALLET_BALANCE", "true");
@@ -199,20 +196,19 @@ describe("durable poll integration (no X/network calls)", () => {
     await handler(observeIntakeTraffic)(f.ctx, { postIds: posts(100) });
     expect(f.ctx.db.query).not.toHaveBeenCalled();
     const ready = await handler(preparePollSource)(f.ctx, {});
-    expect(ready.effectiveFilters.verifiedOnly).toBe(true);
+    expect(ready.effectiveFilters.verifiedOnly).toBe(false);
     expect(f.row.intakeSpikeGuard).toBeUndefined();
-    expect(f.ctx.db.patch).not.toHaveBeenCalled();
     expect(f.ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });
   it("switches API search filters, drops endpoint pagination and restores baseline after the hold", async () => {
     vi.stubEnv("X_AUTO_INTAKE_GUARD_ENABLED", "true");
     const f = fixture({ intakeSource: "mentions", backlogPaginationToken: "mentions-page" });
     const active = await handler(observeIntakeTraffic)(f.ctx, { postIds: posts(60) });
-    expect(active).toMatchObject({ excludeWalletBalance: true, verifiedOnly: true });
+    expect(active).toMatchObject({ excludeWalletBalance: true, verifiedOnly: false });
     const prepared = await handler(preparePollSource)(f.ctx, {});
     expect(restrictedXSearchQuery(prepared.effectiveFilters.excludeWalletBalance, prepared.effectiveFilters.verifiedOnly))
-      .toContain(" -wallet -balance is:verified");
-    expect(f.row.intakeSource).toBe("filtered_wallet_balance_verified");
+      .toContain(" -wallet -balance -is:retweet");
+    expect(f.row.intakeSource).toBe("filtered_wallet_balance");
     expect(f.row.backlogPaginationToken).toBeUndefined();
     expect(f.row.intakeSpikeGuard.excludeWalletBalance.ownedUntil).toBe(now + HOLD);
     vi.mocked(Date.now).mockReturnValue(now + HOLD);

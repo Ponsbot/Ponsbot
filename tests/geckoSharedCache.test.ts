@@ -9,6 +9,13 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("shared Gecko stale response semantics", () => {
+  it("fails closed when an explicit paid request has no paid key", async () => {
+    const response = await geckoSharedFetch(url, 60_000, 1_000, false, false, undefined, "background", "paid", "lifetime_volume");
+    expect(response.status).toBe(503);
+    expect(response.headers.get("x-gecko-configuration-error")).toBe("missing-paid-key");
+    expect(mocks.mutation).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("uses the paid onchain endpoint and paid budget when configured", async () => {
     vi.stubEnv("COINGECKO_PRO_API_KEY", "paid-test-key");
     mocks.mutation.mockResolvedValueOnce({ acquired: true }).mockResolvedValueOnce(undefined);

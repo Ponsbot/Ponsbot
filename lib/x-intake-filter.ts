@@ -13,7 +13,9 @@ export function walletBalanceReadsExcluded() {
 }
 
 export function verifiedXReadsOnly() {
-  return process.env.X_READ_VERIFIED_ONLY === "true";
+  // Verified-only intake has been retired. Keep the legacy environment name
+  // inert so an old deployment value cannot silently restore this filter.
+  return false;
 }
 
 export function showMyWalletReadsExcluded() {
@@ -24,7 +26,10 @@ export function showMyWalletReadsExcluded() {
 // restrictions (including independently configured country exclusions).
 export function effectiveXIntakeFilters(automatic: { excludeWalletBalance: boolean; verifiedOnly: boolean } = { excludeWalletBalance: false, verifiedOnly: false }) {
   const excludeWalletBalance = walletBalanceReadsExcluded() || automatic.excludeWalletBalance;
-  const verifiedOnly = verifiedXReadsOnly() || automatic.verifiedOnly;
+  // Automatic traffic protection may still own historical verified-filter
+  // state, but it is deliberately ignored. All authors now enter through the
+  // same deterministic admission and reply-queue safeguards.
+  const verifiedOnly = false;
   const countries = excludedXReadCountries();
   const excludeShowMyWallet = showMyWalletReadsExcluded();
   return { excludeWalletBalance, verifiedOnly, countries, excludeShowMyWallet,
@@ -32,19 +37,21 @@ export function effectiveXIntakeFilters(automatic: { excludeWalletBalance: boole
 }
 
 export function restrictedXSearchQuery(excludeWalletBalance = true, verifiedOnly = false, countries: string[] = [], excludeShowMyWallet = false) {
+  void verifiedOnly;
   return "(@ponsbotfamily OR to:ponsbotfamily)" +
     (excludeWalletBalance ? " -wallet -balance" : "") +
     // X exact-phrase search is case-insensitive. This manual filter is not
     // owned by the automatic guard and survives its three-hour expiry.
     (excludeShowMyWallet ? ' -"show my wallet"' : "") +
-    (verifiedOnly ? " is:verified" : "") + " -is:retweet -from:ponsbotfamily" +
+    " -is:retweet -from:ponsbotfamily" +
     countries.map(country => ` -place_country:${country}`).join("");
 }
 
 // Changing sources must not reuse endpoint-specific page tokens, nor backfill
 // posts intentionally excluded during the temporary restriction.
 export function intakeSourceTransition(previous: string | undefined, restricted: boolean, now: number, verifiedOnly = false, countries: string[] = [], excludeShowMyWallet = false) {
-  const source = (restricted ? "filtered_wallet_balance" : verifiedOnly || countries.length || excludeShowMyWallet ? "filtered" : "mentions") + (verifiedOnly ? "_verified" : "") + (countries.length ? `_countries_${countries.join("_")}` : "") + (excludeShowMyWallet ? "_no_show_my_wallet" : "");
+  void verifiedOnly;
+  const source = (restricted ? "filtered_wallet_balance" : countries.length || excludeShowMyWallet ? "filtered" : "mentions") + (countries.length ? `_countries_${countries.join("_")}` : "") + (excludeShowMyWallet ? "_no_show_my_wallet" : "");
   if ((previous ?? "mentions") === source) return undefined;
   return {
     intakeSource: source,
