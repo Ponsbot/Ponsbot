@@ -13,7 +13,7 @@ describe("temporary X response suppression", () => {
   });
   it.each([
     "✅ Success! Launched Not Enough ETH (NEE) on Pons V2!",
-    "🚀 Verified X accounts can launch on Pons V2! Tell me a name and ticker.",
+    "🚀 Post @Ponsbotfamily launch NAME $TICKER to launch.",
     "💰 Ask for your wallet and send ETH. Keep enough ETH available for gas!",
     "👛 Your Pons Bot wallet is ready!\nYour wallet: https://www.ponsbot.family/wallet/0x123",
     "✅ This request was already completed!\nYour TXN: https://explorer.test/tx/123",
@@ -21,9 +21,6 @@ describe("temporary X response suppression", () => {
     "❌ I couldn't complete that wallet request. Check the details and give it another try!",
     "❌ You don't have enough of this token's paired asset yet.",
   ])("preserves unrelated replies: %s", message => expect(reason(message, true)).toBeUndefined());
-  it("publishes the unverified-launch explanation even while routine failures are suppressed", () => {
-    expect(reason("🔒 Only verified X accounts can launch.", true)).toBeUndefined();
-  });
   it("uses an explicit reversible environment switch", () => {
     vi.stubEnv("X_SUPPRESS_ROUTINE_FAILURE_REPLIES", "false");
     expect(reason("This request did not complete.")).toBeUndefined();

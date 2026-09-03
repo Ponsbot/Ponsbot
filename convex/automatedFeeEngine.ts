@@ -7,7 +7,7 @@ import { attachRequestedClaims, liveRequestedClaims, requestedVaultClaimsEnabled
 import { existingFeeUpgradeState } from "../lib/fee-upgrade-command";
 import { PONSBOT_BURN_TOKEN } from "../lib/burn-stats";
 import { canUseGraduatedEscrow, feeRunHasTransaction, feeSweepPrerequisiteSatisfied, isGraduatedSweepPreflightFailure } from "../lib/automated-fee-sweep-policy";
-import { FEE_ACCUMULATION_THRESHOLD_WEI, feeThresholdReached, nextFeeCheck, feeRetryDelay } from "../lib/automated-fee-scheduling";
+import { FEE_ACCUMULATION_THRESHOLD_WEI, FEE_CHECK_INTERVAL_MS, feeThresholdReached, nextFeeCheck, feeRetryDelay } from "../lib/automated-fee-scheduling";
 import {
   AUTOMATED_FEE_BUYBACK_BPS,
   AUTOMATED_FEE_ENGINE_INTERVAL_MS,
@@ -672,7 +672,7 @@ export const finalizeVerifiedEnrollment = internalMutation({
       enrollmentDiagnosticCode: undefined,
       enrollmentDiagnosticDetail: undefined,
       enrollmentVerificationAttempts: undefined,
-      nextProcessAt: now + 15 * 60_000,
+      nextProcessAt: now + FEE_CHECK_INTERVAL_MS,
       deploymentConfirmedAt: now, deploymentSettledAt: now,
       updatedAt: now,
     });

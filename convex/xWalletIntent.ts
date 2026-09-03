@@ -2,7 +2,7 @@ import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
 import { ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
-import { PUBLISHED_PAIR_LIST } from "../lib/pair-catalog";
+import { PUBLISHED_PAIR_SYMBOLS } from "../lib/pair-catalog";
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
 import { GENERAL_GUIDED_HELP_MESSAGE } from "../lib/guided-help-workflow";
 
@@ -19,6 +19,14 @@ export type AiWorkflowDiagnostics = {
   extractionAttempts: Array<{ attempt: number; operation: WalletOperation; raw?: string; accepted: boolean; error?: string }>;
   finalIntent?: XWalletIntent;
 };
+
+const PUBLISHED_PAIR_LINES = Array.from(
+  { length: Math.ceil(PUBLISHED_PAIR_SYMBOLS.length / 9) },
+  (_, index) => PUBLISHED_PAIR_SYMBOLS
+    .slice(index * 9, index * 9 + 9)
+    .map((symbol) => `$${symbol}`)
+    .join("  •  "),
+).join("\n");
 
 const PERSISTED_HELP_TOPICS = new Set<WalletHelpTopic>(["capabilities", "wallet", "fund", "gas", "balance", "send", "buy_sell", "cross_chain", "cross_chain_assets", "burn", "launch", "pairs", "fees"]);
 
@@ -50,8 +58,8 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     cross_chain: "🌐 Send Robinhood Chain ETH cross-chain with “Send $25 to WALLET ADDRESS as ASSET on CHAIN.” Add “private” or “privately” for private routing. Pons Bot processes the route immediately and posts the result when it finishes. Ask me for available chains and assets!",
     cross_chain_assets: "🌐 Available routes: ETH on Ethereum, Base, Robinhood, Arbitrum, or Optimism; SOL on Solana; BTC on Bitcoin; USDC on Ethereum, Base, Arbitrum, or Solana; USDT on Ethereum or Tron; BNB on BNB Chain; AVAX on Avalanche; POL on Polygon.",
     burn: "🔥 Say burn, the amount, and the ticker or contract. To purchase and immediately burn what you receive, say buy or purchase plus burn: buy $25 of PONSBOT and burn it.",
-    launch: "🚀 Verified accounts can post “@Ponsbotfamily launch NAME $TICKER” to launch! Add an image, and optional description, social links, dev buy, and paired asset. Or, reply “get started” to this post and I’ll walk you through the process!",
-    pairs: `🔗 Pairing sets the asset used for trades and creator fees. Options: ${PUBLISHED_PAIR_LIST}.`,
+    launch: "🚀 Post “@Ponsbotfamily launch NAME $TICKER” to launch! Add an image, and optional description, social links, dev buy, and paired asset. Or, reply “get started” to this post and I’ll walk you through the process!",
+    pairs: `🔗 Pons launch pairs\n\nPairing sets the asset used for trades and creator fees. Current options:\n\n${PUBLISHED_PAIR_LINES}`,
     fees: "💸 Pons Bot V2 payouts are automatic: 95% goes to the assigned wallet or holders, and 5% buys and burns $PONSBOT. Say “claim my fees” to request a V2 cycle and claim legacy ETH fees. Reassign with “Reassign $TICKER fees to @user” or “Reassign $TICKER fees to holders.”",
   };
   return messages[topic];

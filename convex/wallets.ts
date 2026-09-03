@@ -3591,17 +3591,6 @@ export const executeCommand = internalAction({
       };
     }
 
-    if (command.kind === "launch" && !userContext.user.verified) {
-      await ctx.runMutation(internal.wallets.updateWalletRequest, {
-        requestId,
-        status: "rejected",
-        safeError: "verified X account required",
-      });
-      return {
-        ok: false,
-        message: "🔒 Only verified X accounts can launch.",
-      };
-    }
     if (command.kind === "launch" && !walletCanLaunch(wallet.launchEnabled)) {
       await ctx.runMutation(internal.wallets.updateWalletRequest, {
         requestId,

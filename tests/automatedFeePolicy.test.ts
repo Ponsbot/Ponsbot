@@ -107,8 +107,8 @@ describe("automated creator fee policy", () => {
     expect(splitAutomatedCreatorFees(10_000n)).toEqual({ gross: 10_000n, buyback: 500n, beneficiary: 9_500n });
   });
 
-  it("uses a fifteen minute schedule and stable per-block idempotency", () => {
-    expect(AUTOMATED_FEE_ENGINE_INTERVAL_MS).toBe(900_000);
+  it("uses an hourly schedule and stable per-block idempotency", () => {
+    expect(AUTOMATED_FEE_ENGINE_INTERVAL_MS).toBe(3_600_000);
     expect(automatedFeeRunIdempotencyKey(address("a"), "123")).toBe(`automated-fees:${address("a")}:123`);
   });
 

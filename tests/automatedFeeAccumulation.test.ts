@@ -18,11 +18,11 @@ describe("fixed schedules and economic threshold", () => {
   });
   it("retains enrollment slots when checks and transaction completion are late", () => {
     const p = { enrolledAt: 100_000 };
-    expect(nextFeeCheck(p, 100_000)).toBe(1_000_000);
-    expect(nextFeeCheck(p, 1_030_000)).toBe(1_900_000);
-    expect(nextFeeCheck(p, 1_080_000)).toBe(1_900_000);
-    expect(nextFeeCheck(p, 4_640_000)).toBe(5_500_000);
-    expect(nextFeeCheck({ scheduleAnchorAt: 100_000, enrolledAt: 500_000 }, 1_080_000)).toBe(1_900_000);
+    expect(nextFeeCheck(p, 100_000)).toBe(3_700_000);
+    expect(nextFeeCheck(p, 1_030_000)).toBe(3_700_000);
+    expect(nextFeeCheck(p, 1_080_000)).toBe(3_700_000);
+    expect(nextFeeCheck(p, 4_640_000)).toBe(7_300_000);
+    expect(nextFeeCheck({ scheduleAnchorAt: 100_000, enrolledAt: 500_000 }, 1_080_000)).toBe(3_700_000);
   });
   it("bounds exponential retries and honors a longer Retry-After", () => {
     expect([0, 1, 2, 3, 4, 20].map(n => feeRetryDelay(n))).toEqual([30_000, 60_000, 120_000, 240_000, 300_000, 300_000]);

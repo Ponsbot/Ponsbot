@@ -27,7 +27,7 @@ Pons Bot brings Robinhood Chain wallets and Pons V2 launches directly to X. Ment
 
 ## Launching on Pons V2
 
-Token launches are available to verified X accounts. A name and ticker are required; all other launch details are optional. Supported pairing assets currently include NVDA, SPCX, GOOGL, TSLA, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, TTWO, COST, DJT, MSTR, QQQ, RDDT, USDG, cbBTC, HIMS, BB, GLD, and ETH. Pons Bot recognizes Hims or Hims & Hers as HIMS, BlackBerry as BB, and Gold or SPDR Gold Trust as GLD. For cbBTC launch pairs, it also recognizes BTC, Bitcoin, Coinbase Bitcoin, Coinbase Wrapped Bitcoin, and Wrapped Bitcoin.
+Token launches are available through X. A name and ticker are required; all other launch details are optional. Supported pairing assets currently include NVDA, SPCX, GOOGL, TSLA, GME, AAPL, SPY, SNDK, AMD, AMZN, MSFT, META, CRCL, COIN, MU, PLTR, TTWO, COST, DJT, MSTR, QQQ, RDDT, USDG, cbBTC, HIMS, BB, GLD, and ETH. Pons Bot recognizes Hims or Hims & Hers as HIMS, BlackBerry as BB, and Gold or SPDR Gold Trust as GLD. For cbBTC launch pairs, it also recognizes BTC, Bitcoin, Coinbase Bitcoin, Coinbase Wrapped Bitcoin, and Wrapped Bitcoin.
 
 When a non-ETH pairing asset is selected, the developer buy is made in that paired asset. You can provide an exact asset amount, such as `dev buy 2 MSFT`, or a dollar or ETH amount that Pons Bot converts into the paired asset before launching.
 

@@ -1702,14 +1702,6 @@ export const retryInteraction = internalAction({
           await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "rejected", commandKind: guidedHelpCommandKind("root"), responsePostId, safeError: message });
           return;
         }
-        if (!current.user.verified) {
-          const message = "🔒 Only verified X accounts can launch.";
-          const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: false, kind: "reply" });
-          await ctx.runMutation(internal.xReplies.updateInteraction, {
-            postId, status: "rejected", commandKind: guidedHelpCommandKind("root"), responsePostId, safeError: message,
-          });
-          return;
-        }
         const launchWallet = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: current.user.xUserId });
         if (launchWallet?.wallet?.launchEnabled === false) {
           const message = "❌ I couldn't complete that wallet request. Check the details, then reply with the request again!";
@@ -2251,6 +2243,7 @@ export const retryInteraction = internalAction({
       // publishing instead of being compressed into a 280-character reply.
       const longCommandResult = intent.kind === "command" &&
         (intent.command.kind === "claim_fees" || intent.command.kind === "buy_top_five");
+      const longHelpResult = intent.kind === "help" && intent.topic === "pairs";
       const outcomeCommandKind = reply.trim().endsWith(CLAIM_LP_FEE_OFFER)
         ? guidedHelpCommandKind("claim_lp_offer")
         : guidedCommandCompleted || failedCommandContinuation
@@ -2269,7 +2262,7 @@ export const retryInteraction = internalAction({
         ...(gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
-      const responsePostId = await publishReplyOnce(ctx, reply, postId, undefined, longCommandResult || guidedCommandCompleted, {
+      const responsePostId = await publishReplyOnce(ctx, reply, postId, undefined, longCommandResult || longHelpResult || guidedCommandCompleted, {
         ok,
         // A completed on-chain action must outrank prompts even though it was
         // initiated inside a B-tier guided conversation.
