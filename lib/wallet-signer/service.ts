@@ -6,7 +6,7 @@ import { checkedUsdToEthWei, ethUsdPrice } from "./pricing";
 import { estimateActualFees, estimateResilientAutomationFees, insufficientGasError, sendAllGasReserve, spendableEthAfterGas, sponsoredLaunchCost, transactionGasEnvelope, transactionMaximumCost } from "./gas";
 import { requireNativeGasBalance, requireWalletNativeGas } from "../wallet-native-gas";
 import { nativeTokenOperationError } from "../native-token-operation";
-import { reliableHttp } from "../rpc-http";
+import { reliableHttp, resilientRobinhoodHttp } from "../rpc-http";
 import { rememberWalletExecutionCache, sharedWalletExecutionCache, walletExecutionCacheKey } from "../shared-wallet-execution-cache";
 import { tokenMarketCapUsd, tokenUnitPriceUsd } from "../token-market-cap";
 import { geckoTokenMarkets, GECKO_TOKEN_BATCH_SIZE } from "../gecko-token-market";
@@ -179,7 +179,7 @@ function requiredAddress(name: string) {
 }
 
 function rpcClient() {
-  return createPublicClient({ transport: reliableHttp(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com") });
+  return createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL || PUBLIC_ROBINHOOD_RPC_URL) });
 }
 
 function manualAutomatedFeeAllowlist() {

@@ -471,8 +471,8 @@ export const processUpdate = internalAction({
             await sendMessage(chatId, "💧 What would you like to do?", {
               inline_keyboard: [
                 [{ text: "Check Positions", callback_data: "liquidity:check" }],
-                [{ text: "Withdraw", callback_data: "liquidity:withdraw" }],
                 [{ text: "Create Position", callback_data: "liquidity:create" }],
+                [{ text: "Withdraw", callback_data: "liquidity:withdraw" }],
               ],
             });
             await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });

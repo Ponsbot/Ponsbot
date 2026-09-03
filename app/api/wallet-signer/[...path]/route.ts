@@ -46,6 +46,7 @@ function errorResponse(error: unknown) {
     : /no claimable creator fees/i.test(message) ? "NO_CLAIMABLE_CREATOR_FEES"
       : /creator fee recipient|fee beneficiary/i.test(message) ? "CREATOR_FEE_AUTHORIZATION_FAILED"
         : /simulation|revert/i.test(message) ? "SIMULATION_OR_REVERT"
+          : /status[: ]+40[13]|forbidden|unauthorized/i.test(message) ? "RPC_PROVIDER_AUTHORIZATION_FAILED"
           : /RPC rejected|broadcast/i.test(message) ? "RPC_BROADCAST_REJECTED"
             : /quote|liquidity|route/i.test(message) ? "ROUTE_OR_QUOTE_FAILED"
               : "SIGNER_INTERNAL_FAILURE");

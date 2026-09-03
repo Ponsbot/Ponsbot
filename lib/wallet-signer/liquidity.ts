@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeFunctionData, erc20Abi, formatEther, formatUnits, keccak256, parseAbi, parseEther, parseUnits, stringToHex, zeroAddress, type Address, type Hex } from "viem";
-import { reliableHttp } from "../rpc-http";
+import { resilientRobinhoodHttp } from "../rpc-http";
 import { explorerLiquidityNativePayout } from "../liquidity-payouts";
 import { mapLiquidityBounded } from "../liquidity-concurrency";
 import { DELTA_LIQUIDITY as A, liquidityDraftSchema, newLiquidityDraft, liquidityOwnerAllowed, liquidityWalletAllowed } from "../liquidity-workflow";
@@ -654,7 +654,7 @@ export async function inspectLiquidityReceipt(hash: Hex, suppliedPlan: Liquidity
     }
     // Transaction-scoped value transfers, not a whole-block balance delta
     // (which can include unrelated concurrent wallet activity).
-    const traceClient = createPublicClient({ transport: reliableHttp(process.env.ROBINHOOD_RPC_URL || "https://rpc.mainnet.chain.robinhood.com", { timeout: 20_000 }) });
+    const traceClient = createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL, { timeout: 20_000 }) });
     let native: bigint | undefined;
     try {
       type Trace = { type?: string; from?: string; to?: string; value?: string; error?: string; calls?: Trace[] };

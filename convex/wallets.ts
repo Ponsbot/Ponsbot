@@ -3214,6 +3214,10 @@ export function safeFailure(
     )
   )
     return "⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with the launch request again!";
+  if (/\bcode=RPC_PROVIDER_AUTHORIZATION_FAILED\b|rpc provider.*(?:forbidden|unauthorized)/i.test(message)) {
+    console.error("wallet_rpc_provider_failure", { message: sanitizedDiagnosticDetail(new Error(message)) });
+    return "🛠️ The wallet network is temporarily unavailable. Nothing was submitted onchain. Reply with the request again shortly!";
+  }
   if (/disabled|not configured|unavailable/i.test(message)) {
     console.error("wallet_configuration_failure", { message });
     return "🛠️ The wallet service is taking a quick break. Reply with the request again shortly!";
@@ -3241,6 +3245,8 @@ function privateDiagnosticCode(error: unknown) {
     )
   )
     return "WALLET_SIGNER_FAILED";
+  if (/\bcode=RPC_PROVIDER_AUTHORIZATION_FAILED\b/i.test(message))
+    return "RPC_PROVIDER_AUTHORIZATION_FAILED";
   if (/requested Pons V2 pair/i.test(message)) return "UNSUPPORTED_LAUNCH_PAIR";
   if (/insufficient|exceeds the balance/i.test(message))
     return "INSUFFICIENT_FUNDS";
