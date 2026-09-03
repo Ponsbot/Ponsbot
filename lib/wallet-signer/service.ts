@@ -2289,9 +2289,8 @@ async function vanityLaunchSalt(
 }
 
 export async function prepareLaunchAddresses(request: ExecutionRequest) {
-  await requireWalletNativeGas(request.expectedFrom);
   const operation = request.operation;
-  if (operation.type !== "pons_v2_launch" && operation.type !== "pons_v2_launch_and_buy") throw new Error("launch operation required");
+  if (!operation || (operation.type !== "pons_v2_launch" && operation.type !== "pons_v2_launch_and_buy")) throw new Error("launch operation required");
   const prediction = await vanityLaunchSalt(rpcClient(), request, operation, operation.factoryAddress as Address, request.expectedFrom as Address, operation.pairToken as Address);
   return { preparedSalt: prediction.salt, predictedTokenAddress: prediction.tokenAddress, predictedCurveAddress: prediction.curveAddress };
 }
@@ -2541,7 +2540,10 @@ export async function executeTransaction(request: ExecutionRequest) {
   // Creator-fee reads must determine whether there is anything to claim or
   // sweep before asking the user to fund gas. These two branches perform the
   // same gas guard immediately before preparing a real transaction.
-  if (operation.type !== "pons_v2_claim_fees" && operation.type !== "pons_v2_sweep_fees")
+  if (operation.type !== "pons_v2_claim_fees"
+    && operation.type !== "pons_v2_sweep_fees"
+    && operation.type !== "pons_v2_launch"
+    && operation.type !== "pons_v2_launch_and_buy")
     await requireWalletNativeGas(owner);
   if (operation.type === "erc20_burn_to_dead" && operation.deadAddress.toLowerCase() !== DEAD.toLowerCase()) {
     throw new Error("burn destination policy rejected the request");

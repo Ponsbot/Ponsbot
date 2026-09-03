@@ -126,11 +126,14 @@ describe("zero native ETH gate", () => {
   });
   it.each([
     ["transaction execution", () => executeTransaction({ expectedFrom: address, operation: { type: "eth_transfer" } } as any)],
-    ["launch address mining", () => prepareLaunchAddresses({ expectedFrom: address } as any)],
     ["vault controller preparation", () => prepareAutomatedFeeControllerTransaction({ expectedAddress: address } as any)],
     ["spendable ETH estimation", () => spendableEthBalance(address, 21_000)],
   ] as const)("retains the specialized zero-balance gate for %s", async (_name, run) => {
     await expect(run()).rejects.toThrow("zero native ETH");
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("does not apply the zero-balance shortcut before launch preparation", async () => {
+    await expect(prepareLaunchAddresses({ expectedFrom: address } as any)).rejects.toThrow("launch operation required");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });
