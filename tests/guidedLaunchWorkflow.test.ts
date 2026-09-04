@@ -3,6 +3,7 @@ import {
   advanceGuidedLaunch,
   createGuidedLaunchState,
   decodeGuidedLaunchState,
+  guidedLaunchPairRecoveryState,
   guidedLaunchPrompt,
   guidedLaunchRequested,
   type GuidedLaunchState,
@@ -25,6 +26,17 @@ function reachOptionalFields() {
 }
 
 describe("guided X launch workflow", () => {
+  it("restarts an unsupported direct launch at pair selection without carrying its old dev buy", () => {
+    const state = guidedLaunchPairRecoveryState({
+      kind: "launch", launchMode: "pons", name: "New Pair Test", symbol: "NPT",
+      pairToken: "OLD", devBuy: { amount: "20", unit: "usd" },
+    }, true, "https://pbs.twimg.com/media/example.jpg");
+    expect(state).toMatchObject({ phase: "pair", draft: { name: "New Pair Test", symbol: "NPT", pairToken: "OLD", devBuy: { amount: "20" } } });
+    const changed = prompt(advanceGuidedLaunch(state, "$AAPL"));
+    expect(changed.state).toMatchObject({ phase: "dev_buy", draft: { pairToken: "AAPL", imageUrl: "https://pbs.twimg.com/media/example.jpg" } });
+    expect(changed.state.draft.devBuy).toBeUndefined();
+  });
+
   it.each([
     "launch", "launch a token", "create a coin", "I want to launch a token", "I want to create a token", "help me launch",
     "start", "please start", "get started", "please get started", "lets get start", "let's get started", "let’s get this started",
@@ -153,12 +165,12 @@ describe("guided X launch workflow", () => {
     },
   );
 
-  it("keeps unsupported pair values at the pair step", () => {
+  it("accepts a plausible unknown pair ticker for live backend verification", () => {
     let state = reachOptionalFields();
     for (let index = 0; index < 3; index += 1) state = answer(state, "no");
     const result = prompt(advanceGuidedLaunch(state, "FAKEPAIR"));
-    expect(result.state.phase).toBe("pair");
-    expect(result.message).toContain("not currently supported");
+    expect(result.state.phase).toBe("dev_buy");
+    expect(result.state.draft.pairToken).toBe("FAKEPAIR");
   });
 
   it.each([

@@ -3210,7 +3210,7 @@ export function safeFailure(
       message,
     )
   )
-    return "⚠️ That pairing asset isn't currently supported on Pons V2. Try a supported ticker, or ask “what assets can I pair with?”";
+    return "⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.";
   if (/image/i.test(message))
     return "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
   if (/ticker matches/i.test(message))

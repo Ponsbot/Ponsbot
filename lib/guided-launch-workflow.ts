@@ -45,6 +45,31 @@ export type GuidedLaunchState = {
   draft: GuidedLaunchDraft;
 };
 
+export function guidedLaunchPairRecoveryState(
+  command: Extract<WalletCommand, { kind: "launch" }>,
+  explicitMentionAuthorized: boolean,
+  imageUrl?: string,
+): GuidedLaunchState {
+  return {
+    version: 1,
+    phase: "pair",
+    explicitMentionAuthorized,
+    draft: {
+      name: command.name,
+      symbol: command.symbol,
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(command.description ? { description: command.description } : {}),
+      ...(command.website ? { website: command.website } : {}),
+      ...(command.twitter ? { twitter: command.twitter } : {}),
+      ...(command.telegram ? { telegram: command.telegram } : {}),
+      ...(command.pairToken ? { pairToken: command.pairToken } : {}),
+      ...(command.devBuy ? { devBuy: command.devBuy } : {}),
+      ...(command.feeRecipient ? { feeRecipient: command.feeRecipient } : {}),
+      ...(command.holderFeeSharing ? { holderFeeSharing: true } : {}),
+    },
+  };
+}
+
 export type GuidedLaunchAdvance =
   | { kind: "prompt"; state: GuidedLaunchState; message: string; allowLong?: boolean }
   | { kind: "execute"; state: GuidedLaunchState; command: Extract<WalletCommand, { kind: "launch" }>; commandText: string; imageUrl?: string }
@@ -346,12 +371,16 @@ export function advanceGuidedLaunch(
   }
   if (state.phase === "pair") {
     const supplied = unwrap(value.replace(/^(?:paired\s+(?:with|to)|pair\s+it\s+(?:with|to)|pair\s+with|as\s+the\s+pair|with\s+(?:the\s+)?asset\s+pair|pairing\s+asset|pair)\s*(?:is|=|:)?\s*/i, "")).replace(/^\$/, "");
-    if (SKIP.test(control) || /^ETH$/i.test(supplied)) return next({ ...current, draft: { ...draft, pairToken: undefined } }, "dev_buy");
+    if (SKIP.test(control) || /^ETH$/i.test(supplied)) return next({ ...current, draft: { ...draft, pairToken: undefined, devBuy: undefined } }, "dev_buy");
     const pairToken = ADDRESS.test(supplied) ? supplied : knownLaunchPairTicker(supplied) || supplied.toUpperCase();
-    if (!ADDRESS.test(pairToken) && !PUBLISHED_PAIR_SYMBOLS.some(symbol => symbol.toLowerCase() === pairToken.toLowerCase())) {
-      return next(current, "pair", "⚠️ That pairing asset is not currently supported. Reply with a supported pairing ticker, or say “no” for ETH.");
-    }
-    return next({ ...current, draft: { ...draft, pairToken } }, "dev_buy");
+    // Unknown tickers are resolved against Robinhood's official catalog and
+    // verified against the Pons factory by the execution backend. Keeping the
+    // value here lets a newly approved Pons pair work without a code deploy.
+    if (!ADDRESS.test(pairToken) && !/^[A-Z][A-Z0-9.]{0,11}$/.test(pairToken))
+      return next(current, "pair", "⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.");
+    // A developer buy denominated in the old pair cannot be carried across a
+    // pair correction. Ask for it again against the newly selected asset.
+    return next({ ...current, draft: { ...draft, pairToken, devBuy: undefined } }, "dev_buy");
   }
   if (state.phase === "dev_buy") {
     const devBuy = SKIP.test(control)

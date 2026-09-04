@@ -1308,6 +1308,28 @@ export default defineSchema({
     .index("by_symbol", ["symbol"])
     .index("by_pair_candidate", ["pairCandidate"]),
 
+  // Private resolution cache for launch-pair tickers that are not yet in the
+  // curated Pons Bot catalog. Presence here never implies Pons approval; the
+  // factory allowlist is checked separately before every launch attempt.
+  robinhoodAssetCatalog: defineTable({
+    address: v.string(),
+    normalizedAddress: v.string(),
+    symbol: v.string(),
+    normalizedSymbol: v.string(),
+    name: v.string(),
+    decimals: v.number(),
+    active: v.boolean(),
+    syncedAt: v.number(),
+  })
+    .index("by_normalized_address", ["normalizedAddress"])
+    .index("by_normalized_symbol", ["normalizedSymbol"]),
+
+  robinhoodAssetCatalogState: defineTable({
+    key: v.string(),
+    syncedAt: v.number(),
+    assetCount: v.number(),
+  }).index("by_key", ["key"]),
+
   walletTokenIndex: defineTable({
     walletId: v.id("cryptoWallets"),
     tokenAddress: v.string(),

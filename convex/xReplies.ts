@@ -100,6 +100,7 @@ import {
   advanceGuidedLaunch,
   createGuidedLaunchState,
   decodeGuidedLaunchState,
+  guidedLaunchPairRecoveryState,
   guidedLaunchPrompt,
   guidedLaunchRequested,
   type GuidedLaunchAdvance,
@@ -2165,6 +2166,7 @@ export const retryInteraction = internalAction({
       }
       let reply: string;
       let ok = true;
+      let guidedLaunchRecoveryStateJson: string | undefined;
       let guidedContinuationOperation: Exclude<NonNullable<typeof guidedHelp>["operation"], "root"> | null = null;
       if (
         intent.kind === "command" &&
@@ -2349,6 +2351,17 @@ export const retryInteraction = internalAction({
         }
         reply = result.message;
         ok = result.ok;
+        if (!result.ok && intent.command.kind === "launch"
+          && result.message === "⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.") {
+          const recovery = guidedLaunchExecution
+            ? { ...guidedLaunchExecution.state, phase: "pair" as const }
+            : guidedLaunchPairRecoveryState(
+                intent.command,
+                current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined),
+                preparedMedia.mediaUrl,
+              );
+          guidedLaunchRecoveryStateJson = JSON.stringify(recovery);
+        }
       }
       // Specific failures from genuine commands are useful and safe to return.
       // Restricted reply chains still suppress chatter, help, ambiguity, and
@@ -2375,15 +2388,19 @@ export const retryInteraction = internalAction({
           : guidedContinuationOperation
             ? guidedHelpCommandKind(guidedContinuationOperation)
             : undefined;
+      const effectiveOutcomeCommandKind = guidedLaunchRecoveryStateJson
+        ? guidedHelpCommandKind("launch")
+        : outcomeCommandKind;
       const gasResumeStateJson = isInsufficientEthReply(reply) && intent.kind === "command"
         ? JSON.stringify({
             type: "gas_resume", sourceText: workflowText.slice(0, 800),
             explicitMentionAuthorized: current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
           })
         : undefined;
-      if (outcomeCommandKind || gasResumeStateJson) await ctx.runMutation(internal.xReplies.updateInteraction, {
-        postId, status: "processing", ...(outcomeCommandKind ? { commandKind: outcomeCommandKind } : {}),
-        ...(gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
+      if (effectiveOutcomeCommandKind || gasResumeStateJson || guidedLaunchRecoveryStateJson) await ctx.runMutation(internal.xReplies.updateInteraction, {
+        postId, status: "processing", ...(effectiveOutcomeCommandKind ? { commandKind: effectiveOutcomeCommandKind } : {}),
+        ...(guidedLaunchRecoveryStateJson ? { guidedHelpStateJson: guidedLaunchRecoveryStateJson }
+          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
       // Preserve complete balance lists, templated command results, and guided
@@ -2399,8 +2416,9 @@ export const retryInteraction = internalAction({
         postId,
         status: ok ? "completed" : "rejected",
         responsePostId,
-        ...(outcomeCommandKind ? { commandKind: outcomeCommandKind } : {}),
-        ...(gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
+        ...(effectiveOutcomeCommandKind ? { commandKind: effectiveOutcomeCommandKind } : {}),
+        ...(guidedLaunchRecoveryStateJson ? { guidedHelpStateJson: guidedLaunchRecoveryStateJson }
+          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
     } catch (error) {

@@ -489,8 +489,8 @@ describe("X wallet commands", () => {
   });
 
   it("returns a specific response for an unsupported launch pair", () => {
-    expect(safeFailure(new Error("requested Pons V2 pair was not found in the registry"))).toContain("isn't currently supported on Pons V2");
-    expect(safeFailure(new Error("requested Pons V2 pair is not currently approved"))).toContain("what assets can I pair with?");
+    expect(safeFailure(new Error("requested Pons V2 pair was not found in the registry"))).toBe("⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.");
+    expect(safeFailure(new Error("requested Pons V2 pair is not currently approved"))).toBe("⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.");
   });
 
   it("accepts USD-denominated burns", () => {

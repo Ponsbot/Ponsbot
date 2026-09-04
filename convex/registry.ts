@@ -267,3 +267,59 @@ export const updatePairVerification = internalMutation({
     });
   },
 });
+
+export const robinhoodCatalogLookup = internalQuery({
+  args: { symbol: v.string() },
+  handler: async (ctx, { symbol }) => {
+    const normalizedSymbol = symbol.replace(/^\$/, "").trim().toLowerCase();
+    const [state, matches] = await Promise.all([
+      ctx.db.query("robinhoodAssetCatalogState").withIndex("by_key", q => q.eq("key", "official")).unique(),
+      ctx.db.query("robinhoodAssetCatalog").withIndex("by_normalized_symbol", q => q.eq("normalizedSymbol", normalizedSymbol)).collect(),
+    ]);
+    return { syncedAt: state?.syncedAt, matches: matches.filter(item => item.active) };
+  },
+});
+
+export const replaceRobinhoodCatalog = internalMutation({
+  args: {
+    assets: v.array(v.object({
+      address: v.string(), symbol: v.string(), name: v.string(), decimals: v.number(),
+    })),
+    syncedAt: v.number(),
+  },
+  handler: async (ctx, { assets, syncedAt }) => {
+    const seen = new Set<string>();
+    for (const asset of assets) {
+      const normalizedAddress = asset.address.toLowerCase();
+      const normalizedSymbol = asset.symbol.toLowerCase();
+      seen.add(normalizedAddress);
+      const existing = await ctx.db.query("robinhoodAssetCatalog")
+        .withIndex("by_normalized_address", q => q.eq("normalizedAddress", normalizedAddress)).unique();
+      const record = { ...asset, normalizedAddress, normalizedSymbol, active: true, syncedAt };
+      if (existing) await ctx.db.patch(existing._id, record);
+      else await ctx.db.insert("robinhoodAssetCatalog", record);
+    }
+    for (const existing of await ctx.db.query("robinhoodAssetCatalog").collect()) {
+      if (existing.active && !seen.has(existing.normalizedAddress)) {
+        await ctx.db.patch(existing._id, { active: false, syncedAt });
+      }
+    }
+    const state = await ctx.db.query("robinhoodAssetCatalogState").withIndex("by_key", q => q.eq("key", "official")).unique();
+    if (state) await ctx.db.patch(state._id, { syncedAt, assetCount: assets.length });
+    else await ctx.db.insert("robinhoodAssetCatalogState", { key: "official", syncedAt, assetCount: assets.length });
+  },
+});
+
+export const upsertDiscoveredPairCandidate = internalMutation({
+  args: { address: v.string(), symbol: v.string(), name: v.string(), decimals: v.number() },
+  handler: async (ctx, args) => {
+    const normalizedAddress = args.address.toLowerCase();
+    const existing = await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", q => q.eq("normalizedAddress", normalizedAddress)).unique();
+    const record = {
+      address: args.address, normalizedAddress, symbol: args.symbol, name: args.name,
+      decimals: args.decimals, pairCandidate: true, pairApproved: false, active: true, updatedAt: Date.now(),
+    };
+    if (existing) await ctx.db.patch(existing._id, record);
+    else await ctx.db.insert("tokenRegistry", record);
+  },
+});
