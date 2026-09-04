@@ -43,12 +43,13 @@ export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarket
   useEffect(() => {
     if (!active) return;
     let stopped = false; let running = false; let controller: AbortController | null = null;
+    let timer: number | undefined; let initialChecks = 0;
     const refresh = async () => {
       if (stopped || running || !canRefresh()) return;
       running = true; controller = new AbortController();
       try {
             const marketResponse = await fetch("/api/market/snapshot", {
-              method: "POST", cache: "no-store", signal: controller.signal,
+              method: "POST", cache: "no-store", signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ tokenAddresses: [tokenAddress], surface: "token" }),
             }).catch(() => undefined);
@@ -65,18 +66,21 @@ export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarket
               if (market.graduated === true) setLiveGraduated(true);
             }
       } catch { /* Keep the last market snapshot during transient failures. */ }
-      finally { running = false; controller = null; }
+      finally {
+        running = false; controller = null;
+        if (!stopped && canRefresh()) timer = window.setTimeout(refresh, initialChecks++ < 3 ? 5_000 : 60_000);
+      }
     };
-    void refresh(); const timer = window.setInterval(refresh, 60_000);
-    return () => { stopped = true; controller?.abort(); window.clearInterval(timer); };
+    void refresh();
+    return () => { stopped = true; controller?.abort(); window.clearTimeout(timer); };
   }, [tokenAddress, active, canRefresh]);
   useEffect(() => {
     let stopped = false; let running = false; let controller: AbortController | null = null;
     let followup: number | undefined; let timer: number | undefined; let checks = 0;
     const scheduleNext = () => {
-      if (!stopped && canRefresh()) timer = window.setTimeout(() => {
+      if (!stopped && canRefresh()) { window.clearTimeout(timer); timer = window.setTimeout(() => {
         checks = 0; if (canRefresh()) void refresh();
-      }, activityNextRefreshDelay(observed.current[tab]));
+      }, observed.current[tab] === 0 ? 5_000 : activityNextRefreshDelay(observed.current[tab])); }
     };
     setTableLoading(observed.current[tab] === 0);
     const refresh = async (cacheOnly = false) => {
@@ -106,7 +110,9 @@ export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarket
           followup = window.setTimeout(() => { checks++; void refresh(true); }, checks < 2 ? 2_000 : 8_000);
         } else { setTableLoading(false); scheduleNext(); }
       } catch (error) {
-        if (!stopped && !(error instanceof DOMException && error.name === "AbortError")) { if (tab === "trades") setTradesUnavailable(true); else setHoldersUnavailable(true); setTableLoading(false); scheduleNext(); }
+        // Cleanup aborts belong to an old effect. Any failure in a live effect,
+        // including an AbortError from a timed-out request, must keep polling.
+        if (!stopped) { if (tab === "trades") setTradesUnavailable(true); else setHoldersUnavailable(true); setTableLoading(false); scheduleNext(); }
       } finally { running = false; controller = null; }
     };
     void refresh();
