@@ -57,6 +57,7 @@ export async function GET(request: NextRequest) {
   response.cookies.set("pons_x_oauth_verifier", verifier, cookie);
   response.cookies.set("pons_x_oauth_return", requestedReturn === "/terminal" ? "/terminal" : "/wallet", cookie);
   if (validTelegramLink) response.cookies.set("pons_telegram_link", validTelegramLink, cookie);
+  else response.cookies.set("pons_telegram_link", "", { ...cookie, maxAge: 0 });
   // A cryptographically valid cookie may refer to a revoked or missing Convex
   // session. Remove it before starting OAuth so it cannot cause a redirect loop.
   if (session) response.cookies.set(WEB_WALLET_SESSION_COOKIE, "", {

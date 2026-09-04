@@ -1,6 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import { NextRequest, NextResponse } from "next/server";
 import { api } from "@/convex/_generated/api";
+import { createTelegramConsent, TELEGRAM_CONSENT_COOKIE, TELEGRAM_CONSENT_PATH } from "@/lib/telegram-link-consent";
 import { createWebWalletSession, readWebWalletSession, WEB_WALLET_SESSION_COOKIE, WEB_WALLET_SESSION_SECONDS } from "@/lib/web-wallet-session";
 
 export const runtime = "nodejs";
@@ -8,14 +9,6 @@ export const dynamic = "force-dynamic";
 
 type XToken = { access_token?: string };
 type XIdentity = { data?: { id?: string; username?: string; verified?: boolean; verified_type?: string } };
-
-function telegramReturnUrl() {
-  const configured = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "");
-  const username = configured && /^[a-zA-Z0-9_]{5,32}$/.test(configured) ? configured : "The_Pons_Bot";
-  // Telegram's HTTPS universal link opens the native app where the client and
-  // operating system permit it, with a normal web fallback otherwise.
-  return `https://t.me/${username}`;
-}
 
 function errorRedirect(request: NextRequest, reason: string) {
   const target = new URL("/wallet/sign-in-error", request.url);
@@ -80,10 +73,10 @@ export async function GET(request: NextRequest) {
     });
     const telegramLink = request.cookies.get("pons_telegram_link")?.value;
     if (telegramLink && /^[a-f0-9]{64}$/.test(telegramLink)) {
-      await new ConvexHttpClient(convexUrl).action(api.telegram.completeXLink, {
-        secret: webSecret, nonce: telegramLink, ownerXUserId: identity.id,
+      const response = NextResponse.redirect(new URL(TELEGRAM_CONSENT_PATH, siteUrl));
+      response.cookies.set(TELEGRAM_CONSENT_COOKIE, createTelegramConsent(telegramLink, identity.id, identity.username, webSecret), {
+        httpOnly: true, secure: siteUrl.startsWith("https://"), sameSite: "lax", path: TELEGRAM_CONSENT_PATH, maxAge: 600,
       });
-      const response = NextResponse.redirect(telegramReturnUrl());
       response.cookies.delete("pons_x_oauth_state");
       response.cookies.delete("pons_x_oauth_verifier");
       response.cookies.delete("pons_x_oauth_return");

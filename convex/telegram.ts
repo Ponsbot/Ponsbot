@@ -170,7 +170,9 @@ export const reserveUpdate = internalMutation({
     const existing = await ctx.db.query("telegramUpdates").withIndex("by_update_id", q => q.eq("updateId", args.updateId)).unique();
     if (existing) return false;
     const now = Date.now();
-    await ctx.db.insert("telegramUpdates", { ...args, status: "received", createdAt: now, updatedAt: now });
+    const links = args.telegramUserId ? await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", args.telegramUserId!)).collect() : [];
+    const link = links.find(row => !row.revokedAt && row.telegramChatId === args.telegramChatId);
+    await ctx.db.insert("telegramUpdates", { ...args, linkBindingVersion: 1, ...(link ? { boundLinkId: link._id, boundOwnerXUserId: link.ownerXUserId } : {}), status: "received", createdAt: now, updatedAt: now });
     return true;
   },
 });
@@ -324,6 +326,33 @@ export const activeLink = internalQuery({
   },
 });
 
+export const boundUpdateLink = internalQuery({
+  args: { updateId: v.string(), telegramUserId: v.string(), telegramChatId: v.string() },
+  handler: async (ctx, args) => {
+    const update = await ctx.db.query("telegramUpdates").withIndex("by_update_id", q => q.eq("updateId", args.updateId)).unique();
+    if (!update || update.linkBindingVersion !== 1 || update.telegramUserId !== args.telegramUserId || update.telegramChatId !== args.telegramChatId) return { valid: false, link: null };
+    const links = await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", args.telegramUserId)).collect();
+    const link = links.find(row => !row.revokedAt) || null;
+    const valid = link ? link._id === update.boundLinkId && link.ownerXUserId === update.boundOwnerXUserId && link.telegramChatId === args.telegramChatId : !update.boundLinkId;
+    return { valid, link: valid ? link : null };
+  },
+});
+
+export const previewLink = action({
+  args: { secret: v.string(), nonce: v.string() },
+  handler: async (ctx, args): Promise<{ telegramUserId: string; telegramUsername?: string } | null> => {
+    if (!process.env.WEB_AUTH_SECRET || args.secret !== process.env.WEB_AUTH_SECRET) throw new Error("Unauthorized");
+    return ctx.runQuery(internal.telegram.previewLinkNonce, { nonceHash: await sha256(args.nonce) });
+  },
+});
+export const previewLinkNonce = internalQuery({
+  args: { nonceHash: v.string() },
+  handler: async (ctx, args) => {
+    const nonce = await ctx.db.query("telegramLinkNonces").withIndex("by_nonce_hash", q => q.eq("nonceHash", args.nonceHash)).unique();
+    return nonce && !nonce.consumedAt && nonce.expiresAt > Date.now() ? { telegramUserId: nonce.telegramUserId, telegramUsername: nonce.telegramUsername } : null;
+  },
+});
+
 type TelegramLinkOutcome =
   | { status: "expired" }
   | { status: "linked" | "wallet_already_linked" | "telegram_already_linked"; telegramUserId: string; telegramChatId: string };
@@ -462,7 +491,16 @@ export const processUpdate = internalAction({
       const text = telegramLiquidityMenuCommand(rawText) || rawText;
       if (update.message?.text) await ctx.runMutation(internal.telegram.recordMessage, { telegramUserId, telegramChatId: chatId, role: "user", text, updateId: args.updateId });
       const command = commandName(text);
-      const link = await ctx.runQuery(internal.telegram.activeLink, { telegramUserId });
+      const binding = await ctx.runQuery(internal.telegram.boundUpdateLink, { updateId: args.updateId, telegramUserId, telegramChatId: chatId });
+      if (!binding.valid) {
+        await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "ignored" });
+        return;
+      }
+      const link = binding.link;
+      const assertBoundLink = async () => {
+        const current = await ctx.runQuery(internal.telegram.boundUpdateLink, { updateId: args.updateId, telegramUserId, telegramChatId: chatId });
+        if (!current.valid || current.link?._id !== link?._id) throw new Error("Telegram wallet link changed; request cancelled");
+      };
       if (!await ctx.runMutation(internal.telegram.consumeRateLimit, { telegramUserId })) {
         await sendMessage(chatId, "⏳ You’ve reached the Telegram request limit. Please wait a few minutes and try again.");
         await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
@@ -575,6 +613,7 @@ export const processUpdate = internalAction({
         const hasActiveLiquidityConversation = operation === "liquidity"
           ? await ctx.runQuery(internal.telegram.activeLiquidityConversation, { scope: liquidityScope, ownerXUserId: link.ownerXUserId })
           : false;
+        await assertBoundLink();
         const liquidity = await ctx.runAction(internal.liquidity.handle, {
           ownerXUserId: link.ownerXUserId,
           source: "telegram",
@@ -626,6 +665,7 @@ export const processUpdate = internalAction({
           const wallet = await ctx.runQuery(internal.telegram.linkedWallet, { ownerXUserId: link.ownerXUserId });
           if (!wallet) throw new Error("Linked Pons Bot wallet is unavailable");
           const sourcePostId = `tg_${telegramUserId}_${message.message_id || args.updateId}`;
+          await assertBoundLink();
           const quote = await ctx.runAction(internal.xHoudini.createQuote, {
             requestPostId: sourcePostId, ownerXUserId: link.ownerXUserId, walletAddress: wallet.address,
             commandJson: JSON.stringify(houdiniCommand), deliverySource: "telegram", telegramUserId, telegramChatId: chatId,
@@ -635,6 +675,7 @@ export const processUpdate = internalAction({
             quoteId: quote.quoteId as any, ownerXUserId: link.ownerXUserId, sourcePostId,
           });
           if (!activated) throw new Error("Telegram Houdini quote could not be reserved");
+          await assertBoundLink();
           await ctx.scheduler.runAfter(0, internal.xHoudini.executeConfirmed, {
             quoteId: quote.quoteId as any, confirmationPostId: sourcePostId, walletAddress: wallet.address, ownerXUserId: link.ownerXUserId,
           });
@@ -661,6 +702,7 @@ export const processUpdate = internalAction({
             : undefined;
           const sourcePostId = `tg_${telegramUserId}_${message.message_id || args.updateId}`;
           const requestId = `telegram:${telegramUserId}:${args.updateId}:${intent.command.kind}`;
+          await assertBoundLink();
           const result = await ctx.runAction(internal.wallets.executeCommand, {
             sourcePostId,
             requestId,

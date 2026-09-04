@@ -611,6 +611,9 @@ export default defineSchema({
   }).index("by_nonce_hash", ["nonceHash"]),
 
   telegramUpdates: defineTable({
+    linkBindingVersion: v.optional(v.number()),
+    boundLinkId: v.optional(v.id("telegramAccountLinks")),
+    boundOwnerXUserId: v.optional(v.string()),
     updateId: v.string(),
     telegramUserId: v.optional(v.string()),
     telegramChatId: v.optional(v.string()),

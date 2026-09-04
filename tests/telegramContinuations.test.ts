@@ -12,6 +12,7 @@ function fixture(conversation: any = null) {
   const ctx = {
     runQuery: vi.fn(async (ref: any) => {
       const n = getFunctionName(ref);
+      if (n.endsWith(":boundUpdateLink")) return { valid: true, link: { _id: "link", ownerXUserId: "owner", telegramChatId: "1" } };
       if (n.endsWith(":activeLink")) return { ownerXUserId: "owner", telegramChatId: "1" };
       if (n.endsWith(":activeConversation")) return conversation;
       return null;
