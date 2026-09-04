@@ -1,6 +1,7 @@
 import { createPublicClient, encodeAbiParameters, formatUnits, keccak256, parseAbi, zeroAddress, type Address } from "viem";
 import { ethUsdPrice } from "@/lib/wallet-signer/pricing";
 import { rememberSharedPrice, sharedPrice } from "./shared-price-cache";
+import { CANONICAL_USDG, usdgReferencePrice } from "./usdg-reference-price";
 import type { PublicLaunch } from "@/lib/site-data";
 import { reliableHttp } from "@/lib/rpc-http";
 import { indexedNativeV4Pools } from "@/lib/indexed-v4-routes";
@@ -60,7 +61,7 @@ export async function tokenMarketCapUsd(token: Address, blockNumber?: bigint, si
   const [supplyRaw, tokenDecimals, quote] = await Promise.all([
     rpc.readContract({ address: token, abi: erc20Abi, functionName: "totalSupply", blockNumber }),
     rpc.readContract({ address: token, abi: erc20Abi, functionName: "decimals", blockNumber }),
-    quoteDetails(rpc, launched.pairToken, signal),
+    quoteDetails(rpc, launched.pairToken, signal, infrastructure.stateView, blockNumber),
   ]);
   const supply = Number(formatUnits(supplyRaw, tokenDecimals));
   let tokenPriceInQuote: number;
@@ -103,8 +104,11 @@ function remember(key: string, value?: number) {
   return value;
 }
 
-export async function quoteDetails(rpc: ReturnType<typeof createPublicClient>, pairToken: Address, signal?: AbortSignal, configuredStateView?: Address) {
+export async function quoteDetails(rpc: ReturnType<typeof createPublicClient>, pairToken: Address, signal?: AbortSignal, configuredStateView?: Address, blockNumber?: bigint) {
   if (pairToken === zeroAddress) return { decimals: 18, usd: await ethUsdPrice(signal) };
+  if (pairToken.toLowerCase() === CANONICAL_USDG) {
+    return { decimals: 6, usd: await usdgReferencePrice(rpc, await ethUsdPrice(signal), blockNumber) };
+  }
   const [decimals, symbol] = await Promise.all([
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "decimals" }),
     rpc.readContract({ address: pairToken, abi: erc20Abi, functionName: "symbol" }),
