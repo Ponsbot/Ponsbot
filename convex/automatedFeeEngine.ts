@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { redactSignerDiagnostic } from "../lib/signer-diagnostics";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -1848,28 +1849,33 @@ export const markProgramManualReview = internalMutation({
     const program = await ctx.db.get(args.programId);
     if (!program || program.status === "exited") return false;
     const now = Date.now();
-    await ctx.db.patch(program._id, { status: "manual_review", nextProcessAt: undefined, updatedAt: now });
+    await ctx.db.patch(program._id, { status: "manual_review", nextProcessAt: undefined,
+      processingDiagnosticCode: args.diagnosticCode.slice(0, 120),
+      processingDiagnosticDetail: args.diagnosticDetail ? redactSignerDiagnostic(args.diagnosticDetail) : undefined,
+      updatedAt: now });
     const state = await ctx.db.query("automatedFeeEngineState").withIndex("by_key", (q) => q.eq("key", ENGINE_KEY)).unique();
     const patch = { lastStatus: "failed" as const, lastDiagnosticCode: args.diagnosticCode.slice(0, 120), updatedAt: now };
     if (state) await ctx.db.patch(state._id, patch);
     else await ctx.db.insert("automatedFeeEngineState", { key: ENGINE_KEY, ...patch });
     console.error("automated_fee_program_manual_review", {
       programId: String(program._id), diagnosticCode: args.diagnosticCode.slice(0, 120),
-      diagnosticDetail: args.diagnosticDetail?.slice(0, 500),
+      diagnosticDetail: args.diagnosticDetail ? redactSignerDiagnostic(args.diagnosticDetail) : undefined,
     });
     return true;
   },
 });
 
 export const deferProgramWithoutRun = internalMutation({
-  args: { programId: v.id("automatedFeePrograms"), diagnosticCode: v.string(), delayMs: v.number() },
+  args: { programId: v.id("automatedFeePrograms"), diagnosticCode: v.string(), diagnosticDetail: v.optional(v.string()), delayMs: v.number() },
   handler: async (ctx, args) => {
     const program = await ctx.db.get(args.programId);
     if (!program || program.status !== "enrolled") return false;
     const now = Date.now();
     const delay = Math.max(args.delayMs, feeRetryDelay(program.workAttempts ?? 0));
     await ctx.db.patch(program._id, { workDueAt: now + delay, workAttempts: (program.workAttempts ?? 0) + 1,
-      processingDiagnosticCode: args.diagnosticCode.slice(0, 120), updatedAt: now });
+      processingDiagnosticCode: args.diagnosticCode.slice(0, 120),
+      processingDiagnosticDetail: args.diagnosticDetail ? redactSignerDiagnostic(args.diagnosticDetail) : undefined,
+      updatedAt: now });
     await ctx.scheduler.runAfter(delay, internal.automatedFeeQueue.dispatch, {});
     const state = await ctx.db.query("automatedFeeEngineState").withIndex("by_key", (q) => q.eq("key", ENGINE_KEY)).unique();
     if (state) await ctx.db.patch(state._id, { lastDiagnosticCode: args.diagnosticCode.slice(0, 120), updatedAt: now });
@@ -2042,6 +2048,7 @@ export const recordFeeAssessment = internalMutation({
     const run = args.runId ? await ctx.db.get(args.runId) : null;
     if (run && (run.programId !== program._id || feeRunHasTransaction(run))) throw new Error("fee assessment cannot discard an existing transaction");
     await ctx.db.patch(program._id, { lastCheckedAt: now, workAttempts: 0,
+      processingDiagnosticDetail: undefined,
       availableCreatorFeesEthWei: args.valueWei, availableCreatorFees: args.assetAmount,
       accumulationThresholdWei: FEE_ACCUMULATION_THRESHOLD_WEI.toString(),
       processingDiagnosticCode: eligible ? "FEES_READY" : operatorWait ? "WAITING_PONS_OPERATOR" : "ACCUMULATING",
@@ -2353,6 +2360,7 @@ export const processProgram = internalAction({
           await ctx.runMutation(internal.automatedFeeEngine.deferProgramWithoutRun, {
             programId: program._id,
             diagnosticCode: detail.match(/AUTOMATED_FEE_[A-Z_]+/)?.[0] ?? "AUTOMATED_FEE_TRANSIENT_PRE_RUN_FAILURE",
+            diagnosticDetail: detail,
             delayMs: Math.max(60_000, Math.min(60 * 60_000, Number((error as { retryAfterMs?: number })?.retryAfterMs) || 0)),
           });
         }

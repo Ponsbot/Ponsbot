@@ -309,6 +309,7 @@ export default defineSchema({
     availableCreatorFees: v.optional(v.string()),
     accumulationThresholdWei: v.optional(v.string()),
     processingDiagnosticCode: v.optional(v.string()),
+    processingDiagnosticDetail: v.optional(v.string()),
     workState: v.optional(v.union(v.literal("idle"), v.literal("waiting"), v.literal("running"))),
     workDueAt: v.optional(v.number()),
     workLeaseId: v.optional(v.string()),

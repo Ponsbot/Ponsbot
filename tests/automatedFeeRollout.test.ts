@@ -78,6 +78,24 @@ function fixture() {
 }
 
 describe("economic fee queue", () => {
+  it("persists the actual manual-review reason instead of an old transient label", async () => {
+    const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0];
+    p.processingDiagnosticCode = "AUTOMATED_FEE_TRANSIENT_PRE_RUN_FAILURE";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await handler(engine.markProgramManualReview)(ctx, { programId: "p", diagnosticCode: "AUTOMATED_FEE_ENROLLMENT_STATE_MISMATCH",
+      diagnosticDetail: "controller mismatch https://rpc.example/private-api-key" });
+    expect(p.status).toBe("manual_review");
+    expect(p.processingDiagnosticCode).toBe("AUTOMATED_FEE_ENROLLMENT_STATE_MISMATCH");
+    expect(p.processingDiagnosticDetail).toBe("controller mismatch [url-redacted]");
+  });
+  it("retains safe pre-run diagnostics without reviving stopped programs", async () => {
+    const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0];
+    await handler(engine.deferProgramWithoutRun)(ctx, { programId: "p", diagnosticCode: "RPC_RETRY", diagnosticDetail: "header not found api_key=secret-value", delayMs: 60_000 });
+    expect(p.processingDiagnosticDetail).toBe("header not found api_key=[redacted]");
+    p.status = "manual_review";
+    expect(await handler(engine.deferProgramWithoutRun)(ctx, { programId: "p", diagnosticCode: "RPC_RETRY", delayMs: 0 })).toBe(false);
+    expect(p.status).toBe("manual_review");
+  });
   it("retroactively accelerates a recent launch and reserves only one worker", async () => {
     const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0], now = Date.now();
     const createdAt = now - 35 * 60_000;

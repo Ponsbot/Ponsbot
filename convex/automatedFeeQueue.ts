@@ -223,7 +223,7 @@ export const status = internalQuery({
       token: p.tokenAddress, state: p.workState ?? "not_checked", nextCheckAt: p.nextProcessAt,
       nextAttemptAt: p.workDueAt, lastCheckedAt: p.lastCheckedAt, lastPaidAt: p.lastPaidAt,
       lastCheckLatenessMs: p.lastCheckLatenessMs, availableCreatorFeesEthWei: p.availableCreatorFeesEthWei,
-      thresholdWei: p.accumulationThresholdWei, reason: p.processingDiagnosticCode,
+      thresholdWei: p.accumulationThresholdWei, reason: p.processingDiagnosticCode, detail: p.processingDiagnosticDetail,
       overdueMs: Math.max(0, now - (p.workDueAt ?? p.nextProcessAt ?? now)),
     })) };
   },
