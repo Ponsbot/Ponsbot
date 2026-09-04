@@ -233,6 +233,14 @@ function textOutsideQuotedContent(text: string) {
   return text.replace(/"[^"\r\n]*"|“[^”\r\n]*”|'[^'\r\n]*'|‘[^’\r\n]*’/g, (value) => " ".repeat(value.length));
 }
 
+/** An unqualified final spend in a launch refers to that launch, not another asset. */
+export function trailingLaunchBuy(text: string) {
+  const operative = textOutsideQuotedContent(text);
+  const match = /\b(?:and\s+)?(?:please\s+)?(?:buy|purchase)\s+(?:\$([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)(?:\s+USD)?|([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)\s+ETH)(?:\s+worth)?(?:\s+please)?[\s.!?,;]*(?:@ponsbotfamily[\s.!?,;]*)?$/i.exec(operative);
+  if (!match || /\b(?:dev|developer|initial)\s*$/i.test(operative.slice(0, match.index))) return undefined;
+  return { index: match.index, amount: cleanAmount(match[1] || match[2]), unit: match[1] ? "usd" as const : "eth" as const };
+}
+
 export function launchFeeOptionsFromText(text: string) {
   const operative = textOutsideQuotedContent(text);
   const assigned = operative.match(/\bassign fees to\s+(@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i)?.[1];
@@ -363,6 +371,8 @@ function quotedField(text: string, label: string, maxLength: number) {
 }
 
 export function extractGroundedLaunchName(text: string) {
+  const trailingBuy = trailingLaunchBuy(text);
+  if (trailingBuy) text = text.slice(0, trailingBuy.index).trim().replace(/[,;]+$/, "");
   const quoted = text.match(/\b(?:(?:full|token)\s+name|name|called|named)\s*(?:is|=|:)?\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
     || text.match(/\b(?:(?:full|token)\s+name|name|called|named)\s*(?:is|=|:)?\s*['\u2018]([^'\u2019]{1,48})['\u2019]/i)?.[1]
     || text.match(/\b(?:launch|create|deploy)\s*["\u201c]([^"\u201d]{1,48})["\u201d]/i)?.[1]
@@ -476,7 +486,8 @@ function parseLaunch(text: string): WalletCommand | null {
   const pairBuy = text.match(new RegExp(`(?:dev\\s*buys?|buy)[^0-9]{0,16}${NUMBER}\\s+(?!eth\\b|weth\\b|usd\\b|dollars?\\b)([A-Za-z][A-Za-z0-9]{0,11})\\b`, "i"));
   const leadingPairBuy = text.match(new RegExp(`${NUMBER}\\s+((?!eth\\b|weth\\b|usd\\b|dollars?\\b)[A-Za-z][A-Za-z0-9]{0,11})[^,.;]{0,20}(?:developer\\s*buy|dev\\s*buys?|buy|for\\s+dev)`, "i"));
   const parsedEthBuy = ethBuy || leadingEthBuy;
-  const parsedDevBuy = usdBuy || leadingUsdBuy
+  const finalBuy = trailingLaunchBuy(text);
+  const parsedDevBuy = finalBuy ? { amount: finalBuy.amount, unit: finalBuy.unit } : usdBuy || leadingUsdBuy
     ? { amount: cleanAmount((usdBuy || leadingUsdBuy)![1]), unit: "usd" as const }
     : parsedEthBuy ? { amount: cleanAmount(parsedEthBuy[1]), unit: "eth" as const }
       : pairBuy || leadingPairBuy ? { amount: cleanAmount((pairBuy || leadingPairBuy)![1]), unit: "pair" as const } : undefined;

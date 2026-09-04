@@ -1,5 +1,5 @@
 import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
-import { ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { trailingLaunchBuy, ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
 import { PUBLISHED_PAIR_SYMBOLS } from "../lib/pair-catalog";
@@ -365,6 +365,7 @@ Important distinctions:
 - Three explicit multi-step operations are supported: buy_and_send, buy_and_burn, and swap_token_for_token. A token-to-token swap qualifies only when it closely follows "swap $AMOUNT of SOURCE to DESTINATION" or "swap $AMOUNT of SOURCE for DESTINATION", includes the literal word swap, a dollar amount, two explicit tickers or contracts, and the connector "to" or "for". Do not infer this operation from loose trading language.
 - Every other post requesting two or more operations is unknown_wallet, even when its first operation is complete. Never shorten "show my wallet and my balance" to show_wallet, "send and burn" to send, or "launch ... and buy another token" to launch. A buy is a launch developer buy when explicitly labeled dev buy, developer buy, initial buy, or buy at launch. In an otherwise clear launch, a trailing incomplete-spend phrase such as "buy $20 worth" or "purchase $20 worth" also means a $20 USD developer buy because it does not name a separate token. By contrast, "buy $20 worth of PONS" names a separate asset and remains a second buy operation.
 - @Ponsbotfamily normally invokes the bot and is not a transfer recipient. It can be the recipient only when it appears a second time in an explicit destination position, such as "Hey @Ponsbotfamily, send 5 PONSBOT to @Ponsbotfamily".
+- A clear launch ending with "buy $20", "and buy $20", "purchase $20", or "buy 0.01 ETH" is a single launch with a developer buy, including optional worth/please. This applies only when the final buy does not name another token or recipient.
 - A command missing required parameters is still classified by operation; the specialized extractor will reject it safely.
 
 Representative examples (learn the intent distinction, not the exact wording):
@@ -441,6 +442,7 @@ export function parameterExtractorPrompt(operation: WalletOperation, hasImage: b
   return `Extract parameters for exactly one ${operation} command. The intent classifier has already selected this operation. Do not change the operation, answer the user, or infer missing values. Return one JSON object only. If any required parameter is missing or ambiguous, set kind to "invalid". When the response format requires other properties, set every unavailable property to null.
 
 ${extractionInstructions[operation]}
+${operation === "launch" ? 'In a clear launch, trailing "buy $20", "and buy $20", "purchase $20", or "buy 0.01 ETH" (optionally ending with worth or please) is a developer buy of the new token. Use USD for dollar amounts and ETH for ETH amounts. A buy naming a different token is a separate operation, not a developer buy.' : ""}
 ${extractionReliabilityGuidance[operation] || ""}
 ${operation === "send" || operation === "burn" ? 'An ETH-denominated token amount uses unit eth and retains the target token: "send 0.0018 ETH of GIGAPONS to @alice" means amount 0.0018, unit eth, token GIGAPONS, recipient @alice. "burn 0.001 ETH worth of PONSBOT" means amount 0.001, unit eth, token PONSBOT. These move existing tokens of that approximate ETH value, never native ETH and never a new purchase. A plain "send 0.001 ETH to @alice" remains a native ETH send.' : ""}
 ${operation === "launch" ? 'Image instructions such as "use this image as logo" or "using this picture as the logo" are media guidance, not name or ticker values. A ticker label followed only by an image instruction contains no ticker; apply the name-only launch rule. Do not extract AS, USE, or LOGO from image guidance. An explicitly supplied ticker AS, USE, or LOGO is still valid.' : ""}
@@ -507,6 +509,8 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
       }
       item.devBuy = devBuy;
     }
+    const finalBuy = trailingLaunchBuy(text);
+    if (finalBuy) item.devBuy = Number(finalBuy.amount) > 0 ? { amount: finalBuy.amount, unit: finalBuy.unit } : undefined;
     normalizedValue = item;
   }
   let command = validateStructuredWalletCommand(normalizedValue);
@@ -872,7 +876,8 @@ export function requestedOperations(text: string): WalletOperation[] {
   const unquotedText = withoutQuotedContent(text);
   const hasLaunchDirective = /\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i.test(unquotedText);
   const launchWorthAllocation = /\b(?:buy|purchase)\s+\$[0-9][0-9,.]*(?:\.\d+)?\s+(?:usd\s+)?worth\b(?!\s+of\b)/gi;
-  const operationText = unquotedText
+  const finalBuy = hasLaunchDirective ? trailingLaunchBuy(text) : undefined;
+  const operationText = (finalBuy ? unquotedText.slice(0, finalBuy.index) : unquotedText)
     .replace(/\b(?:developer|dev)\s+(?:buy|purchase)\b/gi, "developer allocation")
     .replace(/\binitial\s+buy\b/gi, "initial allocation")
     .replace(/\bbuy\s+at\s+launch\b|\bbuy\b[^.!?\n]{0,40}\b(?:at\s+launch|for\s+dev)\b|\bat\s+launch[^.!?\n]{0,30}\bbuy\b/gi, "launch allocation")
