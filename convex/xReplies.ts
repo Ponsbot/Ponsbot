@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { unverifiedReplyDay, UNVERIFIED_REPLY_LIMIT, admitUnverifiedContinuation } from "./lib/xUnverifiedReplyLimit";
 import {
   internalAction,
   internalMutation,
@@ -486,6 +487,10 @@ export const consumeReplyLimit = internalMutation({
   handler: async (ctx, { xUserId, premium, postId }) => {
     if (postId) {
       const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", postId)).unique();
+      if (interaction?.authorXUserId === xUserId && interaction.authorVerified !== true
+        && (await unverifiedReplyDay(ctx, xUserId)).count >= UNVERIFIED_REPLY_LIMIT
+        && !await admitUnverifiedContinuation(ctx, interaction))
+        return { allowed: false, reason: "unverified daily reply limit", shouldNotify: false };
       if (interaction && interaction.authorXUserId === xUserId && !interaction.replySuppressedReason &&
         !["completed", "rejected"].includes(interaction.status) && interaction.commandKind !== "operator_cancelled" &&
         await liquidityAdmissionExempt(ctx, { ownerXUserId: xUserId, text: interaction.text, parentPostId: interaction.parentPostId, postId }))

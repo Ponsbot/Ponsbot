@@ -16,6 +16,12 @@ export default defineSchema({
   ...liquidityTables,
   ...liquidityWorkflowTables,
   ...xReplyQueueTables,
+  xUnverifiedReplyDays: defineTable({
+    xUserId: v.string(), day: v.string(), count: v.number(),
+    continuationPostId: v.optional(v.string()),
+    continuationUntil: v.optional(v.number()),
+    continuationConsumer: v.optional(v.string()),
+  }).index("by_user_day", ["xUserId", "day"]),
   xReplyUsers: defineTable({
     xUserId: v.string(),
     username: v.string(),

@@ -79,6 +79,64 @@ async function add(ctx: ReturnType<typeof fixture>, key: string, priority: "A" |
   return invoke(queue.enqueue, ctx, { key, postId: key, kind: "reply", text: priority === "A" ? "✅ Bought 10 TEST!" : priority === "B" ? "⚠️ More than one indexed token uses that ticker." : "💡 Tell me buy or sell.", ...extra });
 }
 const take = (ctx: ReturnType<typeof fixture>) => invoke(queue.takeNext, ctx, { wakeToken: state(ctx).wakeToken });
+
+describe("unverified daily reply budget", () => {
+  it("warns on 7, caps all kinds at 10, deduplicates, and resets at UTC midnight", async () => {
+    const ctx = fixture();
+    for (let n = 1; n <= 11; n++) {
+      const id = `daily-${n}`;
+      await source(ctx, id, "buy", { authorXUserId: "limited", authorVerified: false });
+      const args = { key: id, postId: id, kind: n % 2 ? "liquidity" : "reply", text: "Result" };
+      const result = await invoke(queue.enqueue, ctx, args);
+      expect(result.status).toBe(n <= 10 ? "queued" : "cancelled");
+      if (n <= 10) {
+        expect(row(ctx, id).text.includes("7 of your 10")).toBe(n === 7);
+        await invoke(queue.enqueue, ctx, args);
+      }
+    }
+    expect(ctx.rows.xUnverifiedReplyDays[0].count).toBe(10);
+    expect(await invoke(replies.consumeReplyLimit, ctx, { xUserId: "limited", premium: true, postId: "daily-11" }))
+      .toMatchObject({ allowed: false, shouldNotify: false });
+    vi.setSystemTime(new Date("2026-09-01T00:00:01Z"));
+    await source(ctx, "next-day", "buy", { authorXUserId: "limited", authorVerified: false });
+    expect((await invoke(queue.enqueue, ctx, { key: "next-day", postId: "next-day", kind: "reply", text: "Result" })).status).toBe("queued");
+  });
+  it("allows an owned workflow to finish, but not siblings or another task after completion", async () => {
+    const ctx = fixture();
+    await ctx.db.insert("xUnverifiedReplyDays", { xUserId: "limited", day: "2026-08-31", count: 9 });
+    const first = await source(ctx, "step1", "guided_help:launch", { authorXUserId: "limited", authorVerified: false });
+    await invoke(queue.enqueue, ctx, { key: "step1", postId: "step1", kind: "guided_reply", text: "Provide a ticker." });
+    await ctx.db.patch(first, { responsePostId: "bot1" });
+    const second = await source(ctx, "step2", "guided_help:launch", { authorXUserId: "limited", authorVerified: false, parentPostId: "bot1" });
+    expect((await invoke(queue.enqueue, ctx, { key: "step2", postId: "step2", kind: "guided_reply", text: "Confirm to launch." })).status).toBe("queued");
+    await ctx.db.patch(second, { responsePostId: "bot2" });
+    await source(ctx, "sibling", "guided_help:launch", { authorXUserId: "limited", authorVerified: false, parentPostId: "bot1" });
+    expect((await invoke(queue.enqueue, ctx, { key: "sibling", postId: "sibling", kind: "guided_reply", text: "Confirm." })).status).toBe("cancelled");
+    const final = await source(ctx, "step3", "guided_help:root", { authorXUserId: "limited", authorVerified: false, parentPostId: "bot2" });
+    expect((await invoke(queue.enqueue, ctx, { key: "step3", postId: "step3", kind: "guided_execution", text: "✅ Launched!\n\nAnything else?" })).status).toBe("queued");
+    await ctx.db.patch(final, { responsePostId: "bot3" });
+    await source(ctx, "new-task", "guided_help:buy", { authorXUserId: "limited", authorVerified: false, parentPostId: "bot3" });
+    expect((await invoke(queue.enqueue, ctx, { key: "new-task", postId: "new-task", kind: "guided_reply", text: "What token?" })).status).toBe("cancelled");
+    expect(ctx.rows.xUnverifiedReplyDays[0].count).toBe(12);
+  });
+  it.each(["expired", "wrong-owner"])("does not extend a %s chain", async scenario => {
+    const ctx = fixture();
+    await ctx.db.insert("xUnverifiedReplyDays", { xUserId: "limited", day: "2026-08-31", count: 10,
+      continuationPostId: "parent", continuationUntil: Date.now() + (scenario === "expired" ? -1 : 60_000) });
+    await source(ctx, "parent", "guided_help:launch", { authorXUserId: scenario === "wrong-owner" ? "other" : "limited", responsePostId: "bot" });
+    await source(ctx, "child", "guided_help:launch", { authorXUserId: "limited", authorVerified: false, parentPostId: "bot" });
+    expect((await invoke(queue.enqueue, ctx, { key: "child", postId: "child", kind: "guided_reply", text: "Next." })).status).toBe("cancelled");
+  });
+  it("does not impose this budget on verified users", async () => {
+    const ctx = fixture();
+    for (let n = 0; n < 17; n++) {
+      const id = `verified-${n}`;
+      await source(ctx, id, "buy", { authorXUserId: "verified", authorVerified: true });
+      expect((await invoke(queue.enqueue, ctx, { key: id, postId: id, kind: "reply", text: "Result" })).status).toBe("queued");
+    }
+    expect(ctx.rows.xUnverifiedReplyDays || []).toHaveLength(0);
+  });
+});
 async function done(ctx: ReturnType<typeof fixture>, picked: any, extra: Row = {}) {
   return invoke(queue.finish, ctx, { queueId: picked.row._id, leaseToken: picked.leaseToken, outcome: "published", responsePostId: `reply-${picked.row.key}`, ...extra });
 }

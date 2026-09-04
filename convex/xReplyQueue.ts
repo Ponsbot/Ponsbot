@@ -7,6 +7,7 @@ import { queueKind } from "./lib/xReplyQueueSchema";
 import { replyQueueExpiresAt, replyQueuePriority, replyQueueWaitMs } from "../lib/x-reply-queue-policy";
 import { temporaryXReplySuppressionReason } from "../lib/x-temporary-reply-policy";
 import { xCashtagSafeText } from "../lib/x-cashtag-policy";
+import { reserveUnverifiedReply, UNVERIFIED_REPLY_WARNING } from "./lib/xUnverifiedReplyLimit";
 import {
   guidedHelpCommandKind,
   guidedHelpOperationFromCommandKind,
@@ -117,7 +118,7 @@ export const enqueue = internalMutation({
     if (prior && prior.status !== "rejected") return { status: "uncertain" };
     if (!prior && interaction?.publicationAttempted && args.key === args.postId) return { status: "uncertain" };
     if (interaction && args.key === args.postId && ["completed", "rejected"].includes(interaction.status)) return { status: "cancelled" };
-    const safeText = xCashtagSafeText(args.text);
+    let safeText = xCashtagSafeText(args.text);
     const suppressedReason = temporaryXReplySuppressionReason(safeText);
     if (suppressedReason) {
       if (interaction) await ctx.db.patch(interaction._id, { status: "rejected", publicationStatus: "suppressed", replySuppressedReason: suppressedReason,
@@ -150,10 +151,21 @@ export const enqueue = internalMutation({
     const priority = replyQueuePriority(safeText, priorityAuthority, args.ok);
     const now = Date.now();
     const user = interaction ? await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", q => q.eq("xUserId", interaction.authorXUserId)).unique() : null;
+    let dailyWarning = false;
+    if (interaction && (interaction.authorVerified ?? user?.verified) !== true) {
+      const budget = await reserveUnverifiedReply(ctx, interaction.authorXUserId, interaction, safeText, effectiveKind);
+      if (!budget.allowed) {
+        await ctx.db.patch(interaction._id, { publicationQueued: false, publicationStatus: "suppressed",
+          replySuppressedReason: "unverified_daily_reply_limit", nextRetryAt: undefined, updatedAt: now });
+        return { status: "cancelled" };
+      }
+      dailyWarning = budget.warning;
+      if (dailyWarning) safeText += `\n\n${UNVERIFIED_REPLY_WARNING}`;
+    }
     const standalone = args.kind === "graduation" || process.env.X_STANDALONE_MENTIONS_ENABLED === "true";
     await ctx.db.insert("xReplyQueue", {
       ...args, text: safeText, kind: effectiveKind, ok: args.ok ?? (priority === "C" ? commandKind === "help" || commandKind === "show_wallet" || commandKind === "show_balance" || commandKind === "create_wallet" : /^✅/.test(safeText.trim())),
-      priority, standalone, allowLong: args.allowLong === true, ...(user?.username ? { username: user.username } : {}),
+      priority, standalone, allowLong: args.allowLong === true || dailyWarning, ...(user?.username ? { username: user.username } : {}),
       status: "queued", readyAt: now, expiresAt: replyQueueExpiresAt(priority, now), nextAttemptAt: now, attempts: 0, updatedAt: now,
     });
     if (interaction) await ctx.db.patch(interaction._id, {
