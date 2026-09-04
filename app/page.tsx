@@ -18,7 +18,7 @@ export default async function Home() {
     <SiteHeader />
     <section className="home-hero">
       <div className="hero-copy">
-        <h1>Your <span style={{ color: "var(--lime)" }}>everything</span> bot on <span style={{ color: "var(--lime)", whiteSpace: "nowrap" }}>Robinhood.</span></h1>
+        <h1 style={{ fontSize: "clamp(30px, 5vw, 76px)", letterSpacing: "-.055em" }}><span style={{ display: "block", whiteSpace: "nowrap" }}>Your <span style={{ color: "#72ae44" }}>everything</span></span><span style={{ display: "block", whiteSpace: "nowrap" }}>bot on <span style={{ color: "#72ae44" }}>Robinhood.</span></span></h1>
         <p className="hero-lede" style={{ maxWidth: "none" }}>Launch on Pons, swap, send, liquidity, and more with just an X post.</p>
         <div className="hero-actions"><a className="button button-primary" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer">@ponsbotfamily</a><Link className="button button-quiet" href="/how-it-works">HOW IT WORKS →</Link></div>
       </div>
