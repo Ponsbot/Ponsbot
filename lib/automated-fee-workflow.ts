@@ -40,8 +40,13 @@ export function isTerminalAutomatedFeeControllerReview(record: AutomatedFeeContr
 
 export function automatedFeeFailureRequiresManualReview(detail: string) {
   if (automatedFeeRejectedPreBroadcastStage(detail)) return false;
+  // The transport wrapper starts with "automated fee". Do not let its generic
+  // "Missing or invalid parameters" RPC error masquerade as a protocol invariant
+  // failure. Read-only inspections can be retried with a fresh pinned block;
+  // saved signed envelopes/receipts remain authoritative on the next pass.
+  const reason = detail.replace(/^automated fee signer request failed \[[^\]]+\]:\s*/i, "");
   return /\bAUTOMATED_FEE_[A-Z_]*(?:MISMATCH|REVERTED|DROPPED|INVALID)\b/i.test(detail)
-    || /automated fee[^\n]*(?:mismatch|reverted|dropped|invalid|out of order)/i.test(detail);
+    || /automated fee[^\n]*(?:mismatch|reverted|dropped|invalid|out of order)/i.test(reason);
 }
 
 /** Only an explicit simulation rejection before signing can get a new quote.

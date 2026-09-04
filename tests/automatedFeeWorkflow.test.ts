@@ -29,6 +29,9 @@ describe("automated fee workflow continuation", () => {
     expect(automatedFeeFailureRequiresManualReview("automated fee signer request failed [/v1/automated-fees/broadcast]: Missing or invalid parameters. max fee per gas less than block base fee")).toBe(false);
     expect(automatedFeeFailureRequiresManualReview("AUTOMATED_FEE_PROCESSING_REVERTED")).toBe(true);
     expect(automatedFeeFailureRequiresManualReview("automated fee processing receipt mismatch")).toBe(true);
+    expect(automatedFeeFailureRequiresManualReview('automated fee signer request failed [/v1/automated-fees/inspect]: SIGNER_INTERNAL_FAILURE: Missing or invalid parameters.\nRequest body: {"method":"eth_call"}\nDetails: header not found')).toBe(false);
+    expect(automatedFeeFailureRequiresManualReview('automated fee signer request failed [/v1/automated-fees/inspect]: AUTOMATED_FEE_ENROLLMENT_STATE_MISMATCH')).toBe(true);
+    expect(automatedFeeFailureRequiresManualReview('automated fee signer request failed [/v1/automated-fees/status]: automated fee receipt invalid')).toBe(true);
   });
 
   it("identifies deterministic pre-broadcast fee-envelope rejections", () => {
