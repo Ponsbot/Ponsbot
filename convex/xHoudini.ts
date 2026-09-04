@@ -604,6 +604,7 @@ function decodeCommand(raw: string) {
 
 export const createQuote = internalAction({
   args: {
+    telegramUpdateId: v.optional(v.string()),
     requestPostId: v.string(),
     ownerXUserId: v.string(),
     walletAddress: v.string(),
@@ -638,6 +639,7 @@ export const createQuote = internalAction({
 });
 export const storeQuote = internalMutation({
   args: {
+    telegramUpdateId: v.optional(v.string()),
     requestPostId: v.string(),
     ownerXUserId: v.string(),
     amount: v.string(),
@@ -663,6 +665,7 @@ export const storeQuote = internalMutation({
   handler: async (ctx, args) =>
     await ctx.db.insert("xHoudiniQuotes", {
       requestPostId: args.requestPostId,
+      ...(args.telegramUpdateId ? { telegramUpdateId: args.telegramUpdateId } : {}),
       deliverySource: args.deliverySource ?? "x",
       ...(args.telegramUserId ? { telegramUserId: args.telegramUserId } : {}),
       ...(args.telegramChatId ? { telegramChatId: args.telegramChatId } : {}),
@@ -1305,6 +1308,7 @@ async function fund(
         recipient: row.depositAddress,
       }),
       source: row.deliverySource === "telegram" ? "telegram" : "x",
+      ...(row.telegramUpdateId ? { telegramUpdateId: row.telegramUpdateId } : {}),
       channel: row.deliverySource === "telegram" ? "telegram_chat" : "x_reply",
     });
   } catch (error) {
@@ -1401,6 +1405,10 @@ export const executeConfirmed = internalAction({
         args.ownerXUserId,
         args.walletAddress,
       );
+      return;
+    }
+    if (row.deliverySource === "telegram" && !await ctx.runQuery(internal.telegram.executionAuthorized, { updateId: row.telegramUpdateId, ownerXUserId: row.ownerXUserId })) {
+      await final(ctx, args.quoteId, "failed", "Telegram wallet access changed. Start a new request from your linked account.", false, "TELEGRAM_LINK_REVOKED");
       return;
     }
     // A failed precheck is definitive: no exchange POST or funding took place.
@@ -1529,6 +1537,7 @@ export const refreshExpired = internalAction({
           deliverySource: row.deliverySource,
           ...(row.telegramUserId ? { telegramUserId: row.telegramUserId } : {}),
           ...(row.telegramChatId ? { telegramChatId: row.telegramChatId } : {}),
+          ...(row.telegramUpdateId ? { telegramUpdateId: row.telegramUpdateId } : {}),
         }),
         publication = await ctx.runAction(
           internal.xReplies.publishHoudiniOutcome,
@@ -1607,6 +1616,7 @@ export const refreshImmediate = internalAction({
         deliverySource: row.deliverySource,
         ...(row.telegramUserId ? { telegramUserId: row.telegramUserId } : {}),
         ...(row.telegramChatId ? { telegramChatId: row.telegramChatId } : {}),
+        ...(row.telegramUpdateId ? { telegramUpdateId: row.telegramUpdateId } : {}),
       });
       const activated = await ctx.runMutation(
         internal.xHoudini.startImmediateExecution,

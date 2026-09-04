@@ -34,6 +34,12 @@ function fixture(links: Array<Record<string, unknown>>) {
 }
 
 describe("Telegram account linking", () => {
+  it("consumes a confirmation once even when it is submitted again", async () => {
+    const f = fixture([]);
+    expect(await handler(f.ctx, { nonceHash: "hash", ownerXUserId: "x-new" })).toMatchObject({ status: "linked" });
+    expect(await handler(f.ctx, { nonceHash: "hash", ownerXUserId: "x-new" })).toMatchObject({ status: "expired" });
+    expect(f.inserted).toHaveLength(1);
+  });
   it("allows both identities to be reused once their previous links are revoked", async () => {
     const f = fixture([
       { _id: "old-tg", telegramUserId: "tg-new", ownerXUserId: "x-old", revokedAt: 1, updatedAt: 1 },

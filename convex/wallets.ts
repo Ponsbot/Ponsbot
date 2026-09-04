@@ -764,6 +764,7 @@ export const consumeWalletLimit = internalMutation({
 
 export const reserveWalletRequest = internalMutation({
   args: {
+    telegramUpdateId: v.optional(v.string()),
     requestId: v.string(),
     sourcePostId: v.string(),
     ownerXUserId: v.string(),
@@ -864,6 +865,7 @@ export const reserveWalletRequest = internalMutation({
     const id = await ctx.db.insert("walletRequests", {
       ...args,
       ...(args.kind === "claim_fees" ? { vaultClaimVersion: 1 } : {}),
+      ...(args.telegramUpdateId ? {} : parent?.telegramUpdateId ? { telegramUpdateId: parent.telegramUpdateId } : {}),
       ...(args.source ? {} : parent?.source ? { source: parent.source } : {}),
       ...(args.channel
         ? {}
@@ -2760,8 +2762,9 @@ export const reconcileTransaction = internalAction({
         ...(expectedFactory ? { expectedFactory } : {}),
         ...(expectedCreatorFeeRecipient ? { expectedCreatorFeeRecipient } : {}),
       };
+      const telegramAuthorized = current.request.source !== "telegram" || await ctx.runQuery(internal.telegram.executionAuthorized, { updateId: current.request.telegramUpdateId, ownerXUserId: current.request.ownerXUserId });
       const result =
-        current.request.status === "prepared"
+        current.request.status === "prepared" && telegramAuthorized
           ? await signerRequest<SubmittedTransaction>(
               "/v1/transactions/broadcast",
               {
@@ -2792,6 +2795,7 @@ export const reconcileTransaction = internalAction({
         });
         return;
       }
+      if (result.status !== "confirmed") throw new Error(telegramAuthorized ? "transaction confirmation unavailable" : "TELEGRAM_LINK_REVOKED_PENDING_RECONCILIATION");
       if (
         current.transaction.callKind.startsWith("pons_v2_launch") &&
         (!result.tokenAddress || !result.poolAddress)
@@ -3279,7 +3283,14 @@ function sanitizedDiagnosticDetail(error: unknown) {
     .slice(0, 500);
 }
 
+async function requireTelegramRequestAuthorization(ctx: ActionCtx, requestId: string) {
+  const request = await ctx.runQuery(internal.wallets.getWalletRequest, { requestId });
+  if (request?.source === "telegram" && !await ctx.runQuery(internal.telegram.executionAuthorized, { updateId: request.telegramUpdateId, ownerXUserId: request.ownerXUserId }))
+    throw new Error("TELEGRAM_LINK_REVOKED");
+}
+
 async function submit(
+  ctx: ActionCtx,
   wallet: { signerWalletRef: string; address: string },
   xUserId: string,
   requestId: string,
@@ -3287,6 +3298,7 @@ async function submit(
   minimumNonce?: number,
 ) {
   if (!executionEnabled()) throw new Error("crypto execution is disabled");
+  await requireTelegramRequestAuthorization(ctx, requestId);
   const launch =
     operation.type === "pons_v2_launch" ||
     operation.type === "pons_v2_launch_and_buy";
@@ -3355,6 +3367,7 @@ export const ensureWallet = internalAction({
 
 export const executeCommand = internalAction({
   args: {
+    telegramUpdateId: v.optional(v.string()),
     sourcePostId: v.string(),
     xUserId: v.string(),
     text: v.string(),
@@ -3538,6 +3551,7 @@ export const executeCommand = internalAction({
         walletId: wallet._id,
         kind: command.kind,
         normalizedJson: JSON.stringify(command),
+        ...(args.telegramUpdateId ? { telegramUpdateId: args.telegramUpdateId } : {}),
         source,
         channel: args.channel || "x_reply",
       },
@@ -3617,6 +3631,11 @@ export const executeCommand = internalAction({
     // must still reconcile any transactions already sent before checking gas
     // for their next transaction at the signer.
     let vaultClaimEligible = false;
+    if (source === "telegram" && !await ctx.runQuery(internal.telegram.executionAuthorized, { updateId: reserved.request?.telegramUpdateId, ownerXUserId: args.xUserId })) {
+      const message = "Telegram wallet access changed. Start a new request from your linked account.";
+      await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "rejected", safeError: "TELEGRAM_LINK_REVOKED", finalMessage: message });
+      return { ok: false, message };
+    }
     let preflightClaimPlan: { tokenAddresses: string[]; hasClaimableFees: boolean } | undefined;
     let preflightResolvedClaimToken: string | undefined;
     if (command.kind === "claim_fees" && reserved.request?.vaultClaimVersion === 1 && requestedVaultClaimsEnabled()) {
@@ -7785,7 +7804,7 @@ async function submitWithApproval(
   requestId: string,
   operation: Record<string, unknown>,
 ) {
-  let result = await submit(wallet, xUserId, requestId, operation);
+  let result = await submit(ctx, wallet, xUserId, requestId, operation);
   if (!result.approvalRequired) return result;
   if (
     !result.approvalTokenAddress ||
@@ -7825,6 +7844,7 @@ async function submitWithApproval(
   if (approvalRecord?.status === "confirmed") {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
     result = await submit(
+      ctx,
       wallet,
       xUserId,
       requestId,
@@ -7843,6 +7863,7 @@ async function submitWithApproval(
   )
     throw new Error("previous token approval failed");
   if (!approvalRecord || approvalRecord.status === "prepared") {
+    await requireTelegramRequestAuthorization(ctx, requestId);
     const broadcast = await signerRequest<SubmittedTransaction>(
       "/v1/transactions/broadcast",
       {
@@ -7878,6 +7899,7 @@ async function submitWithApproval(
       // prevent reuse of the approval nonce even if one RPC remains behind.
       await new Promise((resolve) => setTimeout(resolve, 2_000));
       result = await submit(
+        ctx,
         wallet,
         xUserId,
         requestId,

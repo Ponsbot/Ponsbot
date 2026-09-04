@@ -338,6 +338,18 @@ export const boundUpdateLink = internalQuery({
   },
 });
 
+// Execution workers must validate the original intake record, never a new link.
+export const executionAuthorized = internalQuery({
+  args: { updateId: v.optional(v.string()), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    if (!args.updateId) return false;
+    const update = await ctx.db.query("telegramUpdates").withIndex("by_update_id", q => q.eq("updateId", args.updateId!)).unique();
+    if (!update || update.linkBindingVersion !== 1 || !update.boundLinkId || update.boundOwnerXUserId !== args.ownerXUserId) return false;
+    const link = await ctx.db.get(update.boundLinkId);
+    return Boolean(link && !link.revokedAt && link.ownerXUserId === args.ownerXUserId && link.telegramUserId === update.telegramUserId && link.telegramChatId === update.telegramChatId);
+  },
+});
+
 export const previewLink = action({
   args: { secret: v.string(), nonce: v.string() },
   handler: async (ctx, args): Promise<{ telegramUserId: string; telegramUsername?: string } | null> => {
@@ -669,6 +681,7 @@ export const processUpdate = internalAction({
           const quote = await ctx.runAction(internal.xHoudini.createQuote, {
             requestPostId: sourcePostId, ownerXUserId: link.ownerXUserId, walletAddress: wallet.address,
             commandJson: JSON.stringify(houdiniCommand), deliverySource: "telegram", telegramUserId, telegramChatId: chatId,
+            telegramUpdateId: args.updateId,
           });
           await sendMessage(chatId, `${quote.message}\n\nProcessing this route now.`);
           const activated = await ctx.runMutation(internal.xHoudini.startImmediateExecution, {
@@ -709,6 +722,7 @@ export const processUpdate = internalAction({
             xUserId: link.ownerXUserId,
             text: effectiveText,
             parsedCommandJson: JSON.stringify(intent.command),
+            telegramUpdateId: args.updateId,
             source: "telegram",
             channel: "telegram_chat",
             ...(recipientAddress ? { recipientAddress } : {}),

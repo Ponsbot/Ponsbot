@@ -1067,6 +1067,22 @@ describe("liquidity execution recovery (no external actions)", () => {
     if (due !== undefined) vi.setSystemTime(due);
   }
   const settled = { transactionHash: `0x${"a".repeat(64)}`, signedTransaction: "0xab", toAddress: "0x1111111111111111111111111111111111111111", valueWei: "0", nonce: 1, confirmed: true, blockNumber: "100" };
+  it.each(["prepare", "sign", "broadcast"])("revoked Telegram link blocks %s without changing saved assets", async stage => {
+    const envelope = { unsignedTransaction: "0x02", toAddress: settled.toAddress, valueWei: "0", nonce: 1, envelopeProof: "proof" };
+    const steps = stage === "prepare" ? [] : stage === "sign" ? [{ toAddress: settled.toAddress, valueWei: "0", nonce: 1, envelope }] : [{ ...settled, confirmed: false }];
+    const { ctx, actions, id } = await executionSetup(steps);
+    const conversation = ctx.data.get(ctx.data.get(id)!.conversationId)!;
+    await ctx.db.patch(conversation._id, { source: "telegram" });
+    await ctx.db.patch(conversation.currentTurnId, { requestKey: "telegram:456:123" });
+    const original = actions.runQuery;
+    actions.runQuery = (ref, args) => getFunctionName(ref) === "telegram:executionAuthorized" ? Promise.resolve(false) : original(ref, args);
+    chain.getTransactionReceipt.mockRejectedValue(new TransactionReceiptNotFoundError({ hash: settled.transactionHash as `0x${string}` }));
+    chain.getTransaction.mockRejectedValue(new TransactionNotFoundError({ hash: settled.transactionHash as `0x${string}` }));
+    vi.stubGlobal("fetch", vi.fn());
+    await invoke(execute, actions, { executionId: id });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(ctx.data.get(id)).toMatchObject({ diagnostic: "LP_TELEGRAM_LINK_REVOKED", stepsJson: JSON.stringify(steps) });
+  });
   it("reprices one reverted final open without repeating its confirmed funding step or publishing a failure", async () => {
     const final = { ...settled, transactionHash: `0x${"b".repeat(64)}`, nonce: 2, confirmed: false };
     const calls = [{ purpose: "funding_buy", to: settled.toAddress, value: "1", data: "0x12" }, { purpose: "open", to: final.toAddress, value: "0", data: "0x34" }];

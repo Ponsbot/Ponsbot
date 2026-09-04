@@ -1,8 +1,17 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createTelegramConsent, readTelegramConsent } from "../lib/telegram-link-consent";
-import { boundUpdateLink } from "../convex/telegram";
+import { boundUpdateLink, executionAuthorized } from "../convex/telegram";
 afterEach(() => vi.restoreAllMocks());
 describe("Telegram wallet consent", () => {
+  it.each(["valid", "revoked", "missing", "wrong-owner", "wrong-chat", "legacy"])("execution rechecks the exact stored link: %s", async scenario => {
+    const update = { linkBindingVersion: scenario === "legacy" ? undefined : 1, boundLinkId: "original", boundOwnerXUserId: "123", telegramUserId: "456", telegramChatId: "456" };
+    const link = scenario === "missing" ? null : { ownerXUserId: "123", telegramUserId: "456", telegramChatId: scenario === "wrong-chat" ? "789" : "456", revokedAt: scenario === "revoked" ? 1 : undefined };
+    const get = vi.fn(async () => link);
+    const ctx = { db: { query: () => ({ withIndex: () => ({ unique: async () => update }) }), get } };
+    const result = await (executionAuthorized as any)._handler(ctx, { updateId: "u", ownerXUserId: scenario === "wrong-owner" ? "other" : "123" });
+    expect(result).toBe(scenario === "valid");
+    if (get.mock.calls.length) expect(get).toHaveBeenCalledWith("original");
+  });
   it("binds nonce and authenticated owner, rejects tampering and expiry", () => {
     const token = createTelegramConsent("a".repeat(64), "123", "owner", "secret");
     expect(readTelegramConsent(token, "secret")?.ownerXUserId).toBe("123");

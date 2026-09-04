@@ -505,6 +505,7 @@ export default defineSchema({
     .index("by_token_address", ["tokenAddress"]),
 
   walletRequests: defineTable({
+    telegramUpdateId: v.optional(v.string()),
     requestId: v.string(),
     sourcePostId: v.string(),
     ownerXUserId: v.string(),
@@ -1143,6 +1144,7 @@ export default defineSchema({
     .index("by_retention_expires_at", ["retentionExpiresAt"]),
 
   xHoudiniQuotes: defineTable({
+    telegramUpdateId: v.optional(v.string()),
     requestPostId: v.string(),
     deliverySource: v.optional(v.union(v.literal("x"), v.literal("telegram"))),
     telegramUserId: v.optional(v.string()),

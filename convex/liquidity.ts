@@ -878,6 +878,11 @@ export const execute = internalAction({
     const steps = JSON.parse(context.execution.stepsJson) as SignedStep[];
     const readOnly = context.execution.status === "manual_review";
     let stage = "prepare";
+    const requireTelegramAuthority = async () => {
+      if (context!.conversation!.source !== "telegram") return;
+      const match = /^telegram:\d+:(\d+)$/.exec(context!.turn!.requestKey);
+      if (!await ctx.runQuery(internal.telegram.executionAuthorized, { updateId: match?.[1], ownerXUserId: context!.execution.ownerXUserId })) throw new Error("LP_TELEGRAM_LINK_REVOKED");
+    };
     try {
       await ctx.runMutation(internal.liquidity.executionHeartbeat, { ...args, stage });
       // Reconcile each collection independently. A restart must never collect
@@ -909,6 +914,7 @@ export const execute = internalAction({
             plan = await ctx.runMutation(internal.liquidity.replaceOpenPlan, { ...args, expectedProof: plan.proof, stepIndex, planJson: JSON.stringify(refreshed) });
           }
           const minimumNonce = steps.length > 0 ? steps.at(-1)!.nonce + 1 : 0;
+          await requireTelegramAuthority();
           await requireExecutionWrites(ctx);
           const idempotencyKey = liquidityStepIdempotencyKey(requestId, stepIndex, context.execution.openRecoveryCount);
           const envelope = validateLiquidityEnvelope(await signer("/v1/liquidity/prepare-envelope", { ownerXUserId: context.execution.ownerXUserId, source: context.conversation.source, walletRef: context.wallet.signerWalletRef, plan, step: stepIndex, idempotencyKey, ...(steps.length > 0 ? { minimumNonce, minimumBlock: steps.at(-1)!.blockNumber } : {}) }), plan, stepIndex, minimumNonce);
@@ -920,6 +926,7 @@ export const execute = internalAction({
           if (readOnly) throw new Error("LP_MANUAL_REVIEW_REQUIRED");
           if (!liquidityExecutionWindowOpen(plan, Date.now())) throw new Error("LP_EXPIRED_ENVELOPE_REQUIRES_REVIEW");
           stage = "sign";
+          await requireTelegramAuthority();
           const envelope = validateLiquidityEnvelope(step.envelope, plan, stepIndex, stepIndex > 0 ? steps[stepIndex - 1].nonce + 1 : 0);
           await requireExecutionWrites(ctx);
           const idempotencyKey = liquidityStepIdempotencyKey(requestId, stepIndex, context.execution.openRecoveryCount);
@@ -953,6 +960,7 @@ export const execute = internalAction({
           // A saved signature is not permission to broadcast stale instructions.
           if (!liquidityExecutionWindowOpen(plan, Date.now())) throw new Error("LP_EXPIRED_ENVELOPE_REQUIRES_REVIEW");
           stage = "broadcast";
+          await requireTelegramAuthority();
           await requireExecutionWrites(ctx);
           await signer("/v1/transactions/broadcast", { chainId: 4663, ownerReference: `x:${context.execution.ownerXUserId}`, walletRef: context.wallet.signerWalletRef, operationType: `liquidity_${plan.operation}`, signedTransaction: step.signedTransaction, transactionHash: step.transactionHash, expectedFrom: context.wallet.address, expectedTo: step.toAddress, expectedValueWei: step.valueWei });
           await ctx.runMutation(internal.liquidity.deferExecution, { ...args, stage: "receipt", diagnostic: "LP_AWAITING_RECEIPT", readOnly: false }); return;
@@ -999,9 +1007,9 @@ export const execute = internalAction({
       const diagnostic = liquidityDiagnostic(error, "LP_EXECUTION_FAILED");
       const uncertain = steps.some(s => !s.confirmed && !s.reverted);
       const settledDeposit = stage === "reconcile_position";
-      const permanent = /LIQUIDITY_QUOTE_EXPIRED|INSUFFICIENT|LP_POSITION_|LP_WALLET_INACTIVE|LIQUIDITY_TRANSACTION_REVERTED/.test(diagnostic);
+      const permanent = /TELEGRAM_LINK_REVOKED|LIQUIDITY_QUOTE_EXPIRED|INSUFFICIENT|LP_POSITION_|LP_WALLET_INACTIVE|LIQUIDITY_TRANSACTION_REVERTED/.test(diagnostic);
       if (uncertain || settledDeposit || !permanent && (context.execution.retryCount ?? 0) < LIQUIDITY_WRITE_ATTEMPTS - 1) {
-        await ctx.runMutation(internal.liquidity.deferExecution, { ...args, stage, diagnostic, readOnly: settledDeposit || diagnostic === "LP_EXECUTION_DISABLED" });
+        await ctx.runMutation(internal.liquidity.deferExecution, { ...args, stage, diagnostic, readOnly: settledDeposit || diagnostic === "LP_EXECUTION_DISABLED" || diagnostic === "LP_TELEGRAM_LINK_REVOKED" });
       } else await ctx.runMutation(internal.liquidity.finishExecution, { ...args, success: false, legsJson: "[]", diagnostic });
     } finally {
       // The persisted pending envelope is additionally checked by the shared
