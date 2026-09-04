@@ -1,4 +1,5 @@
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
+import { TOP_FIVE_SLIPPAGE_BPS } from "../lib/top-five-recovery";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
 
 export type AmountUnit = "eth" | "usd" | "token" | "percent";
@@ -118,7 +119,7 @@ export function parseTopFiveBuyCommand(raw: string): Extract<WalletCommand, { ki
   if (!match) return null;
   const amount = cleanAmount(match[2]);
   if (!finitePositiveString(amount)) return null;
-  return { kind: "buy_top_five", amount, burn: Boolean(match[1]), slippageBps: DEFAULT_SWAP_SLIPPAGE_BPS };
+  return { kind: "buy_top_five", amount, burn: Boolean(match[1]), slippageBps: TOP_FIVE_SLIPPAGE_BPS };
 }
 
 function slippageBps(text: string) {

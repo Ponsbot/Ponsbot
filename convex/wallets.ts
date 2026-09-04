@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
+import { isTopFiveChild, confirmedTopFivePurchase, TOP_FIVE_GAS_RESERVE_UNITS, TOP_FIVE_BROADCAST_RETRIES } from "../lib/top-five-recovery";
 import { geckoTokenMarkets } from "../lib/gecko-token-market";
 import { terminalFeeReceipts } from "./lib/terminalFeeReceipts";
 import type { TerminalFeeReceipt } from "../lib/terminal-fee-receipt";
@@ -2201,6 +2202,34 @@ export const getReconciliationContext = internalQuery({
   },
 });
 
+// Retry the exact stored envelope, never recreate a purchase after an uncertain
+// broadcast. Exhaustion retains the envelope and nonce reservation for review.
+export const retryTopFiveBroadcast = internalMutation({
+  args: { requestId: v.string(), transactionHash: v.string(), diagnosticDetail: v.string() },
+  handler: async (ctx, args) => {
+    if (!isTopFiveChild(args.requestId)) return false;
+    const request = await ctx.db.query("walletRequests").withIndex("by_request_id", q => q.eq("requestId", args.requestId)).unique();
+    const tx = await ctx.db.query("walletTransactions").withIndex("by_request_id", q => q.eq("requestId", args.requestId)).unique();
+    if (!request || request.status !== "prepared" || tx?.status !== "prepared" || !tx.signedTransaction
+      || tx.transactionHash !== args.transactionHash || request.transactionHash !== args.transactionHash) return false;
+    const now = Date.now();
+    // A duplicate reconcile callback must not consume another retry slot.
+    if ((request.nextReconcileAt ?? 0) > now) return true;
+    const attempt = (request.topFiveBroadcastRetries ?? 0) + 1;
+    const exhausted = attempt > TOP_FIVE_BROADCAST_RETRIES;
+    const due = now + Math.min(120_000, 30_000 * 2 ** (attempt - 1));
+    await ctx.db.patch(request._id, {
+      topFiveBroadcastRetries: attempt, status: exhausted ? "failed" : "prepared",
+      diagnosticCode: exhausted ? "TOP_FIVE_BROADCAST_REVIEW" : "TOP_FIVE_BROADCAST_RETRY",
+      diagnosticDetail: args.diagnosticDetail.slice(0, 500),
+      ...(exhausted ? { safeError: "The transaction broadcast could not be verified after retries. It needs review before another attempt." } : {}),
+      nextReconcileAt: exhausted ? undefined : due, updatedAt: now,
+    });
+    if (!exhausted) await ctx.scheduler.runAfter(due - now, internal.wallets.reconcileTransaction, { requestId: args.requestId });
+    return true;
+  },
+});
+
 export const cancelPreparedExecution = internalMutation({
   args: {
     requestId: v.string(),
@@ -2706,6 +2735,8 @@ export const reconcileTransaction = internalAction({
       });
       return;
     }
+    if (isTopFiveChild(args.requestId) && (current.request.topFiveBroadcastRetries ?? 0) > 0
+      && (current.request.nextReconcileAt ?? 0) > Date.now()) return;
     try {
       const statusBody = {
         chainId: ROBINHOOD_CHAIN_ID,
@@ -2869,6 +2900,10 @@ export const reconcileTransaction = internalAction({
           message,
         )
       ) {
+        if (await ctx.runMutation(internal.wallets.retryTopFiveBroadcast, {
+          requestId: args.requestId, transactionHash: current.transaction.transactionHash,
+          diagnosticDetail: sanitizedDiagnosticDetail(error),
+        })) return;
         await ctx.runMutation(internal.wallets.cancelPreparedExecution, {
           requestId: args.requestId,
           diagnosticCode: "RPC_BROADCAST_REJECTED",
@@ -3904,11 +3939,11 @@ export const executeCommand = internalAction({
               expectedAddress: wallet.address,
               ownerReference: `x:${args.xUserId}`,
               requestedEth: required.display,
-              // The signer accepts at most 3,000,000 units in one preflight.
-              // This reserves a conservative transaction ceiling here; every
+              // Batch-only reserve includes paired-asset buys and approvals.
+              // This is a balance check, not gas charged or a gas-price bid; every
               // deterministic child buy, pair acquisition, and burn still
               // performs its own exact simulation and balance check.
-              reservedGasUnits: 3_000_000,
+              reservedGasUnits: TOP_FIVE_GAS_RESERVE_UNITS,
             });
           }
 
@@ -3931,10 +3966,13 @@ export const executeCommand = internalAction({
                 kind: "buy", amount: command.amount, unit: "usd", token: target.tokenAddress, slippageBps: command.slippageBps,
               };
               const stepBase = `${requestId}:top-five:${index + 1}`;
-              const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, `${stepBase}:funding`, buyCommand,
-                target.tokenAddress, registry, executionLeaseToken, requestId);
-              const bought = await executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${stepBase}:buy`, funded.command,
-                await operationFor(funded.command, undefined, undefined, undefined, target.tokenAddress, registry));
+              const savedBuy = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId: `${stepBase}:buy` });
+              const bought = confirmedTopFivePurchase(savedBuy) ?? await (async () => {
+                    const funded = await fundedBuyCommand(ctx, wallet, args.xUserId, args.sourcePostId, `${stepBase}:funding`, buyCommand,
+                      target.tokenAddress, registry, executionLeaseToken, requestId);
+                    return executeConfirmedStep(ctx, wallet, args.xUserId, args.sourcePostId, `${stepBase}:buy`, funded.command,
+                      await operationFor(funded.command, undefined, undefined, undefined, target.tokenAddress, registry));
+                  })();
               if (!(await ctx.runMutation(internal.wallets.acquireWalletExecutionLock, {
                 walletId: wallet._id, requestId, leaseToken: executionLeaseToken,
               }))) throw new Error("wallet execution lease was lost during the top-five purchase");
@@ -3982,7 +4020,13 @@ export const executeCommand = internalAction({
                 return { ok: true, message: "", pending: true, deferred: true };
               }
               const lines = completed.map(item => `${item.symbol}: ${significantAmount(item.amount)}${item.usdValue ? ` (${item.usdValue})` : ""}`);
-              const message = `⚠️ ${completed.length} of 5 top-token ${command.burn ? "buy-and-burns" : "buys"} completed before ${target.symbol} failed.\n${lines.join("\n")}${lines.length ? "\n" : ""}${safeFailure(error, "buy_top_five")}`;
+              const boughtStep = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId: `${requestId}:top-five:${index + 1}:buy` });
+              const fundedStep = await ctx.runQuery(internal.wallets.getReconciliationContext, { requestId: `${requestId}:top-five:${index + 1}:funding:pair-funding` });
+              const partial = boughtStep?.request.status === "confirmed" && boughtStep.request.transactionHash
+                ? `\n${target.symbol} was bought, but its burn did not complete.\nBuy TXN: ${transactionUrl(boughtStep.request.transactionHash)}`
+                : fundedStep?.request.status === "confirmed" && fundedStep.request.transactionHash
+                  ? `\nThe paired asset for ${target.symbol} was purchased, but the token buy did not complete.\nFunding TXN: ${transactionUrl(fundedStep.request.transactionHash)}` : "";
+              const message = `⚠️ ${completed.length} of 5 top-token ${command.burn ? "buy-and-burns" : "buys"} completed before ${target.symbol} failed.\n${lines.join("\n")}${lines.length ? "\n" : ""}${safeFailure(error, "buy_top_five")}${partial}`;
               await ctx.runMutation(internal.wallets.updateWalletRequest, { requestId, status: "failed", workflowStage,
                 safeError: message, finalMessage: message, transactionHash: completed.at(-1)?.transactionHash,
                 diagnosticCode: privateDiagnosticCode(error), diagnosticDetail: sanitizedDiagnosticDetail(error) });

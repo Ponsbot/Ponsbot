@@ -129,7 +129,9 @@ export const freeLaunchDevBuyEligibilityRequestSchema = z.object({
 export const spendableEthRequestSchema = z.object({
   chainId: z.literal(ROBINHOOD_CHAIN_ID), walletRef: address,
   expectedAddress: address, ownerReference,
-  reservedGasUnits: z.number().int().min(21_000).max(3_000_000),
+  // Read-only reserve ceiling for multi-transaction batches. Ordinary callers
+  // continue requesting their existing smaller budgets.
+  reservedGasUnits: z.number().int().min(21_000).max(6_000_000),
   requestedEth: amount.optional(),
 }).strict();
 

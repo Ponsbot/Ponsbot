@@ -551,6 +551,7 @@ export default defineSchema({
     vaultClaimOnlyV2: v.optional(v.boolean()),
     limitRefundedAt: v.optional(v.number()),
     reconciliationAttempts: v.optional(v.number()),
+    topFiveBroadcastRetries: v.optional(v.number()),
     nextReconcileAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),

@@ -4,8 +4,8 @@ import { parseXWalletIntent } from "../convex/xWalletIntent";
 
 describe("private top-five Pons Bot buy command", () => {
   it("accepts only the two narrow command forms with harmless case and punctuation changes", async () => {
-    const buy = { kind: "buy_top_five", amount: "25", burn: false, slippageBps: 250 } as const;
-    const burn = { kind: "buy_top_five", amount: "12.50", burn: true, slippageBps: 250 } as const;
+    const buy = { kind: "buy_top_five", amount: "25", burn: false, slippageBps: 500 } as const;
+    const burn = { kind: "buy_top_five", amount: "12.50", burn: true, slippageBps: 500 } as const;
     expect(parseWalletCommand("Buy $25 each of the top 5 Pons Bot tokens.")).toEqual(buy);
     expect(parseWalletCommand("@Ponsbotfamily BUY AND BURN $12.50 OF EACH OF THE TOP 5 PONS BOT TOKENS!!!")).toEqual(burn);
     await expect(parseXWalletIntent("@Ponsbotfamily buy and burn $12.50 each of the top 5 Pons Bot tokens", false))
