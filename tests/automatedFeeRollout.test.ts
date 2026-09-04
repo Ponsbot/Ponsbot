@@ -55,6 +55,27 @@ function database() {
     scheduler: { runAfter: vi.fn(async (_delay: number, ref: any, args: any) => { scheduled.push({ name: getFunctionName(ref), args }); }) } };
   return ctx;
 }
+describe("verified cap revert recovery", () => {
+  function fixture() {
+    const ctx = database();
+    ctx.rows.automatedFeePrograms = [{ _id: "p", status: "manual_review" }];
+    ctx.rows.automatedFeeRuns = [{ _id: "r", programId: "p", status: "manual_review", diagnosticCode: "AUTOMATED_FEE_PROCESSING_REVERTED", processingTransactionHash: h(1), processingBroadcastAt: 1, sweepBlockNumber: "100", sweepTransactionHash: h(2), retryCount: 0 }];
+    return ctx;
+  }
+  it("preserves sweep and audits the reverted transaction before requoting", async () => {
+    const ctx = fixture();
+    await handler(engine.recoverVerifiedProcessingCapRevert)(ctx, { runId: "r", expectedHash: h(1), blockNumber: "101" });
+    const run = ctx.rows.automatedFeeRuns[0];
+    expect(run.sweepTransactionHash).toBe(h(2));
+    expect(run.processingTransactionHash).toBeUndefined();
+    expect(run.retryCount).toBe(1);
+    expect(run.revertedProcessingAttempts[0].transactionHash).toBe(h(1));
+  });
+  it.each([{ processingBlockNumber: "101" }, { deliveryTransactionHash: h(3) }, { processingTransactionHash: h(4) }, { leaseUntil: Date.now() + 999999 }])("rejects unsafe recovery %j", async (patch) => {
+    const ctx = fixture(); Object.assign(ctx.rows.automatedFeeRuns[0], patch);
+    await expect(handler(engine.recoverVerifiedProcessingCapRevert)(ctx, { runId: "r", expectedHash: h(1), blockNumber: "101" })).rejects.toThrow("not safe");
+  });
+});
 beforeEach(() => {
   ["VAULT_FACTORY", "VAULT_IMPLEMENTATION", "EXECUTION_ADAPTER", "NATIVE_BUYBACK_EXECUTOR", "PAIRED_BUYBACK_EXECUTOR", "ADMIN", "KEEPER", "QUOTE_AUTHORIZER", "PAUSE_GUARDIAN", "CONTROL", "V3_ROUTER", "V3_QUOTER", "WETH"]
     .forEach((key, i) => vi.stubEnv(`AUTOMATED_FEE_${key}_ADDRESS`, a(i + 1)));

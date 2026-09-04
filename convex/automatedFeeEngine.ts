@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { redactSignerDiagnostic } from "../lib/signer-diagnostics";
+import { retryFeeInspection } from "../lib/fee-inspection-retry";
 import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -67,6 +68,14 @@ function signerConfiguration() {
 }
 
 async function signerRequest<T>(path: string, body: unknown, timeoutMs = 30_000): Promise<T> {
+  // Compatibility with older deployed signers: re-request the entire read-only
+  // inspection on a missing block. Never retry a signing/broadcast endpoint here.
+  return path === "/v1/automated-fees/inspect"
+    ? retryFeeInspection(() => signerRequestOnce<T>(path, body, timeoutMs))
+    : signerRequestOnce<T>(path, body, timeoutMs);
+}
+
+async function signerRequestOnce<T>(path: string, body: unknown, timeoutMs: number): Promise<T> {
   const { baseUrl, token } = signerConfiguration();
   const serialized = JSON.stringify(body);
   const timestamp = Date.now().toString();
@@ -2370,6 +2379,33 @@ export const processProgram = internalAction({
       if (run) await ctx.runMutation(internal.automatedFeeEngine.releaseProcessingRunLease, { runId: run._id, leaseId: actionLeaseId });
       await ctx.runMutation(internal.automatedFeeQueue.finishWork, { programId: program._id, workLeaseId });
     }
+  },
+});
+
+// Operator-only recovery after independently verifying a cap-growth revert.
+// Keep the successful sweep and an audit of the reverted transaction.
+export const recoverVerifiedProcessingCapRevert = internalMutation({
+  args: { runId: v.id("automatedFeeRuns"), expectedHash: v.string(), blockNumber: v.string() },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    const p = run ? await ctx.db.get(run.programId) : null;
+    const now = Date.now();
+    if (!run || !p || !automatedFeeProcessingAllowed(configuration()) || p.status !== "manual_review"
+      || run.status !== "manual_review" || run.diagnosticCode !== "AUTOMATED_FEE_PROCESSING_REVERTED"
+      || run.processingTransactionHash !== args.expectedHash || !run.processingBroadcastAt
+      || run.processingBlockNumber || run.deliveryTransactionHash || run.grossClaimed !== undefined
+      || !feeSweepPrerequisiteSatisfied(run) || (run.leaseUntil ?? 0) > now || (p.workLeaseUntil ?? 0) > now
+      || !/^\d+$/.test(args.blockNumber) || (run.revertedProcessingAttempts?.length ?? 0) >= 2) throw new Error("processing revert recovery is not safe");
+    await ctx.db.patch(run._id, { status: "deferred", workflowStage: "processing_cap_requote",
+      revertedProcessingAttempts: [...(run.revertedProcessingAttempts ?? []), { transactionHash: args.expectedHash, blockNumber: args.blockNumber, reason: "verified_escrow_growth_exceeded_quote_cap" }],
+      transactionHash: undefined, processingTransactionHash: undefined, processingSignedTransaction: undefined,
+      processingTransactionNonce: undefined, processingPreparedAt: undefined, processingBroadcastAt: undefined,
+      retryCount: run.retryCount + 1, nextRetryAt: now, leaseId: undefined, leaseUntil: undefined,
+      diagnosticCode: "RPC_RETRY", diagnosticDetail: undefined, updatedAt: now });
+    await ctx.db.patch(p._id, { status: "enrolled", workState: "waiting", workRunId: run._id, workDueAt: now,
+      nextProcessAt: now, processingDiagnosticCode: "REQUOTE_AFTER_ESCROW_GROWTH", updatedAt: now });
+    await ctx.scheduler.runAfter(0, internal.automatedFeeQueue.dispatch, {});
+    return { resumed: true };
   },
 });
 

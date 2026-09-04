@@ -438,6 +438,7 @@ export default defineSchema({
     processingTransactionNonce: v.optional(v.number()),
     processingPreparedAt: v.optional(v.number()),
     processingBroadcastAt: v.optional(v.number()),
+    revertedProcessingAttempts: v.optional(v.array(v.object({ transactionHash: v.string(), blockNumber: v.string(), reason: v.string() }))),
     deliveryTransactionHash: v.optional(v.string()),
     deliverySignedTransaction: v.optional(v.string()),
     deliveryTransactionNonce: v.optional(v.number()),

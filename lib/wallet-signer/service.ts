@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { retryFeeInspection } from "../fee-inspection-retry";
 import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
@@ -416,7 +417,11 @@ function automatedFeeSlippageBps() {
 }
 
 export async function inspectAutomatedFeeVault(request: AutomatedFeeInspectionRequest) {
-  const client = rpcClient();
+  return retryFeeInspection(attempt => inspectAutomatedFeeVaultSnapshot(request,
+    attempt === 2 ? rpcClientFor(PUBLIC_ROBINHOOD_RPC_URL) : rpcClient()));
+}
+
+async function inspectAutomatedFeeVaultSnapshot(request: AutomatedFeeInspectionRequest, client: ReturnType<typeof rpcClient>) {
   if (await client.getChainId() !== ROBINHOOD_CHAIN_ID) throw new Error("RPC chain mismatch");
   const vault = request.vaultAddress as Address;
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
@@ -683,7 +688,7 @@ export async function authorizeAutomatedFeeQuote(request: AutomatedFeeQuoteReque
   if (quotedBuybackAmount === 0n) throw new Error("no processable automated creator fees");
   // Permit small accruals between quote and mining without authorizing an
   // unbounded spend. Output minima remain based on the observed amount.
-  const maxBuybackAmount = quotedBuybackAmount * 10_500n / 10_000n + 1n;
+  const maxBuybackAmount = quotedBuybackAmount * 15_000n / 10_000n + 1n;
   const ponsbot = configuredAddress("PONSBOT_TOKEN_ADDRESS", "0xB1E9b822b81bbbdab375F7f4D86e44fA04d12b07");
   const ponsbotLaunch = await client.readContract({ address: ponsFactory, abi: ponsFactoryAbi, functionName: "getLaunchedToken", args: [ponsbot] });
   if (!ponsbotLaunch.exists || ponsbotLaunch.phase !== 2 || ponsbotLaunch.pairToken !== zeroAddress) {
