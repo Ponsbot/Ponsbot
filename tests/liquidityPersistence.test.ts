@@ -1155,7 +1155,9 @@ describe("liquidity execution recovery (no external actions)", () => {
     await invoke(execute, actions, { executionId: id });
     expect(fetch).toHaveBeenCalledTimes(1); expect(vi.mocked(fetch).mock.calls[0][0]).toContain("/liquidity/receipt");
     expect(ctx.data.get(id)!.status).toBe("confirmed");
-    expect(ctx.data.get(id)!.response).toContain("LP-11111111: 0.001 ETH"); expect(ctx.data.get(id)!.response).toContain("LP-22222222: 2 PONSBOT");
+    expect(ctx.data.get(id)!.response).toContain("Total: 0.001 ETH, 2 PONSBOT");
+    expect(ctx.data.get(id)!.response).toContain("LP-11111111 TXN:");
+    expect(ctx.data.get(id)!.response).toContain("LP-22222222 TXN:");
     expect(chain.getTransactionReceipt).not.toHaveBeenCalled();
   });
   it("reports collected fees when the later close fails, not an undifferentiated failure", async () => {

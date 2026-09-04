@@ -243,14 +243,15 @@ function alreadyNamesOperation(text: string) {
 /** Adds only the operation selected by the same user in the immediately prior prompt. */
 export function guidedHelpCommandText(text: string, operation: GuidedHelpOperation) {
   const clean = cleanChoice(text);
-  if (!clean || operation === "root" || alreadyNamesOperation(clean)) return clean;
-  if (operation === "claim_fees")
-    return /^(?:all|everything)$/i.test(clean) ? "claim my fees" : `claim my fees for ${clean}`;
-  if (operation === "cross_chain") return alreadyNamesOperation(clean) ? clean : `send ${clean}`;
-  if (operation === "private_swap") {
+  if (!clean || operation === "root" || guidedHelpQuestion(text)) return clean;
+  if (operation === "private_swap" && !guidedHelpQuestion(text)) {
     const command = alreadyNamesOperation(clean) ? clean : `send ${clean}`;
     return /\bprivat(?:e|ely)\b/i.test(command) ? command : `private ${command}`;
   }
+  if (alreadyNamesOperation(clean)) return clean;
+  if (operation === "claim_fees")
+    return /^(?:all|everything)$/i.test(clean) ? "claim my fees" : `claim my fees for ${clean}`;
+  if (operation === "cross_chain") return alreadyNamesOperation(clean) ? clean : `send ${clean}`;
   if (operation === "reassign_fees") return /^reassign\b/i.test(clean) ? clean : `reassign ${clean}`;
   if (operation === "balance")
     return /^(?:all|everything|all balances?|my balance|balance|balances|holdings|portfolio)$/i.test(clean)

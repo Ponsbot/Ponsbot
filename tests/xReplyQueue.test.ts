@@ -6,6 +6,13 @@ import * as replies from "../convex/xReplies";
 import { replyQueueExpiresAt, replyQueuePriority, replyQueueWaitMs } from "../lib/x-reply-queue-policy";
 import { feeUpgradeSuccessMessage } from "../lib/fee-upgrade-command";
 
+describe("retired Houdini decisions do not intercept active workflows", () => {
+  it.each(["yes", "no", "confirm", "cancel", "@Ponsbotfamily confirm!"])("routes %s to the active workflow", text => {
+    expect(replies.ignoreRetiredHoudiniDecision(text, true)).toBe(false);
+    expect(replies.ignoreRetiredHoudiniDecision(text, false)).toBe(true);
+  });
+});
+
 // Real Convex handlers with an index-aware in-memory DB; no live X, AI or wallets.
 type Row = Record<string, any>;
 const invoke = (fn: any, ctx: any, args: any = {}) => fn._handler(ctx, args);

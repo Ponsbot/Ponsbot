@@ -8,6 +8,7 @@ import { GENERAL_GUIDED_HELP_MESSAGE, guidedHelpCancelled, guidedHelpClaimLpOffe
 import { isLiquidityMessage } from "../lib/liquidity-workflow";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
 import { isResumeReply } from "../lib/x-direct-post-policy";
+import { CLAIM_LP_FEE_OFFER, guidedHelpPrivacySelection } from "../lib/guided-help-workflow";
 
 const LINK_TTL_MS = 10 * 60 * 1_000;
 
@@ -234,21 +235,24 @@ export const activeLiquidityConversation = internalQuery({
 });
 
 export const setConversation = internalMutation({
-  args: { telegramUserId: v.string(), telegramChatId: v.string(), operation: v.string(), resumeText: v.optional(v.string()), resumeOwner: v.optional(v.string()) },
+  args: { telegramUserId: v.string(), telegramChatId: v.string(), operation: v.string(), resumeText: v.optional(v.string()), resumeOwner: v.optional(v.string()), onlyIfIdle: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     const now = Date.now();
     const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
+    if (args.onlyIfIdle && rows.some(row => row.expiresAt > now)) return false;
     for (const row of rows) await ctx.db.patch(row._id, { active: false, updatedAt: now });
-    await ctx.db.insert("telegramConversations", { ...args, active: true, expiresAt: now + 10 * 60 * 1_000, createdAt: now, updatedAt: now });
+    const { onlyIfIdle, ...fields } = args;
+    await ctx.db.insert("telegramConversations", { ...fields, active: true, expiresAt: now + 10 * 60 * 1_000, createdAt: now, updatedAt: now });
+    return true;
   },
 });
 
 export const consumeGasResume = internalMutation({
-  args: { conversationId: v.id("telegramConversations"), telegramUserId: v.string(), telegramChatId: v.string(), ownerXUserId: v.string() },
+  args: { conversationId: v.id("telegramConversations"), telegramUserId: v.string(), telegramChatId: v.string(), ownerXUserId: v.string(), operation: v.optional(v.union(v.literal("gas_resume"), v.literal("cross_chain_privacy"))) },
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.conversationId);
     const links = await ctx.db.query("telegramAccountLinks").withIndex("by_telegram_user", q => q.eq("telegramUserId", args.telegramUserId)).collect();
-    if (!row?.active || row.expiresAt <= Date.now() || row.operation !== "gas_resume"
+    if (!row?.active || row.expiresAt <= Date.now() || row.operation !== (args.operation || "gas_resume")
       || row.telegramUserId !== args.telegramUserId || row.telegramChatId !== args.telegramChatId
       || row.resumeOwner !== args.ownerXUserId || !row.resumeText
       || !links.some(link => !link.revokedAt && link.ownerXUserId === args.ownerXUserId)) return null;
@@ -498,9 +502,14 @@ export const processUpdate = internalAction({
             [{ text: "Unlink TG", callback_data: "/unlink" }],
           ],
         });
-      } else if (command === "/cancel") {
+      } else if (command === "/cancel" || guidedHelpCancelled(text)) {
+        const cancelled = await ctx.runAction(internal.liquidity.handle, {
+          ownerXUserId: link.ownerXUserId, source: "telegram",
+          scope: `telegram:telegram_${telegramUserId}`,
+          requestKey: `telegram:${telegramUserId}:${args.updateId}`, text: "cancel",
+        });
         await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
-        await sendMessage(chatId, "Cancelled.");
+        await sendMessage(chatId, cancelled.message || "Cancelled.");
       } else {
         const currentConversation = await ctx.runQuery(internal.telegram.activeConversation, { telegramUserId });
         const selectedGuide = telegramMenuGuideOperation(text, currentConversation?.operation === "root");
@@ -533,12 +542,31 @@ export const processUpdate = internalAction({
         const claimChoice = operation === "claim" ? guidedHelpClaimSelection(text) : null;
         const lpOfferChoice = conversation?.operation === "claim_lp_offer" ? guidedHelpClaimLpOfferSelection(text) : null;
         let effectiveText = telegramCommandText(operation && operation !== "liquidity" ? guidedHelpCommandText(text, operation) : text);
+        if (conversation?.operation === "cross_chain_privacy") {
+          const privacy = guidedHelpPrivacySelection(text);
+          if (!privacy) {
+            await sendMessage(chatId, guidedHelpPrompt("cross_chain_privacy"));
+            await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+            return;
+          }
+          const saved = await ctx.runMutation(internal.telegram.consumeGasResume, {
+            conversationId: conversation._id, telegramUserId, telegramChatId: chatId,
+            ownerXUserId: link.ownerXUserId, operation: "cross_chain_privacy",
+          });
+          if (!saved) {
+            await sendMessage(chatId, "That request has expired or was already used. Send the full request again.");
+            await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+            return;
+          }
+          effectiveText = privacy === "private" ? `private ${saved}` : saved;
+        }
         if (conversation?.operation === "gas_resume" && isResumeReply(text)) {
           const saved = await ctx.runMutation(internal.telegram.consumeGasResume, {
             conversationId: conversation._id, telegramUserId, telegramChatId: chatId, ownerXUserId: link.ownerXUserId,
           });
           if (!saved) {
             await sendMessage(chatId, "That resume request has expired or was already used. Send the full request again.");
+            await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
             return;
           }
           effectiveText = saved;
@@ -586,6 +614,15 @@ export const processUpdate = internalAction({
         }
         const houdiniCommand = parseXHoudiniCommand(effectiveText);
         if (houdiniCommand) {
+          if (!houdiniCommand.privateMode && (operation === "cross_chain" || conversation?.operation === "root")) {
+            await ctx.runMutation(internal.telegram.setConversation, {
+              telegramUserId, telegramChatId: chatId, operation: "cross_chain_privacy",
+              resumeText: effectiveText, resumeOwner: link.ownerXUserId,
+            });
+            await sendMessage(chatId, guidedHelpPrompt("cross_chain_privacy"));
+            await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+            return;
+          }
           const wallet = await ctx.runQuery(internal.telegram.linkedWallet, { ownerXUserId: link.ownerXUserId });
           if (!wallet) throw new Error("Linked Pons Bot wallet is unavailable");
           const sourcePostId = `tg_${telegramUserId}_${message.message_id || args.updateId}`;
@@ -648,6 +685,9 @@ export const processUpdate = internalAction({
               telegramUserId, telegramChatId: chatId, operation: "gas_resume",
               resumeText: effectiveText, resumeOwner: link.ownerXUserId,
             });
+            else if (result.message.trim().endsWith(CLAIM_LP_FEE_OFFER)) await ctx.runMutation(internal.telegram.setConversation, {
+              telegramUserId, telegramChatId: chatId, operation: "claim_lp_offer",
+            });
             await sendMessage(chatId, result.message);
           }
         }
@@ -708,9 +748,15 @@ export const deliverDeferredWalletResult = internalAction({
       const rawText = result.finalMessage || result.safeError || "The request finished without a displayable result.";
       // Deferred results must not replace a newer conversation or promise an
       // unsaved continuation. The user can explicitly submit a fresh request.
-      const text = isGasResumePrompt(rawText)
+      let text = isGasResumePrompt(rawText)
         ? rawText.replace(/reply\s+[“"]resume[”"]/i, "send the full request again")
         : rawText;
+      if (text.trim().endsWith(CLAIM_LP_FEE_OFFER)) {
+        const registered = await ctx.runMutation(internal.telegram.setConversation, {
+          telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, operation: "claim_lp_offer", onlyIfIdle: true,
+        });
+        if (!registered) text = text.replace(CLAIM_LP_FEE_OFFER, 'For LP fees, send "claim LP fees".');
+      }
       await sendMessage(args.telegramChatId, text);
       await ctx.runMutation(internal.telegram.recordMessage, {
         telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, role: "assistant", text,

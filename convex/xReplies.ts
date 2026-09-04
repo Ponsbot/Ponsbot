@@ -931,6 +931,10 @@ function gasResumeAuthorized(value?: string) {
 
 /** A guided launch prompt authorizes one owner reply. Retrying that same reply
  * remains idempotent, while sibling replies cannot fork into duplicate launches. */
+export function ignoreRetiredHoudiniDecision(text: string, activeWorkflow: boolean) {
+  return Boolean(parseXHoudiniDecision(text)) && !activeWorkflow;
+}
+
 export const claimGuidedLaunchStep = internalMutation({
   args: { ownerXUserId: v.string(), parentPostId: v.string(), consumerPostId: v.string() },
   handler: async (ctx, args) => {
@@ -1579,11 +1583,10 @@ export const retryInteraction = internalAction({
     if (liquidityRequest && !liquidityOwnerAllowed(current.user.xUserId)) {
       await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "rejected", commandKind: "liquidity_unavailable" }); return;
     }
-    const houdiniDecision = parseXHoudiniDecision(directText);
     // Cross-chain swaps execute directly from the original, tightly parsed
     // command. Legacy quote replies must never revive an old pending quote.
-    if (houdiniDecision && !liquidityRequest && guidedHelp?.operation !== "cross_chain_privacy"
-      && guidedHelp?.operation !== "claim_lp_offer") {
+    if (ignoreRetiredHoudiniDecision(directText, Boolean(liquidityRequest || guidedHelp
+      || decodeGasResumeState(current.interaction.guidedHelpStateJson)))) {
       await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId,
         status: "rejected",

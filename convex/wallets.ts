@@ -438,8 +438,9 @@ async function addClaimUsdValue(display: string) {
   return `${display}${claimUsdDisplay(amount, await currentClaimEthUsd())}`;
 }
 
-function fundingMessage(message: string, walletAddress: string, requestId?: string) {
-  return /(?:enough ETH|needs a little more ETH|Add ETH for gas|fund your wallet with (?:~?[\d.]+\s+)?ETH for gas)/i.test(message)
+export function fundingMessage(message: string, walletAddress: string, requestId?: string) {
+  if (/Your wallet:\s*https?:\/\//i.test(message)) return message;
+  return isGasResumePrompt(message) || /(?:enough ETH|needs a little more ETH|Add ETH for gas|fund your wallet with (?:~?[\d.]+\s+)?ETH for gas)/i.test(message)
     ? `${message}\nYour wallet: ${walletPageUrl(walletAddress, requestId)}`
     : message;
 }
