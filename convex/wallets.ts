@@ -389,7 +389,7 @@ async function tokenUsdValueAtBlock(
   return undefined;
 }
 
-async function transactionMessage(
+export async function transactionMessage(
   command: WalletCommand,
   transactionHash: string,
   tokenAddress?: string,
@@ -401,6 +401,21 @@ async function transactionMessage(
 ) {
   const compactClaimed = compactAssetDisplay(claimedDisplay);
   const compactOutput = compactAssetDisplay(tradeOutputDisplay);
+  // Display-only approximation of the dev-buy spend, excluding launch fees/gas.
+  // Never advertise a requested buy unless receipt verification supplied output.
+  let launchBuyValue: string | undefined;
+  if (command.kind === "launch" && compactOutput && command.devBuy) {
+    const amount = Number(command.devBuy.amount.replace(/,/g, ""));
+    if (Number.isFinite(amount) && amount > 0) {
+      if (command.devBuy.unit === "usd") launchBuyValue = usdValueDisplay(amount);
+      else if (command.devBuy.unit === "eth") {
+        const price = await currentClaimEthUsd();
+        if (price && Number.isFinite(price)) launchBuyValue = usdValueDisplay(amount * price);
+      } else {
+        launchBuyValue = await currentTokenUsdValue(valuationTokenAddress || tokenAddress, tradeOutputDisplay);
+      }
+    }
+  }
   const sentEth = await confirmedAllEthDisplay(command, confirmedValueWei);
   const burnValue =
     command.kind === "burn"
@@ -416,7 +431,9 @@ async function transactionMessage(
       ? `Claimed ${claimedWithUsd} in creator fees${command.token ? ` from ${assetLabel(command.token)}${claimIncludesOtherLaunches ? " and other launches" : ""}` : ""}!`
       : command.kind === "burn" && compactOutput
         ? `Burned ${compactOutput}${burnValue ? ` (${burnValue})` : ""}!`
-        : commandSummary(command);
+        : command.kind === "launch" && compactOutput
+          ? commandSummary(command).replace(/! 🚀$/, ` and bought ${compactOutput}${launchBuyValue ? ` (≈${launchBuyValue})` : ""}! 🚀`)
+          : commandSummary(command);
   const tokenLine =
     command.kind === "launch" && tokenAddress
       ? `\nView Token: ${ponsBotTokenUrl(tokenAddress)}`

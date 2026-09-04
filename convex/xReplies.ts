@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { parseContextualBuy, resolveContextualBuyToken } from "../lib/contextual-buy";
 import { api, internal } from "./_generated/api";
 import { isFeeAssignmentQuestion, feeQuestionToken, feeAssignmentMessage } from "../lib/fee-assignment-question";
 
@@ -113,6 +114,23 @@ export const feeQuestionParentText = internalQuery({
 });
 
 const X_API = "https://api.x.com/2";
+export const contextualBuyParent = internalQuery({
+  args: { postId: v.string() },
+  handler: async (ctx, { postId }): Promise<{ token?: string; text?: string }> => {
+    const botReply = await ctx.db.query("xReplyInteractions").withIndex("by_response_post_id", q => q.eq("responsePostId", postId)).unique();
+    if (botReply?.status === "completed") {
+      const requests = await ctx.db.query("walletRequests").withIndex("by_source_post_id", q => q.eq("sourcePostId", botReply.postId)).collect();
+      const addresses = new Set<string>();
+      for (const request of requests.filter(r => r.kind === "launch" && r.status === "confirmed")) {
+        const launch = await ctx.db.query("tokenLaunches").withIndex("by_request_id", q => q.eq("requestId", request.requestId)).unique();
+        if (launch?.tokenAddress && launch.publicPublished) addresses.add(launch.tokenAddress.toLowerCase());
+      }
+      if (addresses.size === 1) return { token: [...addresses][0] };
+    }
+    const original = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", postId)).unique();
+    return original ? { text: original.text } : {};
+  },
+});
 const X_MENTION_PAGE_SIZE = 100;
 // One page per two-minute poll; persist pagination to drain bursts safely.
 const X_MENTION_PAGES_PER_POLL = 1;
@@ -1559,10 +1577,12 @@ export const retryInteraction = internalAction({
       });
       return;
     }
-    const guidedHelpThread = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
+    let guidedHelpThread = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
       ownerXUserId: current.user.xUserId,
       parentPostId: current.interaction.parentPostId,
     });
+    if (guidedHelpThread && parseContextualBuy(directText) && current.interaction.parentPostId
+      && (await ctx.runQuery(internal.xReplies.contextualBuyParent, { postId: current.interaction.parentPostId })).token) guidedHelpThread = null;
     if (guidedHelpThread && !guidedHelpThread.allowed) {
       await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId, status: "rejected", commandKind: "guided_help_foreign_thread",
@@ -1893,6 +1913,36 @@ export const retryInteraction = internalAction({
       let workflowText = gasResumeState?.sourceText || guidedLaunchExecution?.commandText || immediateGuidedCommand || (guidedHelp
         ? guidedReassignCommand || guidedHelpCommandText(directText, guidedHelp.operation)
         : directText);
+      const contextualBuy = !gasResumeState && !guidedLaunchExecution && !current.interaction.parsedIntentJson
+        ? parseContextualBuy(directText) : undefined;
+      let contextualBuyIntent: XWalletIntent | undefined;
+      if (contextualBuy) {
+        try {
+          const parentId = current.interaction.parentPostId;
+          if (!parentId || !/^\d+$/.test(parentId)) throw new Error("CONTEXT_BUY_NOT_FOUND");
+          const parent = await ctx.runQuery(internal.xReplies.contextualBuyParent, { postId: parentId });
+          let parentText = parent.text;
+          if (!parent.token && parentText === undefined) {
+            const fetched = await xGet<{ data?: Mention & { note_tweet?: { text: string; entities?: Mention["entities"] } } }>(
+              `/tweets/${parentId}`, new URLSearchParams({ "tweet.fields": "entities,note_tweet" }), 8_000);
+            if (fetched.data?.id !== parentId) throw new Error("CONTEXT_BUY_NOT_FOUND");
+            parentText = expandXUrls({ ...fetched.data, text: fetched.data.note_tweet?.text || fetched.data.text,
+              entities: fetched.data.note_tweet?.entities || fetched.data.entities });
+          }
+          const token = parent.token || await resolveContextualBuyToken(parentText || "", identifier =>
+            ctx.runQuery(internal.wallets.resolveKnownToken, { identifier }));
+          // Only the verified identifier crosses this boundary, never parent instructions.
+          workflowText = `buy ${contextualBuy.unit === "usd" ? "$" : ""}${contextualBuy.amount}${contextualBuy.unit === "eth" ? " ETH" : ""} of ${token}`;
+          contextualBuyIntent = { kind: "command", command: { kind: "buy", ...contextualBuy, token, slippageBps: 250 } };
+        } catch (error) {
+          const message = String(error).includes("CONTEXT_BUY_AMBIGUOUS")
+            ? "⚠️ That post contains more than one possible token. Please send a buy command with the exact contract address. No purchase was made."
+            : "⚠️ I couldn’t identify one token from that post. Please send a buy command with its ticker or contract address. No purchase was made.";
+          const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: false, kind: "reply" });
+          await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "completed", commandKind: "contextual_buy_unresolved", responsePostId });
+          return;
+        }
+      }
       if (guidedHelp?.operation === "cross_chain_privacy") {
         const privacy = guidedHelpPrivacySelection(directText);
         if (!privacy) {
@@ -2063,7 +2113,7 @@ export const retryInteraction = internalAction({
           current.interaction.parsedIntentJson,
         );
       } else {
-        const parsed = await parseXWalletIntent(
+        const parsed = contextualBuyIntent || await parseXWalletIntent(
           workflowText,
           Boolean(current.interaction.mediaUrl),
         );
@@ -2075,6 +2125,11 @@ export const retryInteraction = internalAction({
           },
         );
         intent = decodePersistedXWalletIntent(bound);
+      }
+      // Keep resume prompts bound to the already resolved token on retries.
+      if (parseContextualBuy(directText) && intent.kind === "command" && intent.command.kind === "buy") {
+        const buy = intent.command;
+        workflowText = `buy ${buy.unit === "usd" ? "$" : ""}${buy.amount}${buy.unit === "eth" ? " ETH" : ""} of ${buy.token}`;
       }
       // Recheck parsed wallet-address intent before provisioning; balance/help
       // have no category admission budgets.
@@ -2911,6 +2966,7 @@ export function includedReplyDepth(
 
 export function shouldHandlePassiveChainText(text: string) {
   const direct = directPostCommandText(text);
+  if (parseContextualBuy(direct)) return true;
   if (parseXHoudiniDecision(direct) || parseXHoudiniCommand(direct))
     return true;
   // A carried bare "wallet" mention is ambiguous chatter, not a self-wallet
@@ -3139,10 +3195,12 @@ export const pollMentions = internalAction({
         // publication. This prevents automated accounts from sustaining loops.
         const lpThread = await inspectLpThread(mention);
         if (lpThread === "silent") continue;
-        const guidedHelpContinuation = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
+        let guidedHelpContinuation = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
           ownerXUserId: mention.author_id || "",
           parentPostId,
         });
+        if (guidedHelpContinuation && parseContextualBuy(directText) && parentPostId
+          && (await ctx.runQuery(internal.xReplies.contextualBuyParent, { postId: parentPostId })).token) guidedHelpContinuation = null;
         if (guidedHelpContinuation && !guidedHelpContinuation.allowed) continue;
         const insufficientContext = parentPostId
           ? await ctx.runQuery(internal.xReplies.insufficientEthResumeContext, {

@@ -2892,6 +2892,7 @@ export async function transactionStatus(request: TransactionStatusRequest) {
       const factory = (request.expectedFactory || (request.operationType === "pons_v2_launch" ? request.expectedTo : "")).toLowerCase();
       if (!factory) throw new Error("expected Pons factory is missing from receipt verification");
       let verifiedOpeningBuy = false;
+      let openingBuy: { token: Address; curve: Address; amount: bigint } | undefined;
       for (const log of receipt.logs) {
         if (log.address.toLowerCase() === factory) {
           try {
@@ -2916,6 +2917,7 @@ export async function transactionStatus(request: TransactionStatusRequest) {
             if (result.tokenAddress && (decoded.args.token.toLowerCase() !== result.tokenAddress.toLowerCase()
               || decoded.args.curve.toLowerCase() !== result.poolAddress?.toLowerCase())) throw new Error("opening developer buy launch mismatch");
             verifiedOpeningBuy = true;
+            openingBuy = { token: decoded.args.token, curve: decoded.args.curve, amount: decoded.args.tokensReceived };
           } catch (error) {
             if (error instanceof Error && /opening developer buy/.test(error.message)) throw error;
           }
@@ -2923,6 +2925,16 @@ export async function transactionStatus(request: TransactionStatusRequest) {
       }
       if (!result.tokenAddress || !result.poolAddress) throw new Error("verified Pons launch event was not found");
       if (request.operationType === "pons_v2_launch_and_buy" && !verifiedOpeningBuy) throw new Error("verified opening developer buy event was not found");
+      // Validate after reading all logs as the router event may precede the factory event.
+      if (openingBuy) {
+        if (openingBuy.token.toLowerCase() !== result.tokenAddress.toLowerCase()
+          || openingBuy.curve.toLowerCase() !== result.poolAddress.toLowerCase()) {
+          throw new Error("opening developer buy launch mismatch");
+        }
+        const metadata = await tokenMetadata(openingBuy.token);
+        result.tradeOutputDisplay = `${trimDecimal(formatUnits(openingBuy.amount, metadata.decimals))} ${metadata.symbol}`;
+        result.tradeOutputTokenAddress = openingBuy.token;
+      }
       if (request.expectedCreatorFeeRecipient) {
         const launched = await client.readContract({
           address: factory as Address,

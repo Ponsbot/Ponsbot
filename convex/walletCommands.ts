@@ -406,7 +406,7 @@ export function extractGroundedLaunchName(text: string) {
   const candidate = cleanLaunchNameEdges(nameValue)
     .replace(/^name\s*(?:is|=|:)?\s*/i, "")
     .replace(/\s+(?:and\s+the\s+)?(?:ticker|symbol)\b[\s\S]*$/i, "")
-    .replace(/\s+\$[A-Z][A-Z0-9]{0,11}\b[\s\S]*$/i, "")
+    .replace(/\s+\$[A-Z][A-Z0-9]{0,15}\b[\s\S]*$/i, "")
     .replace(/\s+(?:and\s+)?(?:pair|paired)\s+(?:it\s+)?(?:with|against)\b[\s\S]*$/i, "")
     .replace(/[.,:;\s]+$/, "").replace(/\s+https?$/i, "").replace(/^for\s+/i, "").trim();
   return candidate && !/^(?:name|ticker|symbol|token|coin)$/i.test(candidate) ? candidate.slice(0, 48) : undefined;
@@ -433,6 +433,18 @@ function hasInvalidExplicitPairToken(text: string) {
     || new RegExp(`\\bwith\\s+\\$?${stopWord}\\s+(?:as\\s+the\\s+)?pair(?:ing)?\\b`, "i").test(text);
 }
 
+export const LAUNCH_TICKER_TOO_LONG = "⚠️ That ticker is too long. Pons supports a maximum of 16 letters or numbers, excluding the $. No token was launched. Submit a new launch request with a shorter ticker.";
+
+export function oversizedLaunchTicker(text: string) {
+  if (!/\b(?:launch|deploy|create|make)\b/i.test(text)) return false;
+  // Inspect the launch clause only, not optional description, socials or pair.
+  const clause = text.split(/\b(?:description|desc|website|telegram|twitter|paired|pair|dev\s*buy|initial\s+buy)\b/i)[0];
+  const labeled = clause.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'“”‘’]?\s*\$?([a-zA-Z0-9]+)/i)?.[1];
+  if (labeled) return labeled.length > 16;
+  return [...clause.matchAll(/\$([a-zA-Z][a-zA-Z0-9]*)\b/g)].some(m => m[1].length > 16)
+    || /[([]\s*\$?[a-zA-Z][a-zA-Z0-9]{16,}\s*[)\]]/.test(clause);
+}
+
 function parseLaunch(text: string): WalletCommand | null {
   text = stripDirectLaunchImageInstruction(text);
   if (/\b(?:claim|collect|withdraw)\b[\s\S]*\b(?:fees?|revenue|rewards?)\b/i.test(text)) return null;
@@ -441,6 +453,7 @@ function parseLaunch(text: string): WalletCommand | null {
   if (/\b(?:create|open|set\s*up|make)\b[\s\S]{0,20}\b(?:my\s+)?wallet\b/i.test(text)
     && !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b/i.test(text)) return null;
   if (!/\b(?:launch|create|deploy|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b/i.test(text)) return null;
+  if (oversizedLaunchTicker(text)) return { kind: "unknown", reason: LAUNCH_TICKER_TOO_LONG };
   if (/\bon\s+base\b/i.test(text) && !/\b(?:ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,15}\b/i.test(text)) {
     return { kind: "unknown", reason: "Pons Bot launches only on Pons V2." };
   }
@@ -823,6 +836,8 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     return token ? { kind, token } : null;
   }
   if (kind === "launch") {
+    if (typeof item.symbol === "string" && stripWrappingQuotes(item.symbol).replace(/^\$/, "").trim().length > 16)
+      return { kind: "unknown", reason: LAUNCH_TICKER_TOO_LONG };
     const name = typeof item.name === "string" ? item.name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().replace(/^["'“”]+|["'“”,;:]+$/g, "").trim().replace(/\s+https?$/i, "").trim() : "";
     const normalizedName = cleanLaunchNameEdges(name).slice(0, 48);
     const symbol = typeof item.symbol === "string" ? cleanSymbol(item.symbol) : "";

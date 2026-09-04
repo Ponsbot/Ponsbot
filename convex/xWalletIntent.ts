@@ -5,6 +5,7 @@ import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy"
 import { PUBLISHED_PAIR_SYMBOLS } from "../lib/pair-catalog";
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
 import { GENERAL_GUIDED_HELP_MESSAGE } from "../lib/guided-help-workflow";
+import { oversizedLaunchTicker, LAUNCH_TICKER_TOO_LONG } from "./walletCommands";
 
 export type WalletHelpTopic = "capabilities" | "wallet" | "fund" | "gas" | "balance" | "send" | "buy_sell" | "cross_chain" | "cross_chain_assets" | "burn" | "launch" | "pairs" | "fees";
 export type XWalletIntent =
@@ -37,6 +38,9 @@ export function decodePersistedXWalletIntent(value: string): XWalletIntent {
     return { kind: "help", topic: parsed.topic as WalletHelpTopic };
   }
   if (parsed.kind === "command") {
+    const rejection = parsed.command as { kind?: unknown; reason?: unknown } | undefined;
+    if (rejection?.kind === "unknown" && rejection.reason === LAUNCH_TICKER_TOO_LONG)
+      return { kind: "command", command: { kind: "unknown", reason: LAUNCH_TICKER_TOO_LONG } };
     const command = validateStructuredWalletCommand(parsed.command);
     if (command && command.kind !== "unknown") return { kind: "command", command };
   }
@@ -1074,6 +1078,8 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   if (!hasPromptInjection(operativeText) && isDirectLaunchHelpRequest(operativeText))
     return finish({ kind: "help", topic: "launch" }, "deterministic_guard");
   if (hasNonExecutableFraming(operativeText)) return finish({ kind: "irrelevant" }, "deterministic_guard");
+  if (!hasPromptInjection(operativeText) && oversizedLaunchTicker(operativeText))
+    return finish({ kind: "command", command: { kind: "unknown", reason: LAUNCH_TICKER_TOO_LONG } }, "deterministic_guard");
   if (!hasPromptInjection(operativeText) && isDirectCapabilitiesRequest(operativeText))
     return finish({ kind: "help", topic: "capabilities" }, "deterministic_guard");
   if (!hasPromptInjection(operativeText) && isGasCostQuestion(operativeText))
