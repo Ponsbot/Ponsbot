@@ -258,6 +258,20 @@ describe("deterministic X wallet replies", () => {
   });
 
   it("does not treat promotional launch announcements as launch authority", async () => {
+    const featureComparison = "Soft reminder for anyone sleeping: ATH $BNKR = 120M MC And that was in a bear market. Same type of infra: AI bot + trade in natural language + launch tokens straight from the timeline. Now look at @Ponsbotfamily $PONSBOT sitting at ~400K. One difference: BNKR had to walk alone.";
+    for (const text of [featureComparison, "Check this out: @Ponsbotfamily platform features trade + launch coins from the timeline."]) {
+      expect(isPromotionalLaunchReference(text)).toBe(true);
+      expect(straightforwardCommandOperation(text)).toBeNull();
+      await expect(parseXWalletIntent(text, false)).resolves.toEqual({ kind: "irrelevant" });
+      await expect(parseXWalletIntent(text, true)).resolves.toEqual({ kind: "irrelevant" });
+    }
+    for (const text of [
+      `${featureComparison}\n@Ponsbotfamily launch Fresh Dog ticker $FDOG`,
+      `@Ponsbotfamily launch Fresh Dog ticker $FDOG. ${featureComparison}`,
+    ]) {
+      expect(isPromotionalLaunchReference(text)).toBe(false);
+      expect(straightforwardCommandOperation(text)).toBe("launch");
+    }
     const pdog = "$Pdog fresh launch from the $PonsBot @Ponsbotfamily @MEADGod Dex is paid sitting around 25k Bonding is inevitable!!!!! $pons #pons @ponsdotfamily Ca : 0x75074C8ca03CC2afB855A4DAbCa33f15031B9B07 Tg : https://t.me/ponsdoghood";
     expect(isPromotionalLaunchReference(pdog)).toBe(true);
     expect(straightforwardCommandOperation(pdog)).toBeNull();

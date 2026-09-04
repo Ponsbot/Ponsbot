@@ -690,6 +690,14 @@ export function isPromotionalLaunchReference(text: string) {
     || /\b(?:launch|deploy|create|make)\s+(?:me\s+|a\s+|my\s+)?(?:new\s+)?(?:token|coin)\b/i.test(unquoted);
   if (explicitDirective || boundedDirective) return false;
 
+  // Plural feature copy ("trade + launch tokens straight from the timeline")
+  // describes what the product does, not a particular token to create. Require
+  // corroborating product/promotion context; a separate real command above wins.
+  const genericLaunchFeature = /\blaunch\s+(?:(?:stock[- ]backed|new|meme)\s+)?(?:tokens|coins)\b/i.test(unquoted);
+  const featureContext = /\b(?:infra(?:structure)?|features?|platform|natural\s+language|timeline|integration)\b/i.test(unquoted);
+  const promotionalContext = /\b(?:ath|bear\s+market|bull\s+market|market\s*cap|mcap|sitting|sleeping|check\s+(?:it|this)\s+out|look\s+at)\b|\+\s*(?:trade|swap|launch)\b/i.test(unquoted);
+  if (genericLaunchFeature && featureContext && promotionalContext) return true;
+
   // Capability descriptions often appear in promotional feature lists and
   // contain the verb "launch" without asking the bot to launch anything now.
   // Require both descriptive grammar and corroborating promotional wording so
