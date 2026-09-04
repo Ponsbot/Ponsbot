@@ -41,5 +41,17 @@
   { "address": "0x43B07D15cE533bEc5476d70C22a78a1B2B662155", "symbol": "MRNA", "name": "Moderna" },
   { "address": "0x7066A64c24e4206CD62E83bf198c1E7EB361F51e", "symbol": "PFE", "name": "Pfizer" },
   { "address": "0x62fd0668e10D8B72339BE2DCF7643001688ff13B", "symbol": "MRVL", "name": "Marvell Technology" },
-  { "address": "0x03DfbBE0AC4E7bCDaFd08eD41A400326B77D8c80", "symbol": "JNJ", "name": "Johnson & Johnson" }
+  { "address": "0x03DfbBE0AC4E7bCDaFd08eD41A400326B77D8c80", "symbol": "JNJ", "name": "Johnson & Johnson" },
+  { "address": "0x05a3d1Cd21d0C88145E82600E62e7E496e0F222B", "symbol": "AMC", "name": "AMC Entertainment" },
+  { "address": "0x92FD66527192E3e61d4DDd13322Aa222DE86F9B5", "symbol": "SGOV", "name": "iShares 0-3 Month Treasury Bond ETF" },
+  { "address": "0xad25Ac6C84D497db898fa1E8387bf6Af3532a1c4", "symbol": "BABA", "name": "Alibaba" },
+  { "address": "0xACEF2e09adb47aD6aBeBAD9fF06689E60615C2B6", "symbol": "INDA", "name": "iShares MSCI India ETF" },
+  { "address": "0x980dcf6766FA79f5Cf0c4AAdb3ab477ff15a9619", "symbol": "IBM", "name": "IBM" },
+  { "address": "0xE0444EF8BF4eD74f74FD73686e2ddF4C1c5591E8", "symbol": "NFLX", "name": "Netflix" },
+  { "address": "0xceF9027c7d6985b85f0BA431125073529A947A68", "symbol": "BULL", "name": "Webull" },
+  { "address": "0x408c14038a04f7bD235329E26d2bf569ee20e250", "symbol": "NU", "name": "Nu Holdings" },
+  { "address": "0x411eFb0E7f985935DAec3D4C3ebaEa0d0AD7D89f", "symbol": "SLV", "name": "iShares Silver Trust" },
+  { "address": "0xF53F66751B1Eff985311b693531E3290F600c410", "symbol": "SHOP", "name": "Shopify" },
+  { "address": "0x822CC93fFD030293E9842c30BBD678F530701867", "symbol": "BE", "name": "Bloom Energy" },
+  { "address": "0x25C288E6D899b9BC30160965aD9644c67e73bE0C", "symbol": "F", "name": "Ford Motor" }
 ]

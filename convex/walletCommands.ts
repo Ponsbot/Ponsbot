@@ -74,6 +74,13 @@ const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ["Amazon", "AMZN"], ["Microsoft", "MSFT"], ["Meta Platforms", "META"], ["Facebook", "META"],
   ["Meta", "META"], ["Circle", "CRCL"], ["Coinbase", "COIN"], ["Micron", "MU"],
   ["Palantir", "PLTR"], ["Costco", "COST"], ["Strategy", "MSTR"], ["Reddit", "RDDT"],
+  ["AMC Entertainment", "AMC"], ["AMC", "AMC"],
+  ["iShares 0-3 Month Treasury Bond ETF", "SGOV"], ["Treasury Bond ETF", "SGOV"],
+  ["Alibaba", "BABA"], ["iShares MSCI India ETF", "INDA"],
+  ["IBM", "IBM"], ["International Business Machines", "IBM"], ["Netflix", "NFLX"],
+  ["Webull", "BULL"], ["Nu Holdings", "NU"], ["Nubank", "NU"],
+  ["iShares Silver Trust", "SLV"], ["Silver Trust", "SLV"],
+  ["Shopify", "SHOP"], ["Bloom Energy", "BE"], ["Ford Motor", "F"], ["Ford", "F"],
 ] as const;
 
 // Bitcoin terminology is pair-only so an ordinary buy can still target an

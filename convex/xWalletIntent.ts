@@ -21,12 +21,16 @@ export type AiWorkflowDiagnostics = {
   finalIntent?: XWalletIntent;
 };
 
-const PUBLISHED_PAIR_LINES = Array.from(
-  { length: Math.ceil(PUBLISHED_PAIR_SYMBOLS.length / 9) },
-  (_, index) => PUBLISHED_PAIR_SYMBOLS
+const PAIR_LINE_BODY = PUBLISHED_PAIR_SYMBOLS.slice(0, -3);
+const PUBLISHED_PAIR_LINES = [
+  ...Array.from(
+  { length: Math.ceil(PAIR_LINE_BODY.length / 9) },
+  (_, index) => PAIR_LINE_BODY
     .slice(index * 9, index * 9 + 9)
     .join("  •  "),
-).join("\n");
+  ),
+  PUBLISHED_PAIR_SYMBOLS.slice(-3).join("  •  "),
+].join("\n");
 
 const PERSISTED_HELP_TOPICS = new Set<WalletHelpTopic>(["capabilities", "wallet", "fund", "gas", "balance", "send", "buy_sell", "cross_chain", "cross_chain_assets", "burn", "launch", "pairs", "fees"]);
 
