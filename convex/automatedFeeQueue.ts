@@ -3,7 +3,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { automatedFeeEngineConfiguration, automatedFeeProcessingAllowed, type AutomatedFeeEngineEnvironment } from "../lib/automated-fee-policy";
-import { FEE_WORKERS, FEE_WORK_LEASE_MS, nextFeeCheck } from "../lib/automated-fee-scheduling";
+import { FEE_WORKERS, FEE_WORK_LEASE_MS, nextFeeCheck, recentLaunchFeeDue, NEW_LAUNCH_FEE_WINDOW_MS } from "../lib/automated-fee-scheduling";
 import { automatedFeeRejectedPreBroadcastStage } from "../lib/automated-fee-workflow";
 
 const enabled = () => automatedFeeProcessingAllowed(automatedFeeEngineConfiguration(process.env as AutomatedFeeEngineEnvironment));
@@ -82,6 +82,20 @@ export const dispatch = internalMutation({
   handler: async ctx => {
     if (!enabled()) return { dispatched: 0 };
     const now = Date.now();
+    // Applies to already-enrolled recent launches as well as future launches.
+    // Use token launch time, never upgrade/enrollment time. Do not disturb runs,
+    // receipt continuations, paused programs, or manual-review decisions.
+    const recentLaunches = await ctx.db.query("tokenLaunches")
+      .withIndex("by_public_created_at", q => q.eq("publicPublished", true).gte("createdAt", now - NEW_LAUNCH_FEE_WINDOW_MS)).collect();
+    for (const launch of recentLaunches) {
+      if (!launch.normalizedTokenAddress) continue;
+      const p = await ctx.db.query("automatedFeePrograms").withIndex("by_token", q => q.eq("normalizedTokenAddress", launch.normalizedTokenAddress!)).unique();
+      if (!p || p.privateTest || p.status !== "enrolled") continue;
+      if (p.launchCreatedAt !== launch.createdAt) await ctx.db.patch(p._id, { launchCreatedAt: launch.createdAt });
+      if (p.workState === "running" || p.workState === "waiting" || p.workRunId || await activeFeeRun(ctx, p._id)) continue;
+      const nextProcessAt = recentLaunchFeeDue({ ...p, launchCreatedAt: launch.createdAt }, now);
+      if (nextProcessAt !== p.nextProcessAt) await ctx.db.patch(p._id, { nextProcessAt, updatedAt: now });
+    }
     const engine = await ctx.db.query("automatedFeeEngineState").withIndex("by_key", q => q.eq("key", "ponsbot-automated-buyback-burn-v1")).unique();
     const heartbeat = { lastStartedAt: now, lastCompletedAt: now, lastStatus: "completed" as const, updatedAt: now };
     if (engine) await ctx.db.patch(engine._id, heartbeat);

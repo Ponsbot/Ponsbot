@@ -301,6 +301,7 @@ export default defineSchema({
     exemptedAt: v.optional(v.number()),
     enrolledAt: v.optional(v.number()),
     scheduleAnchorAt: v.optional(v.number()),
+    launchCreatedAt: v.optional(v.number()),
     lastCheckedAt: v.optional(v.number()),
     lastCheckLatenessMs: v.optional(v.number()),
     lastPaidAt: v.optional(v.number()),

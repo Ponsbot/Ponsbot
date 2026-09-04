@@ -1,5 +1,7 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import { isFeeAssignmentQuestion, feeQuestionToken, feeAssignmentMessage } from "../lib/fee-assignment-question";
+
 import { unverifiedReplyDay, UNVERIFIED_REPLY_LIMIT, admitUnverifiedContinuation } from "./lib/xUnverifiedReplyLimit";
 import {
   internalAction,
@@ -99,6 +101,16 @@ import {
   guidedLaunchRequested,
   type GuidedLaunchAdvance,
 } from "../lib/guided-launch-workflow";
+
+// Only reuse locally recorded context. No extra X reads or wallet operations.
+export const feeQuestionParentText = internalQuery({
+  args: { postId: v.string() },
+  handler: async (ctx, { postId }): Promise<string | null> => {
+    const parent = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", postId)).unique()
+      || await ctx.db.query("xReplyInteractions").withIndex("by_response_post_id", q => q.eq("responsePostId", postId)).first();
+    return parent?.text ?? null;
+  },
+});
 
 const X_API = "https://api.x.com/2";
 const X_MENTION_PAGE_SIZE = 100;
@@ -1637,6 +1649,30 @@ export const retryInteraction = internalAction({
       commandKind: guidedHelp ? guidedHelpCommandKind("root") : current.interaction.commandKind,
     });
     try {
+      // Read-only questions must precede claim/LP-offer and transaction parsing.
+      if (isFeeAssignmentQuestion(directText)) {
+        let identifier = feeQuestionToken(directText);
+        if (identifier === undefined && current.interaction.parentPostId) {
+          const parentText = await ctx.runQuery(internal.xReplies.feeQuestionParentText, { postId: current.interaction.parentPostId });
+          if (parentText) identifier = feeQuestionToken(parentText);
+        }
+        let message = "Which token? Include one ticker or contract address in your question.";
+        if (identifier) {
+          try {
+            const tokenAddress = await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier });
+            const launch = await ctx.runQuery(api.site.getLaunch, { tokenAddress });
+            message = launch ? feeAssignmentMessage(launch) : "I couldn’t find a Pons Bot launch for that token. Include its contract address in your question.";
+          } catch (error) {
+            message = String(error).includes("more than one token")
+              ? "More than one token uses that ticker. Include the contract address in your question."
+              : "I couldn’t verify the fee assignment just now. Please ask again shortly.";
+          }
+        }
+        await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "processing", commandKind: "fee_assignment_info" });
+        const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: true, kind: "reply" });
+        await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "completed", responsePostId });
+        return;
+      }
       let guidedLaunchExecution: Extract<GuidedLaunchAdvance, { kind: "execute" }> | null = null;
       if (liquidityRequest) {
         // A first liquidity request is also a wallet-provisioning event, just

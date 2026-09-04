@@ -1,12 +1,26 @@
 export const FEE_ACCUMULATION_THRESHOLD_WEI = 7_000_000_000_000_000n;
 export const FEE_CHECK_INTERVAL_MS = 60 * 60_000;
+export const NEW_LAUNCH_FEE_INTERVAL_MS = 10 * 60_000;
+export const NEW_LAUNCH_FEE_WINDOW_MS = 4 * 60 * 60_000;
 export const FEE_WORKERS = 4;
 export const FEE_WORK_LEASE_MS = 5 * 60_000;
 
 /** Fixed enrollment-relative cadence; coalesce missed slots, never replay them. */
-export function nextFeeCheck(program: { scheduleAnchorAt?: number; enrolledAt?: number; createdAt?: number }, now: number) {
+export function nextFeeCheck(program: { launchCreatedAt?: number; scheduleAnchorAt?: number; enrolledAt?: number; createdAt?: number }, now: number) {
+  const launched = program.launchCreatedAt;
+  if (launched !== undefined && now < launched + NEW_LAUNCH_FEE_WINDOW_MS) {
+    return launched + Math.max(1, Math.floor((now - launched) / NEW_LAUNCH_FEE_INTERVAL_MS) + 1) * NEW_LAUNCH_FEE_INTERVAL_MS;
+  }
   const anchor = program.scheduleAnchorAt ?? program.enrolledAt ?? program.createdAt ?? now;
   return anchor + Math.max(1, Math.floor((now - anchor) / FEE_CHECK_INTERVAL_MS) + 1) * FEE_CHECK_INTERVAL_MS;
+}
+
+/** Bring an old hourly schedule forward once, without sliding it on each dispatch. */
+export function recentLaunchFeeDue(program: { launchCreatedAt?: number; lastCheckedAt?: number; lastPaidAt?: number; nextProcessAt?: number }, now: number) {
+  const launched = program.launchCreatedAt;
+  if (launched === undefined || now < launched || now >= launched + NEW_LAUNCH_FEE_WINDOW_MS) return program.nextProcessAt;
+  const due = nextFeeCheck(program, Math.max(launched, program.lastCheckedAt ?? launched, program.lastPaidAt ?? launched));
+  return Math.min(program.nextProcessAt ?? due, due);
 }
 
 export function feeRetryDelay(attempt: number, retryAfterMs = 0) {

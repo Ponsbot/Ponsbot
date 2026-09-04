@@ -20,7 +20,7 @@ crons.interval("reconcile interrupted X Houdini swaps", { minutes: 1 }, internal
 crons.interval("reconcile free launch sponsorships", { minutes: 1 }, internal.wallets.reconcileFreeLaunchSponsorships);
 // The action exits without reading or writing state unless the unreleased
 // automated fee engine is explicitly enabled and fully configured.
-// Wake/recover the durable queue each minute; each token retains a fixed 15m cadence.
+// Wake/recover each minute: 10m cadence for launches under four hours, hourly afterward.
 crons.interval("process automated creator fees", { minutes: 1 }, internal.automatedFeeEngine.runScheduledProcessing);
 crons.interval("recover automated fee enrollments", { minutes: 1 }, internal.automatedFeeEngine.recoverPreparedEnrollments);
 crons.interval("recover automated fee controller changes", { minutes: 1 }, internal.automatedFeeEngine.recoverControllerChanges);

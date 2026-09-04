@@ -22,7 +22,7 @@ function database() {
     query(table: string) {
       const tests: Array<(r: any) => boolean> = [];
       const b: any = {};
-      for (const [op, predicate] of Object.entries({ eq: (a: any,b: any) => a === b, gt: (a: any,b: any) => a > b, lte: (a: any,b: any) => a === undefined || a <= b }))
+      for (const [op, predicate] of Object.entries({ eq: (a: any,b: any) => a === b, gt: (a: any,b: any) => a > b, gte: (a: any,b: any) => a >= b, lte: (a: any,b: any) => a === undefined || a <= b }))
         b[op] = (key: string, value: any) => { tests.push(r => predicate(r[key], value)); return b; };
       let index: string[] = [];
       const result = () => (rows[table] ?? []).filter(r => tests.every(p => p(r))).sort((x, y) => {
@@ -78,6 +78,24 @@ function fixture() {
 }
 
 describe("economic fee queue", () => {
+  it("retroactively accelerates a recent launch and reserves only one worker", async () => {
+    const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0], now = Date.now();
+    const createdAt = now - 35 * 60_000;
+    Object.assign(ctx.rows.tokenLaunches[0], { publicPublished: true, createdAt });
+    Object.assign(p, { enrolledAt: createdAt, workState: "idle", lastCheckedAt: now - 20 * 60_000, nextProcessAt: now + 25 * 60_000 });
+    expect(await handler(feeQueue.dispatch)(ctx, {})).toMatchObject({ dispatched: 1 });
+    expect(p.launchCreatedAt).toBe(createdAt);
+    expect(p.nextProcessAt).toBe(createdAt + 40 * 60_000);
+    expect(await handler(feeQueue.dispatch)(ctx, {})).toMatchObject({ dispatched: 0 });
+    expect(ctx.scheduled.filter((s: any) => s.name === "automatedFeeEngine:processProgram")).toHaveLength(1);
+  });
+  it.each(["paused", "manual_review", "exited"])("does not restart a recent %s program", async status => {
+    const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0], now = Date.now();
+    Object.assign(ctx.rows.tokenLaunches[0], { publicPublished: true, createdAt: now - 30 * 60_000 });
+    Object.assign(p, { status, nextProcessAt: now + 60 * 60_000 });
+    expect(await handler(feeQueue.dispatch)(ctx, {})).toMatchObject({ dispatched: 0 });
+    expect(p.nextProcessAt).toBe(now + 60 * 60_000);
+  });
   const threshold = "7000000000000000";
   function inspect(value = threshold) {
     return { blockNumber: "100", token: a(20), pairAsset: a(0), controller: a(1), beneficiary: a(1),
