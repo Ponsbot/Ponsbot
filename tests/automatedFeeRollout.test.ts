@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
+import { FEE_CHECK_INTERVAL_MS } from "../lib/automated-fee-scheduling";
 import * as engine from "../convex/automatedFeeEngine";
 import * as feeQueue from "../convex/automatedFeeQueue";
 import * as wallets from "../convex/wallets";
@@ -92,7 +93,7 @@ describe("economic fee queue", () => {
     }));
     expect(await handler(engine.processProgram)(ctx, { programId: "p" })).toMatchObject({ status: "accumulating" });
     expect(p).toMatchObject({ workState: "idle", processingDiagnosticCode: "ACCUMULATING", accumulationThresholdWei: threshold });
-    expect(p.nextProcessAt).toBe(p.enrolledAt + 30 * 60_000);
+    expect(p.nextProcessAt).toBe(p.enrolledAt + FEE_CHECK_INTERVAL_MS);
     expect(ctx.rows.automatedFeeRuns ?? []).toHaveLength(0);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -284,6 +285,24 @@ describe("graduated escrow processing and sweep incident recovery", () => {
       idempotencyKey: "cycle", executionNonce: "0", retryCount: 0, leaseId: "lease", leaseUntil: Date.now() + 60_000 }];
     return ctx;
   }
+  it("resumes only the exact unsigned processing incident once", async () => {
+    const ctx = cycleFixture(), run = ctx.rows.automatedFeeRuns[0];
+    Object.assign(run, { status: "manual_review", diagnosticDetail: detail.replace("prepare-sweep", "prepare") });
+    ctx.rows.automatedFeePrograms[0].status = "manual_review";
+    await expect(handler(engine.resumeUnsignedProcessingPreflight)(ctx, { runId: "run", expectedTokenAddress: a(99) })).rejects.toThrow();
+    await handler(engine.resumeUnsignedProcessingPreflight)(ctx, { runId: "run", expectedTokenAddress: a(20) });
+    expect(run.status).toBe("deferred");
+    expect(ctx.rows.automatedFeePrograms[0].status).toBe("enrolled");
+    expect(ctx.scheduled).toHaveLength(1);
+    await expect(handler(engine.resumeUnsignedProcessingPreflight)(ctx, { runId: "run", expectedTokenAddress: a(20) })).rejects.toThrow();
+  });
+  it.each(["sweepTransactionHash", "processingSignedTransaction", "processingTransactionHash", "deliveryTransactionHash"])("processing recovery rejects %s", async field => {
+    const ctx = cycleFixture(), run = ctx.rows.automatedFeeRuns[0];
+    Object.assign(run, { status: "manual_review", diagnosticDetail: detail.replace("prepare-sweep", "prepare"), [field]: h(1) });
+    ctx.rows.automatedFeePrograms[0].status = "manual_review";
+    await expect(handler(engine.resumeUnsignedProcessingPreflight)(ctx, { runId: "run", expectedTokenAddress: a(20) })).rejects.toThrow();
+    expect(ctx.scheduled).toHaveLength(0);
+  });
   it("allows already-escrowed graduated fees, but never skips a curve sweep", () => {
     expect(canUseGraduatedEscrow(2, "10000", {})).toBe(true);
     for (const phase of [0, 1]) expect(canUseGraduatedEscrow(phase, "100000", {})).toBe(false);

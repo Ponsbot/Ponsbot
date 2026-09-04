@@ -44,6 +44,20 @@ export function automatedFeeFailureRequiresManualReview(detail: string) {
     || /automated fee[^\n]*(?:mismatch|reverted|dropped|invalid|out of order)/i.test(detail);
 }
 
+/** Only an explicit simulation rejection before signing can get a new quote.
+ * Timeouts and submitted/reverted transactions are deliberately excluded. */
+export function isUnsignedProcessingSimulationFailure(detail: string, run: {
+  processingTransactionHash?: string; processingSignedTransaction?: string;
+  processingPreparedAt?: number; processingBroadcastAt?: number;
+  deliveryTransactionHash?: string; deliverySignedTransaction?: string;
+}) {
+  return !run.processingTransactionHash && !run.processingSignedTransaction
+    && !run.processingPreparedAt && !run.processingBroadcastAt
+    && !run.deliveryTransactionHash && !run.deliverySignedTransaction
+    && detail.includes("[/v1/automated-fees/prepare]")
+    && /SIMULATION_OR_REVERT: Execution reverted for an unknown reason\./.test(detail);
+}
+
 export type AutomatedFeeTransactionStage = "sweep" | "processing" | "delivery";
 
 export function automatedFeeRejectedPreBroadcastStage(detail: string): AutomatedFeeTransactionStage | null {

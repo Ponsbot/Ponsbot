@@ -2,12 +2,26 @@ import { describe, expect, it } from "vitest";
 import {
   AUTOMATED_FEE_WORKFLOW_CONTINUATION,
   automatedFeeFailureRequiresManualReview,
+  isUnsignedProcessingSimulationFailure,
   automatedFeeRejectedPreBroadcastStage,
   automatedFeeControllerTransactionMayExist,
   isAutomatedFeeControllerWorkflowRoot,
   isAutomatedFeeWorkflowContinuation,
   isTerminalAutomatedFeeControllerReview,
 } from "../lib/automated-fee-workflow";
+
+describe("unsigned processing simulation retries", () => {
+  const detail = "automated fee signer request failed [/v1/automated-fees/prepare]: SIMULATION_OR_REVERT: Execution reverted for an unknown reason.";
+  it("recognizes a definitive pre-signing simulation failure", () => {
+    expect(isUnsignedProcessingSimulationFailure(detail, {})).toBe(true);
+  });
+  it.each(["processingTransactionHash", "processingSignedTransaction", "processingPreparedAt", "processingBroadcastAt", "deliveryTransactionHash", "deliverySignedTransaction"])("never requotes with %s recorded", field => {
+    expect(isUnsignedProcessingSimulationFailure(detail, { [field]: 1 } as any)).toBe(false);
+  });
+  it.each(["request timed out", "AUTOMATED_FEE_PROCESSING_REVERTED", "automated fee signer request failed [/v1/automated-fees/broadcast]: SIMULATION_OR_REVERT: Execution reverted for an unknown reason."])("excludes %s", error => {
+    expect(isUnsignedProcessingSimulationFailure(error, {})).toBe(false);
+  });
+});
 
 describe("automated fee workflow continuation", () => {
   it("retries base-fee broadcast rejection instead of freezing the vault", () => {

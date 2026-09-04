@@ -8,6 +8,18 @@ import { mapWithConcurrency } from "./bounded-concurrency";
 import type { WebsiteSnapshot } from "./website-market";
 import { GECKO_TOKEN_BATCH_SIZE, geckoTokenMarkets } from "./gecko-token-market";
 
+export function mergeCatalogSnapshots(snapshots: WebsiteSnapshot[], now = Date.now()): WebsiteSnapshot[] {
+  const merged = new Map<string, WebsiteSnapshot>();
+  // Reject stale inputs before merging so a fresh fallback never freshens old data.
+  for (const next of [...snapshots].filter(s => Number.isFinite(s.observedAt) && s.observedAt <= now && s.observedAt >= now - 120_000).sort((a, b) => a.observedAt - b.observedAt)) {
+    const key = next.tokenAddress.toLowerCase();
+    const previous = merged.get(key);
+    const defined = Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined));
+    merged.set(key, { ...previous, ...defined, tokenAddress: key, observedAt: Math.min(previous?.observedAt ?? next.observedAt, next.observedAt) } as WebsiteSnapshot);
+  }
+  return [...merged.values()];
+}
+
 /** Infrequent, Gecko-only off-screen refresh. No public or paid RPC calls. */
 export async function refreshWebsiteCatalog(client: ConvexHttpClient, secret: string) {
   const leaseId = crypto.randomUUID();
@@ -65,5 +77,5 @@ export async function refreshWebsiteCatalog(client: ConvexHttpClient, secret: st
         ...(Number.isFinite(volume) && volume >= 0 ? { volume24hUsd: volume } : {}) });
     }
   });
-  await client.mutation(api.marketData.recordCatalog, { secret, leaseId, snapshots, nextOffset });
+  await client.mutation(api.marketData.recordCatalog, { secret, leaseId, snapshots: mergeCatalogSnapshots(snapshots), nextOffset });
 }

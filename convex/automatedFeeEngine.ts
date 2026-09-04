@@ -30,6 +30,7 @@ import {
 import {
   AUTOMATED_FEE_WORKFLOW_CONTINUATION,
   automatedFeeFailureRequiresManualReview,
+  isUnsignedProcessingSimulationFailure,
   automatedFeeRejectedPreBroadcastStage,
   automatedFeeControllerTransactionMayExist,
   isAutomatedFeeControllerWorkflowRoot,
@@ -1995,6 +1996,32 @@ export const resumeGraduatedSweepPreflight = internalMutation({
   },
 });
 
+export const resumeUnsignedProcessingPreflight = internalMutation({
+  args: { runId: v.id("automatedFeeRuns"), expectedTokenAddress: v.string() },
+  handler: async (ctx, args) => {
+    const run = await ctx.db.get(args.runId);
+    const program = run ? await ctx.db.get(run.programId) : null;
+    if (!run || !program || !automatedFeeProcessingAllowed(configuration())
+      || run.status !== "manual_review" || program.status !== "manual_review"
+      || program.normalizedTokenAddress !== normalizedAddress(args.expectedTokenAddress)
+      || feeRunHasTransaction(run)
+      || !isUnsignedProcessingSimulationFailure(run.diagnosticDetail ?? "", run))
+      throw new Error("only a transaction-free processing simulation failure can resume");
+    const blockers = await Promise.all([
+      ...(["reserved", "submitted", "deferred", "uncertain"] as const).map(status => ctx.db.query("automatedFeeRuns")
+        .withIndex("by_program_status", q => q.eq("programId", program._id).eq("status", status)).first()),
+      ...(["reserved", "prepared", "broadcast", "failed", "manual_review"] as const).map(status => ctx.db.query("automatedFeeControllerChanges")
+        .withIndex("by_program_status", q => q.eq("programId", program._id).eq("status", status)).first()),
+    ]);
+    if (blockers.some(Boolean)) throw new Error("another fee workflow must finish before recovery");
+    const now = Date.now();
+    await ctx.db.patch(run._id, { status: "deferred", workflowStage: "unsigned_processing_recovered", leaseId: undefined, leaseUntil: undefined, nextRetryAt: now, updatedAt: now });
+    await ctx.db.patch(program._id, { status: "enrolled", nextProcessAt: now, updatedAt: now });
+    await ctx.scheduler.runAfter(0, internal.automatedFeeEngine.processProgram, { programId: program._id, runId: run._id });
+    return { status: "unsigned_processing_resumed", runId: run._id };
+  },
+});
+
 export const recordFeeAssessment = internalMutation({
   args: { programId: v.id("automatedFeePrograms"), workLeaseId: v.string(), runId: v.optional(v.id("automatedFeeRuns")),
     valueWei: v.string(), assetAmount: v.string(), operatorWait: v.boolean(), phase: v.optional(v.number()),
@@ -2301,7 +2328,11 @@ export const processProgram = internalAction({
           });
           return { status: "graduated_sweep_deferred", runId: run._id };
         }
-        const manualReview = rejectedStage ? false : automatedFeeFailureRequiresManualReview(detail);
+        // A definitive eth_call rejection produced no signature. Refresh the
+        // authorization on a bounded retry, preserving actual revert handling.
+        const unsignedSimulation = isUnsignedProcessingSimulationFailure(detail, run);
+        const manualReview = unsignedSimulation ? run.retryCount >= 3
+          : rejectedStage ? false : automatedFeeFailureRequiresManualReview(detail);
         await ctx.runMutation(internal.automatedFeeEngine.deferProcessingRun, {
           programId: program._id, runId: run._id, manualReview,
           diagnosticCode: detail.match(/AUTOMATED_FEE_[A-Z_]+/)?.[0] ?? "AUTOMATED_FEE_PROCESSING_FAILED",

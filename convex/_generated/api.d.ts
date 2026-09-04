@@ -21,6 +21,7 @@ import type * as lib_liquiditySchema from "../lib/liquiditySchema.js";
 import type * as lib_liquidityWorkflowSchema from "../lib/liquidityWorkflowSchema.js";
 import type * as lib_terminalFeeReceipts from "../lib/terminalFeeReceipts.js";
 import type * as lib_xReplyQueueSchema from "../lib/xReplyQueueSchema.js";
+import type * as lib_xUnverifiedReplyLimit from "../lib/xUnverifiedReplyLimit.js";
 import type * as lifetimeVolume from "../lifetimeVolume.js";
 import type * as liquidity from "../liquidity.js";
 import type * as liquidityAi from "../liquidityAi.js";
@@ -64,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   "lib/liquidityWorkflowSchema": typeof lib_liquidityWorkflowSchema;
   "lib/terminalFeeReceipts": typeof lib_terminalFeeReceipts;
   "lib/xReplyQueueSchema": typeof lib_xReplyQueueSchema;
+  "lib/xUnverifiedReplyLimit": typeof lib_xUnverifiedReplyLimit;
   lifetimeVolume: typeof lifetimeVolume;
   liquidity: typeof liquidity;
   liquidityAi: typeof liquidityAi;
