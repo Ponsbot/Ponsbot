@@ -366,6 +366,7 @@ Important distinctions:
 - Every other post requesting two or more operations is unknown_wallet, even when its first operation is complete. Never shorten "show my wallet and my balance" to show_wallet, "send and burn" to send, or "launch ... and buy another token" to launch. A buy is a launch developer buy when explicitly labeled dev buy, developer buy, initial buy, or buy at launch. In an otherwise clear launch, a trailing incomplete-spend phrase such as "buy $20 worth" or "purchase $20 worth" also means a $20 USD developer buy because it does not name a separate token. By contrast, "buy $20 worth of PONS" names a separate asset and remains a second buy operation.
 - @Ponsbotfamily normally invokes the bot and is not a transfer recipient. It can be the recipient only when it appears a second time in an explicit destination position, such as "Hey @Ponsbotfamily, send 5 PONSBOT to @Ponsbotfamily".
 - A clear launch ending with "buy $20", "and buy $20", "purchase $20", or "buy 0.01 ETH" is a single launch with a developer buy, including optional worth/please. This applies only when the final buy does not name another token or recipient.
+- "Use" is not a buy verb. Instructions such as "use the image on below", "use this logo", or "use ETH as the pair" are not trades. "Use 2 ETH to buy TOKEN" remains a buy because it explicitly says buy, not because it says use.
 - A command missing required parameters is still classified by operation; the specialized extractor will reject it safely.
 
 Representative examples (learn the intent distinction, not the exact wording):
@@ -885,7 +886,7 @@ export function requestedOperations(text: string): WalletOperation[] {
     .replace(/\blaunch\s+(fees?|revenue|rewards?)\b/gi, "creator $1")
     .replace(/\bgive\s+me\s+my\s+wallet(?:\s+address)?\b/gi, "show my wallet address");
   const strictSwap = strictSwapRoles(operationText);
-  const buy = (/\b(?:buy(?:\s*back)?|purchase|grab|gimme|ape|spend|market\s+buy|pick\s+up|scoop|throw)\b|\bget\s+me\b|\b(?:use|put)\b[\s\S]{0,35}\b(?:to\s+(?:purchase|get)|into|on)\b|\bswap\b[\s\S]{0,35}\b(?:for|into)\b/i.test(operationText)) && !strictSwap;
+  const buy = (/\b(?:buy(?:\s*back)?|purchase|grab|gimme|ape|spend|market\s+buy|pick\s+up|scoop|throw)\b|\bget\s+me\b|\bput\b[\s\S]{0,35}\b(?:to\s+(?:purchase|get)|into|on)\b|\bswap\b[\s\S]{0,35}\b(?:for|into)\b/i.test(operationText)) && !strictSwap;
   const send = /\b(?:send|transfer|give|pay|move|forward|ship|toss|shoot)\b|(?:->|→)\s*@?[a-z0-9]/i.test(operationText);
   const burn = /\bburn\b/i.test(operationText);
   if (strictSwap) {
