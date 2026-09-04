@@ -388,7 +388,11 @@ export function extractGroundedLaunchName(text: string) {
   const cashtagOnly = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
   if (cashtagOnly && !quoted && !labeled && !named && !/\b(?:ticker|symbol)\b/i.test(text)) return cleanSymbol(cashtagOnly);
   const prefixed = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:new\s+)?(?:(?:token|coin)\s*:?)?\s*([^,;|]{1,48}?)(?=\s+\$[A-Z][A-Z0-9]{0,11}\b|\s+(?:with\s+)?(?:ticker|symbol)\b|\s+(?:and\s+)?paired?\s+(?:(?:it\s+)?with|against)\b|\s+(?:and\s+)?pair\s+(?:it\s+)?with\b|\s+with\s+\$?[A-Z][A-Z0-9]{0,11}\s+as\s+(?:the\s+)?(?:ticker|symbol)\b|\s+assign\s+fees\s+to\b|\s+holder\s+fee\s+sharing\b|\s+share\s+with\s+holders\b|\s*\(\s*\$?[A-Z][A-Z0-9]{0,11}\s*\)|\s*[,;|]|$)/i)?.[1];
-  const candidate = cleanLaunchNameEdges(quoted || labeled || named || prefixed || "")
+  // A trailing bracketed ticker is a separate field, not part of an unquoted
+  // name. Preserve explicitly quoted names, including their parentheses.
+  const nameValue = quoted || (labeled || named || prefixed || "")
+    .replace(/\s*(?:\(\s*\$?[a-zA-Z][a-zA-Z0-9]{0,15}\s*\)|\[\s*\$?[a-zA-Z][a-zA-Z0-9]{0,15}\s*\])\s*[.,!]?\s*$/, "");
+  const candidate = cleanLaunchNameEdges(nameValue)
     .replace(/^name\s*(?:is|=|:)?\s*/i, "")
     .replace(/\s+(?:and\s+the\s+)?(?:ticker|symbol)\b[\s\S]*$/i, "")
     .replace(/\s+\$[A-Z][A-Z0-9]{0,11}\b[\s\S]*$/i, "")
@@ -438,6 +442,7 @@ function parseLaunch(text: string): WalletCommand | null {
   const symbolMatch = text.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)
     || text.match(/\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s+(?:as|for)\s+(?:the\s+)?(?:ticker|symbol)\b/i)
     || text.match(/\(\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s*\)/)
+    || text.match(/\[\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s*\]/)
     || (genericCashtag ? [genericCashtag, genericCashtag] : null)
     || text.match(/\b(?:token|coin)\s+([a-zA-Z][a-zA-Z0-9]{0,15})\s+(?:called|named)\b/i);
   const tickerOnlyLaunch = text.match(/\b(?:launch|create|deploy)\s+(?:(?:a|the)\s+)?(?:new\s+)?(?:token|coin)?\s*\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
