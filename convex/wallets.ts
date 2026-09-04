@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { grokLaunchFeeRejection } from "../lib/launch-recipient-policy";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
 import { isTopFiveChild, confirmedTopFivePurchase, TOP_FIVE_GAS_RESERVE_UNITS, TOP_FIVE_BROADCAST_RETRIES } from "../lib/top-five-recovery";
 import { geckoTokenMarkets } from "../lib/gecko-token-market";
@@ -3485,6 +3486,8 @@ export const executeCommand = internalAction({
         message:
           "❌ I couldn't connect this X account to its wallet. Reply with the request again shortly!",
       };
+    const grokFeeRejection = grokLaunchFeeRejection(command, userContext.user.username, userContext.wallet?.address);
+    if (grokFeeRejection) return { ok: false, message: grokFeeRejection };
     let wallet = userContext.wallet;
     try {
       wallet ||= await ctx.runAction(internal.wallets.ensureWallet, {

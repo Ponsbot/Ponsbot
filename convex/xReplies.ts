@@ -21,6 +21,8 @@ import { REPLY_QUEUE_WINDOW_MS, REPLY_QUEUE_WINDOW_LIMIT, REPLY_QUEUE_C_GAP_MS, 
 import { directPostCommandText, isResumeReply } from "../lib/x-direct-post-policy";
 import { loadReplyMetadata, type ReferencePost } from "../lib/x-reference-metadata";
 import { loadAuthorProfiles } from "../lib/x-author-profiles";
+import { grokLaunchFeeRejection, GROK_EXTERNAL_LAUNCH_FEES } from "../lib/launch-recipient-policy";
+import { normalizeLaunchFeeOptions } from "./walletCommands";
 import { restrictedXSearchQuery, intakeSourceTransition, walletBalanceReadsExcluded, verifiedXReadsOnly, effectiveXIntakeFilters } from "../lib/x-intake-filter";
 import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-intake-spike-guard";
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
@@ -2126,6 +2128,22 @@ export const retryInteraction = internalAction({
         );
         intent = decodePersistedXWalletIntent(bound);
       }
+      // Reject only Grok's external launch-fee assignments, without publishing
+      // or preparing media, recipient wallets, funding, or a launch transaction.
+      if (intent.kind === "command" && intent.command.kind === "launch"
+        && current.user.username.toLowerCase() === "grok") {
+        const owner = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: current.user.xUserId });
+        const rejection = grokLaunchFeeRejection(
+          normalizeLaunchFeeOptions(intent.command, workflowText), current.user.username, owner?.wallet?.address,
+        );
+        if (rejection) {
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId, status: "rejected", commandKind: "grok_external_launch_fees_blocked",
+            safeError: "Grok external launch fee assignment silently rejected",
+          });
+          return;
+        }
+      }
       // Keep resume prompts bound to the already resolved token on retries.
       if (parseContextualBuy(directText) && intent.kind === "command" && intent.command.kind === "buy") {
         const buy = intent.command;
@@ -2313,6 +2331,13 @@ export const retryInteraction = internalAction({
             : {}),
           ...(recipientAddress ? { recipientAddress } : {}),
         });
+        if (!result.ok && result.message === GROK_EXTERNAL_LAUNCH_FEES) {
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId, status: "rejected", commandKind: "grok_external_launch_fees_blocked",
+            safeError: "Grok external launch fee assignment silently rejected",
+          });
+          return;
+        }
         if (result.pending || result.deferred) {
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, {
             postId,
