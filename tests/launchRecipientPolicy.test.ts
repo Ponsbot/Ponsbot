@@ -1,4 +1,6 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { getFunctionName } from "convex/server";
+import { retryInteraction } from "../convex/xReplies";
 import { grokLaunchFeeRejection, GROK_EXTERNAL_LAUNCH_FEES } from "../lib/launch-recipient-policy";
 import { executeCommand } from "../convex/wallets";
 import type { WalletCommand } from "../convex/walletCommands";
@@ -9,6 +11,43 @@ const launch: WalletCommand = { kind: "launch", launchMode: "pons", name: "Examp
 
 it.each(["@someone", other, "@GrokFan"])("blocks Grok assigning fees to %s", recipient => {
   expect(grokLaunchFeeRejection({ ...launch, feeRecipient: recipient }, "GrOk", wallet)).toBe(GROK_EXTERNAL_LAUNCH_FEES);
+});
+
+it.each(["@someone", other])("silently rejects the actual X handler for external recipient %s", async recipient => {
+  vi.stubEnv("X_REPLIES_ENABLED", "true");
+  vi.stubEnv("X_STANDALONE_MENTIONS_ENABLED", "false");
+  const updates: any[] = [];
+  const actions: string[] = [];
+  const mutations: string[] = [];
+  const current = {
+    user: { username: "grok", xUserId: "trusted-author-id" },
+    interaction: { postId: "123", status: "processing", createdAt: Date.now(),
+      text: `@Ponsbotfamily launch Example $EXAMPLE assign fees to ${recipient}`,
+      parsedIntentJson: JSON.stringify({ kind: "command", command: { ...launch, feeRecipient: recipient } }) },
+  };
+  const ctx = {
+    runQuery: async (ref: any) => {
+      const name = getFunctionName(ref);
+      if (name === "xReplies:getRetryContext") return current;
+      if (name === "wallets:getXUserAndWallet") return { user: current.user, wallet: { address: wallet } };
+      return null;
+    },
+    runMutation: async (ref: any, args: any) => {
+      const name = getFunctionName(ref); mutations.push(name);
+      if (name === "xFloodProtection:guardQueued") return { suppressed: false };
+      if (name === "xReplies:updateInteraction") { updates.push(args); return null; }
+      if (name === "liquidity:guardThread") return null;
+      throw new Error(`Unexpected mutation: ${name}`);
+    },
+    runAction: async (ref: any) => { actions.push(getFunctionName(ref)); throw new Error("No action permitted"); },
+  };
+  try {
+    await (retryInteraction as any)._handler(ctx, { postId: "123" });
+    expect(updates).toContainEqual(expect.objectContaining({ status: "rejected", commandKind: "grok_external_launch_fees_blocked" }));
+    expect(updates.every(update => !update.responsePostId)).toBe(true);
+    expect(actions).toEqual([]);
+    expect(mutations).not.toContain("xReplies:reservePublication");
+  } finally { vi.unstubAllEnvs(); }
 });
 it.each([undefined, "@GROK", wallet])("allows Grok retaining its own fees (%s)", recipient => {
   expect(grokLaunchFeeRejection({ ...launch, feeRecipient: recipient }, "grok", wallet)).toBeUndefined();
