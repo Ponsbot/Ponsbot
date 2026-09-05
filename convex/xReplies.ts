@@ -24,6 +24,7 @@ import { loadAuthorProfiles } from "../lib/x-author-profiles";
 import { grokLaunchFeeRejection, GROK_EXTERNAL_LAUNCH_FEES } from "../lib/launch-recipient-policy";
 import { normalizeLaunchFeeOptions } from "./walletCommands";
 import type { WalletCommand } from "./walletCommands";
+import { buyTargetContractReply, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
 import { restrictedXSearchQuery, intakeSourceTransition, walletBalanceReadsExcluded, verifiedXReadsOnly, effectiveXIntakeFilters } from "../lib/x-intake-filter";
 import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-intake-spike-guard";
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
@@ -1668,11 +1669,7 @@ export const retryInteraction = internalAction({
       return;
     }
     const guidedHelp = guidedHelpThread?.allowed ? guidedHelpThread : null;
-    const suppliedContract = directText
-      .replace(/@ponsbotfamily\b/gi, " ")
-      .replace(/[\s.!?,;:]+$/g, "")
-      .trim()
-      .match(/^0x[a-fA-F0-9]{40}$/)?.[0];
+    const suppliedContract = buyTargetContractReply(directText);
     const ambiguousTokenContext = suppliedContract
       ? await ctx.runQuery(internal.xReplies.ambiguousTokenReplyContext, {
           ownerXUserId: current.user.xUserId,
@@ -2525,7 +2522,8 @@ export const retryInteraction = internalAction({
       const mismatchedTicker = reply.match(/^⚠️ That contract address's onchain ticker does not match \$([A-Z0-9]{1,32})\./)?.[1];
       const ambiguousField = intent.kind === "command" ? ambiguousTokenField(intent.command, mismatchedTicker) : null;
       const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
-        && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!" || mismatchedTicker)
+        && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!"
+          || reply === NON_INDEXED_BUY_TARGET_MESSAGE || mismatchedTicker)
         ? JSON.stringify({
             type: "ambiguous_token",
             intent: mismatchedTicker

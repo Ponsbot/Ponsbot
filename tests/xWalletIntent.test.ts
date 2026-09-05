@@ -104,6 +104,9 @@ describe("deterministic X wallet replies", () => {
     expect(parseWalletCommand("launch a new token: name Solar Arcade, ticker SOLAR")).toMatchObject({ kind: "launch", name: "Solar Arcade", symbol: "SOLAR" });
     expect(parseWalletCommand("Deploy Coffee Break with symbol JAVA")).toMatchObject({ kind: "launch", name: "Coffee Break", symbol: "JAVA" });
     expect(groundedCanonicalCommand("launch ticker ONLY")).toMatchObject({ kind: "launch", name: "ONLY", symbol: "ONLY" });
+    expect(groundedCanonicalCommand("launch PLANETCAT with same ticker")).toMatchObject({ kind: "launch", name: "PLANETCAT", symbol: "PLANETCAT" });
+    expect(groundedCanonicalCommand("launch token name ticker wowo")).toMatchObject({ kind: "launch", name: "wowo", symbol: "WOWO" });
+    expect(groundedCanonicalCommand("launch token name ticker DEGAN")).toMatchObject({ kind: "launch", name: "DEGAN", symbol: "DEGAN" });
     expect(parseWalletCommand("launch Market Dog ticker MDOG pair asset 0x1111111111111111111111111111111111111111")).toMatchObject({ kind: "launch", pairToken: "0x1111111111111111111111111111111111111111" });
     expect(parseWalletCommand("Launch Pons Bot ticker PONSBOT, pair asset TSLA")).toMatchObject({ kind: "launch", pairToken: "TSLA" });
     expect(groundedCanonicalCommand("Launch token, name is Velvet Rope and the symbol is VELVET")).toMatchObject({ kind: "launch", name: "Velvet Rope", symbol: "VELVET" });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertBuyTarget } from "../lib/buy-target-policy";
+import { assertBuyTarget, buyTargetContractReply, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
 import { safeFailure } from "../convex/wallets";
 
 describe("buy target validation", () => {
@@ -14,6 +14,17 @@ describe("buy target validation", () => {
   });
   it("provides specific messages instead of signer errors", () => {
     expect(safeFailure(new Error("BUY_TARGET_NATIVE_ETH"), "buy")).toContain("already uses Robinhood Chain ETH");
-    expect(safeFailure(new Error("BUY_TARGET_UNRESOLVED"), "buy_and_send")).toContain("Reply with the full request using its contract address");
+    expect(safeFailure(new Error("BUY_TARGET_UNRESOLVED"), "buy_and_send")).toBe(NON_INDEXED_BUY_TARGET_MESSAGE);
+  });
+  it.each([
+    "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    "CA: 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    "contract address 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    "@Ponsbotfamily address: 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07!",
+  ])("accepts a contract-only buy clarification: %s", (reply) => {
+    expect(buyTargetContractReply(reply)).toBe("0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07");
+  });
+  it("rejects extra transaction instructions in a contract clarification", () => {
+    expect(buyTargetContractReply("buy this 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07")).toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
-import { trailingLaunchBuy, ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
+import { trailingLaunchBuy, ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, sharedLaunchNameAndTicker, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
 import { PUBLISHED_PAIR_SYMBOLS } from "../lib/pair-catalog";
@@ -479,9 +479,14 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
   }
   if (operation === "launch" && value && typeof value === "object") {
     const item = { ...(value as Record<string, unknown>) };
+    const sharedNameTicker = sharedLaunchNameAndTicker(text);
+    if (sharedNameTicker) {
+      item.name = sharedNameTicker.name;
+      item.symbol = sharedNameTicker.symbol;
+    }
     if (/\bno\s+description\s+(?:needed|required)\b/i.test(text)) delete item.description;
     const explicitSymbol = text.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)?.[1];
-    if (explicitSymbol) item.symbol = explicitSymbol.toUpperCase();
+    if (explicitSymbol && !sharedNameTicker) item.symbol = explicitSymbol.toUpperCase();
     const labeledWebsite = text.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
     const labeledXHandle = text.match(/\b(?:x|twitter)\s*(?:is|=|:)?\s*@([a-zA-Z0-9_]{1,15})\b/i)?.[1];
     const labeledXUrl = text.match(/\b(?:x|twitter)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?(?:x\.com|twitter\.com)\/[a-zA-Z0-9_]{1,15})\b/i)?.[1];
@@ -496,7 +501,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const labeledQuotedName = text.match(/\b(?:name|full\s+name|token\s+name)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const launchQuotedName = text.match(/\b(?:launch|deploy|create|make)(?:\s+(?:(?:me|my)\s+)?(?:a\s+)?(?:token|coin))?(?:\s+(?:called|named))?\s+(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const exactName = labeledQuotedName?.[1] || labeledQuotedName?.[2] || launchQuotedName?.[1] || launchQuotedName?.[2] || extractGroundedLaunchName(text);
-    if (exactName) item.name = exactName.trim().replace(/[.,;:]+$/, "");
+    if (exactName && !sharedNameTicker) item.name = exactName.trim().replace(/[.,;:]+$/, "");
     if (typeof item.name === "string" && (typeof item.symbol !== "string" || !item.symbol.trim())) item.symbol = tickerFromLaunchName(item.name);
     const quotedDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const plainDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*([^\n,;|]+?)(?=\s+(?:pair(?:ing)?(?:\s+asset)?|website|site|x|twitter|telegram|tg|dev(?:eloper)?\s*buy|initial\s+buy)\s*(?:is|=|:)?\b|$)/i);

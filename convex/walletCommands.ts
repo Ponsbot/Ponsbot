@@ -202,6 +202,27 @@ export function tickerFromLaunchName(value: string) {
   return cleanSymbol(value);
 }
 
+/**
+ * Grounds shorthand where one explicit identifier is intentionally used as
+ * both the token name and ticker. Keeping this deterministic prevents an AI
+ * extraction from retaining syntax such as "with same" or "name ticker" in
+ * the deployed token name.
+ */
+export function sharedLaunchNameAndTicker(text: string) {
+  // A separately stated human-readable name always wins over shorthand.
+  // In particular, `ticker X; call it Y` must retain Y as the token name.
+  const explicitSeparateName = /\b(?:called|named|call\s+it)\s+["'\u2018\u2019\u201c\u201d]?\s*[a-zA-Z]/i.test(text)
+    || /\b(?:(?:full|token)\s+name|name)\b\s*(?:is|=|:)\s*["'\u2018\u2019\u201c\u201d]?\s*[a-zA-Z]/i.test(text)
+    || /\b(?:(?:full|token)\s+name|name)\b\s+(?!and\s+ticker\b|ticker\b|symbol\b)["'\u2018\u2019\u201c\u201d]?\s*[a-zA-Z][a-zA-Z0-9 '’.-]{0,47}?\s+(?:ticker|symbol)\b/i.test(text);
+  if (explicitSeparateName) return undefined;
+  const ordinary = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?(?:with\s+)?name\s+and\s+ticker\s+["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
+  const sameTicker = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\b[\s,:]*)?\$?([a-zA-Z][a-zA-Z0-9]{0,15})\s+with\s+(?:the\s+)?same\s+ticker\b/i)?.[1];
+  const omittedName = text.match(/\b(?:launch|create|deploy|make)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:token|coin)\b[\s,:]*(?:name\b[\s,:]*)?(?:ticker|symbol)\b\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
+  const value = ordinary || sameTicker || omittedName;
+  if (!value) return undefined;
+  return { name: stripWrappingQuotes(value).replace(/^\$/, ""), symbol: cleanSymbol(value) };
+}
+
 function cleanToken(value: string) {
   const token = value.replace(/^\$/, "");
   return /^0x[a-fA-F0-9]{40}$/.test(token) ? token : (knownRwaTicker(token) || cleanSymbol(token));
@@ -478,11 +499,11 @@ function parseLaunch(text: string): WalletCommand | null {
     || text.match(/\b(?:token|coin)\s+([a-zA-Z][a-zA-Z0-9]{0,15})\s+(?:called|named)\b/i);
   const tickerOnlyLaunch = text.match(/\b(?:launch|create|deploy)\s+(?:(?:a|the)\s+)?(?:new\s+)?(?:token|coin)?\s*\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
   const hasExplicitName = /\b(?:(?:full|token)\s+name|name|called|named|call\s+it)\b/i.test(text);
-  const sharedNameAndTicker = text.match(/\b(?:with\s+)?name\s+and\s+ticker\s+["'\u2018\u2019\u201c\u201d]?\s*\$?([a-zA-Z][a-zA-Z0-9]{0,15})\b/i)?.[1];
+  const sharedNameAndTicker = sharedLaunchNameAndTicker(text);
   const name = sharedNameAndTicker
-    ? stripWrappingQuotes(sharedNameAndTicker)
+    ? sharedNameAndTicker.name
     : !hasExplicitName && tickerOnlyLaunch ? cleanSymbol(tickerOnlyLaunch) : (extractGroundedLaunchName(text) || "");
-  const symbol = cleanSymbol(sharedNameAndTicker || symbolMatch?.[1] || name);
+  const symbol = sharedNameAndTicker?.symbol || cleanSymbol(symbolMatch?.[1] || name);
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
 
   const description = quotedField(text, "description|desc", 280);

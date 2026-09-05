@@ -45,7 +45,7 @@ import {
   normalizedRpcAddress,
 } from "../lib/address-normalization";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
-import { assertBuyTarget } from "../lib/buy-target-policy";
+import { assertBuyTarget, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
 import { confirmedAllEthDisplay } from "../lib/native-send-display";
@@ -3163,7 +3163,7 @@ export function safeFailure(
   if (message === "BURN_TARGET_NATIVE_ETH")
     return "⚠️ Burning native ETH isn't supported. Choose a token ticker or contract to burn instead.";
   if (message === "BUY_TARGET_UNRESOLVED")
-    return "⚠️ I couldn't find that token. Reply with the full request using its contract address so I can identify it.";
+    return NON_INDEXED_BUY_TARGET_MESSAGE;
   if (operationKind === "upgrade_fees") {
     if (/FEE_UPGRADE_NOT_FOUND|launch is not eligible/i.test(message)) return FEE_UPGRADE_RESPONSES.notFound;
     if (/FEE_UPGRADE_AMBIGUOUS|multiple owned launches use that ticker/i.test(message)) return FEE_UPGRADE_RESPONSES.ambiguous;
