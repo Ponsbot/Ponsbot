@@ -122,7 +122,7 @@ export function isTerminalCommand(command: WalletCommand) {
 /** A deliberately narrow, anchored command that is never advertised. */
 export function parseTopFiveBuyCommand(raw: string): Extract<WalletCommand, { kind: "buy_top_five" }> | null {
   const text = raw.replace(/(?:^|\s)@ponsbotfamily\b/gi, " ").replace(/\s+/g, " ").trim();
-  const match = text.match(/^buy(\s+and\s+burn)?\s+\$((?:[0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+))\s+(?:of\s+)?each\s+of\s+the\s+top\s+5\s+pons\s+bot\s+tokens[.!?]*$/i);
+  const match = text.match(/^buy(?:\s*back)?(\s+and\s+burn)?\s+\$((?:[0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+))\s+(?:of\s+)?each\s+of\s+the\s+top\s+5\s+pons\s+bot\s+tokens[.!?]*$/i);
   if (!match) return null;
   const amount = cleanAmount(match[2]);
   if (!finitePositiveString(amount)) return null;
@@ -244,7 +244,7 @@ function textOutsideQuotedContent(text: string) {
 /** An unqualified final spend in a launch refers to that launch, not another asset. */
 export function trailingLaunchBuy(text: string) {
   const operative = textOutsideQuotedContent(text);
-  const match = /\b(?:and\s+)?(?:please\s+)?(?:buy|purchase)\s+(?:\$([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)(?:\s+USD)?|([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)\s+ETH)(?:\s+worth)?(?:\s+please)?[\s.!?,;]*(?:@ponsbotfamily[\s.!?,;]*)?$/i.exec(operative);
+  const match = /\b(?:and\s+)?(?:please\s+)?(?:buy(?:\s*back)?|purchase)\s+(?:\$([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)(?:\s+USD)?|([0-9][0-9,]*(?:\.[0-9]+)?|\.[0-9]+)\s+ETH)(?:\s+worth)?(?:\s+please)?[\s.!?,;]*(?:@ponsbotfamily[\s.!?,;]*)?$/i.exec(operative);
   if (!match || /\b(?:dev|developer|initial)\s*$/i.test(operative.slice(0, match.index))) return undefined;
   return { index: match.index, amount: cleanAmount(match[1] || match[2]), unit: match[1] ? "usd" as const : "eth" as const };
 }
@@ -500,12 +500,12 @@ function parseLaunch(text: string): WalletCommand | null {
     return { kind: "unknown", reason: error instanceof Error ? error.message : "Invalid creator fee options." };
   }
 
-  const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
-  const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));
-  const leadingUsdBuy = text.match(new RegExp(`\\$${NUMBER}[^,.;]{0,16}(?:dev\\s*buy|buy)`, "i"));
-  const leadingEthBuy = text.match(new RegExp(`${NUMBER}\\s*(?:eth|weth)[^,.;]{0,16}(?:dev\\s*buy|buy)`, "i"));
-  const pairBuy = text.match(new RegExp(`(?:dev\\s*buys?|buy)[^0-9]{0,16}${NUMBER}\\s+(?!eth\\b|weth\\b|usd\\b|dollars?\\b)([A-Za-z][A-Za-z0-9]{0,11})\\b`, "i"));
-  const leadingPairBuy = text.match(new RegExp(`${NUMBER}\\s+((?!eth\\b|weth\\b|usd\\b|dollars?\\b)[A-Za-z][A-Za-z0-9]{0,11})[^,.;]{0,20}(?:developer\\s*buy|dev\\s*buys?|buy|for\\s+dev)`, "i"));
+  const usdBuy = text.match(new RegExp(`(?:dev\\s*buy|buy(?:\\s*back)?)[^$0-9]{0,16}\\$${NUMBER}`, "i"));
+  const ethBuy = text.match(new RegExp(`(?:dev\\s*buy|buy(?:\\s*back)?)[^0-9]{0,16}${NUMBER}\\s*(?:eth|weth)\\b`, "i"));
+  const leadingUsdBuy = text.match(new RegExp(`\\$${NUMBER}[^,.;]{0,16}(?:dev\\s*buy|buy(?:\\s*back)?)`, "i"));
+  const leadingEthBuy = text.match(new RegExp(`${NUMBER}\\s*(?:eth|weth)[^,.;]{0,16}(?:dev\\s*buy|buy(?:\\s*back)?)`, "i"));
+  const pairBuy = text.match(new RegExp(`(?:dev\\s*buys?|buy(?:\\s*back)?)[^0-9]{0,16}${NUMBER}\\s+(?!eth\\b|weth\\b|usd\\b|dollars?\\b)([A-Za-z][A-Za-z0-9]{0,11})\\b`, "i"));
+  const leadingPairBuy = text.match(new RegExp(`${NUMBER}\\s+((?!eth\\b|weth\\b|usd\\b|dollars?\\b)[A-Za-z][A-Za-z0-9]{0,11})[^,.;]{0,20}(?:developer\\s*buy|dev\\s*buys?|buy(?:\\s*back)?|for\\s+dev)`, "i"));
   const parsedEthBuy = ethBuy || leadingEthBuy;
   const finalBuy = trailingLaunchBuy(text);
   const parsedDevBuy = finalBuy ? { amount: finalBuy.amount, unit: finalBuy.unit } : usdBuy || leadingUsdBuy

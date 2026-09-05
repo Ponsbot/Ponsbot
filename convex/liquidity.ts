@@ -327,6 +327,45 @@ export const terminalWorkflowRecord = internalQuery({
   },
 });
 
+/**
+ * Advisory, read-only check used before offering the creator-fee -> LP-fee
+ * continuation. Fail closed: the caller should only advertise the continuation
+ * when current on-chain position data positively shows claimable fees.
+ */
+export const hasClaimableLpFees = internalAction({
+  args: { ownerXUserId: v.string(), source: source },
+  handler: async (ctx, args): Promise<boolean> => {
+    const context = await ctx.runQuery(internal.liquidity.resolveContext, {
+      ownerXUserId: args.ownerXUserId,
+      source: args.source,
+      claimPositions: true,
+      allPositions: true,
+    });
+    if (!context.wallet || context.wallet.status !== "active" || !context.claimPositions.length)
+      return false;
+    for (const position of context.claimPositions) {
+      try {
+        const draft = newLiquidityDraft("status", position.fields);
+        draft.tokenAddress = position.token;
+        draft.symbol = position.symbol;
+        const live = await signer<LiquidityPositionStatus>("/v1/liquidity/status", {
+          ownerXUserId: args.ownerXUserId,
+          source: args.source,
+          walletRef: context.wallet.signerWalletRef,
+          expectedFrom: context.wallet.address,
+          draft,
+          legs: position.legs,
+        }, 15_000);
+        if (live.assets.some(asset => asset.unclaimed !== null
+          && Number.isFinite(Number(asset.unclaimed)) && Number(asset.unclaimed) > 0)) return true;
+      } catch {
+        // An unavailable status is not evidence that fees exist.
+      }
+    }
+    return false;
+  },
+});
+
 async function signer<T>(path: string, body: unknown, timeout = 120_000): Promise<T> {
   const base = process.env.WALLET_SIGNER_URL?.trim() || `${process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "")}/api/wallet-signer`;
   if (!base.startsWith("https://") || !process.env.WALLET_SIGNER_TOKEN) throw new Error("Signer not configured");

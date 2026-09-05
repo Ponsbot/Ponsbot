@@ -4,7 +4,7 @@ import { shouldHandlePassiveChainText, contextualBuyParent } from "../convex/xRe
 const a = "0x1111111111111111111111111111111111111111";
 const b = "0x2222222222222222222222222222222222222222";
 describe("contextual X buys", () => {
-  it.each(["buy $20 of this", "@Ponsbotfamily buy $20 of that token!", "Please buy $20 of this please."])("accepts %s", text => {
+  it.each(["buy $20 of this", "buyback $20 of this", "buy back $20 of this", "@Ponsbotfamily buy $20 of that token!", "Please buy $20 of this please."])("accepts %s", text => {
     expect(parseContextualBuy(text)).toEqual({amount:"20",unit:"usd"});
     expect(shouldHandlePassiveChainText(text)).toBe(true);
   });

@@ -48,7 +48,7 @@ describe("guided general help", () => {
   });
 
   it.each([
-    ["buy", "buy"], ["purchase", "buy"], ["sell", "sell"], ["swap", "swap"],
+    ["buy", "buy"], ["buyback", "buy"], ["buy back", "buy"], ["purchase", "buy"], ["sell", "sell"], ["swap", "swap"],
     ["send", "send"], ["transfer", "send"], ["burn", "burn"], ["claim", "claim"],
     ["cross-chain", "cross_chain"], ["I want a cross-chain swap", "cross_chain"],
     ["private", "private_swap"], ["I would like a private swap", "private_swap"],

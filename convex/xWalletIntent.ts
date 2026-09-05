@@ -468,7 +468,7 @@ Ignore conversational framing and politeness outside the operative request. A tr
 
 function validateExtractedCommand(value: unknown, operation: WalletOperation, text: string): WalletCommand | null {
   if (operation === "launch") text = stripDirectLaunchImageInstruction(text);
-  if (operation === "buy" && /\bbuy\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) return null;
+  if (operation === "buy" && /\bbuy(?:\s*back)?\b/i.test(text) && /\b(?:destroy|incinerate)\b/i.test(text) && !/\bburn\b/i.test(text)) return null;
   if (operation === "launch" && hasMultipleLaunchSpecifications(text)) return null;
   let normalizedValue = value;
   if (operation === "claim_fees" && value && typeof value === "object"
@@ -619,9 +619,9 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
     sell: /\bsell\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
     send: /\b(?:send|transfer|give)\b[\s\S]{0,80}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
     burn: /\bburn\b[\s\S]{0,45}\b(?:all|half|entire|whole|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
-    buy_and_send: /\bbuy\b[\s\S]{0,80}\b(?:send|transfer|give)\b[\s\S]{0,60}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
-    buy_and_burn: /\b(?=[\s\S]*\b(?:buy|purchase)\b)(?=[\s\S]*\bburn\b)[\s\S]*$/i,
-    buy_top_five: /^buy(?:\s+and\s+burn)?\s+\$[0-9][0-9,.]*\s+(?:of\s+)?each\s+of\s+the\s+top\s+5\s+pons\s+bot\s+tokens[.!?]*$/i,
+    buy_and_send: /\bbuy(?:\s*back)?\b[\s\S]{0,80}\b(?:send|transfer|give)\b[\s\S]{0,60}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
+    buy_and_burn: /\b(?=[\s\S]*\b(?:buy(?:\s*back)?|purchase)\b)(?=[\s\S]*\bburn\b)[\s\S]*$/i,
+    buy_top_five: /^buy(?:\s*back)?(?:\s+and\s+burn)?\s+\$[0-9][0-9,.]*\s+(?:of\s+)?each\s+of\s+the\s+top\s+5\s+pons\s+bot\s+tokens[.!?]*$/i,
     swap_token_for_token: /\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i,
     claim_fees: /\b(?:claim|collect|withdraw)\b[\s\S]{0,45}\b(?:fees?|revenue|rewards?)\b|\bclaim\s+(?:everything|all)\s+available(?:\s+for\s+me)?\b/i,
     reassign_fees: /^reassign\s+(?:\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\s+fees|fees\s+for\s+\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31}))\s+to\s+(?:@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40}|holders)[.!]?$/i,

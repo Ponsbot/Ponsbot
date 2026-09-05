@@ -135,7 +135,7 @@ export function guidedHelpSelection(text: string): Exclude<GuidedHelpOperation, 
   const clean = cleanChoice(text);
   if (/^(?:wallet|my wallet|wallet address|show (?:me )?my wallet)$/i.test(clean)) return "wallet";
   if (/^(?:balance|balances|wallet balance|token balance|show (?:me )?my balance)$/i.test(clean)) return "balance";
-  if (/^(?:buy|purchase|i (?:want|would like) to (?:buy|purchase))$/i.test(clean)) return "buy";
+  if (/^(?:buy(?:\s*back)?|purchase|i (?:want|would like) to (?:buy(?:\s*back)?|purchase))$/i.test(clean)) return "buy";
   if (/^(?:sell|i (?:want|would like) to sell)$/i.test(clean)) return "sell";
   if (/^(?:swap|i (?:want|would like) to swap)$/i.test(clean)) return "swap";
   if (/^(?:send|transfer|i (?:want|would like) to (?:send|transfer))$/i.test(clean)) return "send";
@@ -161,7 +161,7 @@ export function guidedHelpOperationFromHelp(text: string, topic?: string): Exclu
   if (/\breassign\b[^.!?]{0,30}\bfees?\b/i.test(clean)) return "reassign_fees";
   if (/\bcross[ -]?chain\b/i.test(clean) || topic === "cross_chain") return "cross_chain";
   if (/\bprivate(?:ly)?(?:\s+swap)?\b/i.test(clean)) return "private_swap";
-  if (/\b(?:buy|purchase)\b/i.test(clean)) return "buy";
+  if (/\b(?:buy(?:\s*back)?|purchase)\b/i.test(clean)) return "buy";
   if (/\bsell\b/i.test(clean)) return "sell";
   if (/\bswap\b/i.test(clean)) return "swap";
   if (/\b(?:send|transfer)\b/i.test(clean)) return "send";

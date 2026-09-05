@@ -13,7 +13,7 @@ const command = { kind: "claim_fees" };
 const sessionId = "web_123456789012345678901234";
 const eventId = "event_12345678901234567890123456789012345678";
 
-function fixture(source: "x" | "terminal" = "terminal", tokens = [a(1), a(2), a(3)]) {
+function fixture(source: "x" | "terminal" = "terminal", tokens = [a(1), a(2), a(3)], claimableLpFees = false) {
   const rows: Record<string, any[]> = {};
   const db: any = {
     query(table: string) {
@@ -44,6 +44,7 @@ function fixture(source: "x" | "terminal" = "terminal", tokens = [a(1), a(2), a(
     if (name === "wallets:listOwnedLaunchTokens") return tokens;
     if (name === "wallets:resolveKnownToken") return data.identifier;
     if (name === "wallets:claimMayIncludeOtherLaunches") return false;
+    if (name === "liquidity:hasClaimableLpFees") return claimableLpFees;
     if (name === "wallets:recordConfirmedExecution") {
       const r = await db.query("walletRequests").withIndex("by_request_id", (q: any) => q.eq("requestId", data.requestId)).unique();
       await db.patch(r._id, { status: "confirmed", transactionHash: data.transactionHash });
@@ -89,7 +90,7 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(
 
 describe("legacy claim continuations", () => {
   it.each(["x", "terminal"] as const)("checks empty creator fees before gas and offers LP fees on %s", async source => {
-    const f = fixture(source, []);
+    const f = fixture(source, [], true);
     const success = f.fetcher.getMockImplementation()!;
     f.fetcher.mockImplementation(async (url, options) => String(url).endsWith("/claim-plan")
       ? new Response(JSON.stringify({ tokenAddresses: [], hasClaimableFees: false, escrowBalance: "0" }))
@@ -100,6 +101,18 @@ describe("legacy claim continuations", () => {
     expect(result.message).toContain("Did you mean claim LP fees?");
     expect(f.executions).toEqual([]);
     expect(f.rows.walletRequests[0]).toMatchObject({ status: "skipped", diagnosticCode: "NO_CREATOR_FEE_SOURCE" });
+  });
+
+  it.each(["x", "terminal"] as const)("does not offer an LP claim when a non-launcher has no claimable LP fees on %s", async source => {
+    const f = fixture(source, [], false);
+    const success = f.fetcher.getMockImplementation()!;
+    f.fetcher.mockImplementation(async (url, options) => String(url).endsWith("/claim-plan")
+      ? new Response(JSON.stringify({ tokenAddresses: [], hasClaimableFees: false, escrowBalance: "0" }))
+      : success(url, options));
+    const result = await handler(wallets.executeCommand)(f.ctx, f.args);
+    expect(result.message).toBe("ℹ️ You haven't launched any tokens to generate creator fees.");
+    expect(result.message).not.toContain("Did you mean claim LP fees?");
+    expect(f.executions).toEqual([]);
   });
 
   it("offers LP fees when a launcher has no creator fees available", async () => {

@@ -23,6 +23,7 @@ import { loadReplyMetadata, type ReferencePost } from "../lib/x-reference-metada
 import { loadAuthorProfiles } from "../lib/x-author-profiles";
 import { grokLaunchFeeRejection, GROK_EXTERNAL_LAUNCH_FEES } from "../lib/launch-recipient-policy";
 import { normalizeLaunchFeeOptions } from "./walletCommands";
+import type { WalletCommand } from "./walletCommands";
 import { restrictedXSearchQuery, intakeSourceTransition, walletBalanceReadsExcluded, verifiedXReadsOnly, effectiveXIntakeFilters } from "../lib/x-intake-filter";
 import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-intake-spike-guard";
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
@@ -963,6 +964,74 @@ function decodeGasResumeState(value?: string) {
   }
 }
 
+type AmbiguousTokenField = "token" | "fromToken" | "toToken";
+
+function ambiguousTokenField(command: WalletCommand, ticker?: string): AmbiguousTokenField | null {
+  const normalizedTicker = ticker?.replace(/^\$/, "").toUpperCase();
+  if ("token" in command && typeof command.token === "string"
+    && (!normalizedTicker || command.token.replace(/^\$/, "").toUpperCase() === normalizedTicker)) return "token";
+  if (command.kind === "swap_token_for_token") {
+    if (!normalizedTicker || command.fromToken.replace(/^\$/, "").toUpperCase() === normalizedTicker) return "fromToken";
+    if (command.toToken.replace(/^\$/, "").toUpperCase() === normalizedTicker) return "toToken";
+  }
+  return null;
+}
+
+function replaceAmbiguousToken(intent: Extract<XWalletIntent, { kind: "command" }>, field: AmbiguousTokenField, token: string): XWalletIntent {
+  if (field === "token" && "token" in intent.command)
+    return { kind: "command", command: { ...intent.command, token } } as XWalletIntent;
+  if (intent.command.kind === "swap_token_for_token")
+    return { kind: "command", command: { ...intent.command, [field]: token } } as XWalletIntent;
+  return intent;
+}
+
+function ambiguousTokenValue(command: WalletCommand, field: AmbiguousTokenField) {
+  if (field === "token") return "token" in command && typeof command.token === "string" ? command.token : null;
+  return command.kind === "swap_token_for_token" ? command[field] : null;
+}
+
+function decodeAmbiguousTokenState(value?: string) {
+  if (!value || value.length > 2_000) return null;
+  try {
+    const parsed = JSON.parse(value) as { type?: unknown; intent?: unknown; field?: unknown; explicitMentionAuthorized?: unknown };
+    if (parsed.type !== "ambiguous_token" || typeof parsed.explicitMentionAuthorized !== "boolean") return null;
+    const intent = decodePersistedXWalletIntent(JSON.stringify(parsed.intent));
+    if (intent.kind !== "command") return null;
+    const field = parsed.field === "token" || parsed.field === "fromToken" || parsed.field === "toToken"
+      ? parsed.field
+      : ambiguousTokenField(intent.command);
+    return field ? { intent, field, explicitMentionAuthorized: parsed.explicitMentionAuthorized } : null;
+  } catch {
+    return null;
+  }
+}
+
+export const ambiguousTokenReplyContext = internalQuery({
+  args: { ownerXUserId: v.string(), parentPostId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.parentPostId) return null;
+    const parent = await ctx.db.query("xReplyInteractions")
+      .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId!)).unique();
+    if (!parent || parent.authorXUserId !== args.ownerXUserId
+      || parent.updatedAt < Date.now() - GUIDED_HELP_TTL_MS || parent.guidedHelpConsumedByPostId) return null;
+    return decodeAmbiguousTokenState(parent.guidedHelpStateJson);
+  },
+});
+
+export const claimAmbiguousTokenReply = internalMutation({
+  args: { ownerXUserId: v.string(), parentPostId: v.string(), consumerPostId: v.string() },
+  handler: async (ctx, args) => {
+    const parent = await ctx.db.query("xReplyInteractions")
+      .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId)).unique();
+    if (!parent || parent.authorXUserId !== args.ownerXUserId
+      || parent.updatedAt < Date.now() - GUIDED_HELP_TTL_MS
+      || !decodeAmbiguousTokenState(parent.guidedHelpStateJson)) return false;
+    if (parent.guidedHelpConsumedByPostId) return parent.guidedHelpConsumedByPostId === args.consumerPostId;
+    await ctx.db.patch(parent._id, { guidedHelpConsumedByPostId: args.consumerPostId, updatedAt: Date.now() });
+    return true;
+  },
+});
+
 function gasResumeAuthorized(value?: string) {
   return Boolean(decodeGasResumeState(value)?.explicitMentionAuthorized);
 }
@@ -1594,6 +1663,56 @@ export const retryInteraction = internalAction({
       return;
     }
     const guidedHelp = guidedHelpThread?.allowed ? guidedHelpThread : null;
+    const suppliedContract = directText
+      .replace(/@ponsbotfamily\b/gi, " ")
+      .replace(/[\s.!?,;:]+$/g, "")
+      .trim()
+      .match(/^0x[a-fA-F0-9]{40}$/)?.[0];
+    const ambiguousTokenContext = suppliedContract
+      ? await ctx.runQuery(internal.xReplies.ambiguousTokenReplyContext, {
+          ownerXUserId: current.user.xUserId,
+          parentPostId: current.interaction.parentPostId,
+        })
+      : null;
+    let ambiguousTokenIntent: XWalletIntent | undefined;
+    if (suppliedContract && ambiguousTokenContext?.intent.kind === "command") {
+      const originalToken = ambiguousTokenValue(ambiguousTokenContext.intent.command, ambiguousTokenContext.field);
+      if (typeof originalToken !== "string") return;
+      const originalTicker = originalToken.replace(/^\$/, "").toUpperCase();
+      const owner = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: current.user.xUserId });
+      const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, {
+        identifier: originalToken,
+        ...(owner?.wallet?._id ? { walletId: owner.wallet._id } : {}),
+      });
+      if (!matches.some(address => address.toLowerCase() === suppliedContract.toLowerCase())) {
+        const message = `⚠️ That contract address does not match an indexed $${originalTicker} token. Double-check that you've got the right contract address, then reply with it.`;
+        const stateJson = JSON.stringify({
+          type: "ambiguous_token",
+          intent: ambiguousTokenContext.intent,
+          field: ambiguousTokenContext.field,
+          explicitMentionAuthorized: ambiguousTokenContext.explicitMentionAuthorized,
+        });
+        await ctx.runMutation(internal.xReplies.updateInteraction, {
+          postId, status: "processing", commandKind: "ambiguous_token", guidedHelpStateJson: stateJson,
+        });
+        const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: false, kind: "reply" });
+        await ctx.runMutation(internal.xReplies.updateInteraction, {
+          postId, status: "rejected", commandKind: "ambiguous_token", guidedHelpStateJson: stateJson,
+          responsePostId, safeError: message,
+        });
+        return;
+      }
+      if (!current.interaction.parentPostId || !await ctx.runMutation(internal.xReplies.claimAmbiguousTokenReply, {
+        ownerXUserId: current.user.xUserId,
+        parentPostId: current.interaction.parentPostId,
+        consumerPostId: postId,
+      })) return;
+      ambiguousTokenIntent = replaceAmbiguousToken(
+        ambiguousTokenContext.intent,
+        ambiguousTokenContext.field,
+        suppliedContract,
+      );
+    }
     const guidedClaimChoice = guidedHelp?.operation === "claim"
       ? guidedHelpClaimSelection(directText)
       : null;
@@ -1648,7 +1767,7 @@ export const retryInteraction = internalAction({
             ]
           : undefined,
       ) &&
-      !shouldHandlePassiveChainText(directText) && !liquidityRequest && !guidedHelp
+      !shouldHandlePassiveChainText(directText) && !liquidityRequest && !guidedHelp && !ambiguousTokenIntent
     ) {
       await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId,
@@ -2109,7 +2228,9 @@ export const retryInteraction = internalAction({
         return;
       }
       let intent: XWalletIntent;
-      if (guidedLaunchExecution) {
+      if (ambiguousTokenIntent) {
+        intent = ambiguousTokenIntent;
+      } else if (guidedLaunchExecution) {
         intent = { kind: "command", command: guidedLaunchExecution.command };
       } else if (current.interaction.parsedIntentJson) {
         intent = decodePersistedXWalletIntent(
@@ -2397,10 +2518,26 @@ export const retryInteraction = internalAction({
             explicitMentionAuthorized: current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
           })
         : undefined;
-      if (effectiveOutcomeCommandKind || gasResumeStateJson || guidedLaunchRecoveryStateJson) await ctx.runMutation(internal.xReplies.updateInteraction, {
+      const mismatchedTicker = reply.match(/^⚠️ That contract address does not match an indexed \$([A-Z0-9]{1,32}) token\./)?.[1];
+      const ambiguousField = intent.kind === "command" ? ambiguousTokenField(intent.command, mismatchedTicker) : null;
+      const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
+        && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!" || mismatchedTicker)
+        ? JSON.stringify({
+            type: "ambiguous_token",
+            intent: mismatchedTicker
+              ? replaceAmbiguousToken(intent, ambiguousField, mismatchedTicker)
+              : intent,
+            field: ambiguousField,
+            explicitMentionAuthorized: current.interaction.botParentAuthorized === true
+              || hasExplicitBotMention(current.interaction.text, undefined)
+              || Boolean(guidedHelp?.sourceExplicitMention),
+          })
+        : undefined;
+      if (effectiveOutcomeCommandKind || gasResumeStateJson || guidedLaunchRecoveryStateJson || ambiguousTokenStateJson) await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId, status: "processing", ...(effectiveOutcomeCommandKind ? { commandKind: effectiveOutcomeCommandKind } : {}),
         ...(guidedLaunchRecoveryStateJson ? { guidedHelpStateJson: guidedLaunchRecoveryStateJson }
-          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
+          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson }
+            : ambiguousTokenStateJson ? { guidedHelpStateJson: ambiguousTokenStateJson, commandKind: "ambiguous_token" } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
       // Preserve complete balance lists, templated command results, and guided
@@ -2418,7 +2555,8 @@ export const retryInteraction = internalAction({
         responsePostId,
         ...(effectiveOutcomeCommandKind ? { commandKind: effectiveOutcomeCommandKind } : {}),
         ...(guidedLaunchRecoveryStateJson ? { guidedHelpStateJson: guidedLaunchRecoveryStateJson }
-          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson } : {}),
+          : gasResumeStateJson ? { guidedHelpStateJson: gasResumeStateJson }
+            : ambiguousTokenStateJson ? { guidedHelpStateJson: ambiguousTokenStateJson, commandKind: "ambiguous_token" } : {}),
         ...(!ok ? { safeError: reply } : {}),
       });
     } catch (error) {
@@ -3245,6 +3383,12 @@ export const pollMentions = internalAction({
         if (guidedHelpContinuation && parseContextualBuy(directText) && parentPostId
           && (await ctx.runQuery(internal.xReplies.contextualBuyParent, { postId: parentPostId })).token) guidedHelpContinuation = null;
         if (guidedHelpContinuation && !guidedHelpContinuation.allowed) continue;
+        const ambiguousTokenContinuation = parentPostId
+          ? await ctx.runQuery(internal.xReplies.ambiguousTokenReplyContext, {
+              ownerXUserId: mention.author_id || "",
+              parentPostId,
+            })
+          : null;
         const insufficientContext = parentPostId
           ? await ctx.runQuery(internal.xReplies.insufficientEthResumeContext, {
               ownerXUserId: mention.author_id || "",
@@ -3293,7 +3437,7 @@ export const pollMentions = internalAction({
           directText,
           mention.referenced_tweets,
         );
-        const workflowAdmission = guidedHelpContinuation?.allowed || liquidityContinuation || ownedBotReply
+        const workflowAdmission = guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || ownedBotReply
           ? await ctx.runMutation(internal.xReplies.admitWorkflowContinuation, {
               ownerXUserId: mention.author_id || "", postId: mention.id,
             })
@@ -3304,7 +3448,7 @@ export const pollMentions = internalAction({
         if (exceedsXReplyDepthLimit({
           replyDepth,
           maximumDepth: MAX_X_REPLY_DEPTH,
-          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || liquidityContinuation),
+          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation),
           liquidityRequest,
           contextualGasHelp,
           // The parent prompt is explicitly waiting for a response. Do not
@@ -3327,7 +3471,7 @@ export const pollMentions = internalAction({
         if (
           restrictedReply &&
           !directedHelp &&
-          !liquidityContinuation && !liquidityRequest && !guidedHelpContinuation?.allowed && !gasResume &&
+          !liquidityContinuation && !liquidityRequest && !guidedHelpContinuation?.allowed && !ambiguousTokenContinuation && !gasResume &&
           !shouldHandlePassiveChainText(directText)
         )
           continue;

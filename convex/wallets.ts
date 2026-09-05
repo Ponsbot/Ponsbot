@@ -13,7 +13,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   isTerminalCommand,
   isValueMovingCommand,
@@ -3214,7 +3214,7 @@ export function safeFailure(
   if (/image/i.test(message))
     return "🖼️ I couldn't prepare that image. Try another one, or launch without artwork.";
   if (/ticker matches/i.test(message))
-    return "⚠️ More than one indexed token uses that ticker. Reply with the full request using the contract address so I choose the right one!";
+    return "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!";
   if (
     /specify the token|contract address|token lookup|held token/i.test(message)
   )
@@ -3286,6 +3286,53 @@ export function safeFailure(
   console.error("wallet_unclassified_failure", { message });
   if (operationKind === "upgrade_fees") return FEE_UPGRADE_RESPONSES.failed;
   return "❌ I couldn't complete that wallet request. Check the details, then reply with the request again!";
+}
+
+export function explicitTickerContractPairs(text: string) {
+  const pairs: Array<{ ticker: string; address: string }> = [];
+  const seen = new Set<string>();
+  const patterns = [
+    /\$([A-Za-z][A-Za-z0-9]{0,31})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address)\s*[:=]?\s*)?(0x[a-fA-F0-9]{40})\b/gi,
+    /\b(0x[a-fA-F0-9]{40})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address)\s*[:=]?\s*)?\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi,
+  ];
+  for (const [index, pattern] of patterns.entries()) for (const match of text.matchAll(pattern)) {
+    const ticker = (index === 0 ? match[1] : match[2]).toUpperCase();
+    const address = index === 0 ? match[2] : match[1];
+    const key = `${ticker}:${address.toLowerCase()}`;
+    if (!seen.has(key)) { seen.add(key); pairs.push({ ticker, address }); }
+  }
+  return pairs;
+}
+
+async function normalizeExplicitTickerContracts(
+  ctx: ActionCtx,
+  walletId: Id<"cryptoWallets">,
+  command: WalletCommand,
+  text: string,
+) {
+  const pairs = explicitTickerContractPairs(text);
+  if (!pairs.length) return command;
+  let normalized = command;
+  for (const pair of pairs) {
+    const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, {
+      identifier: pair.ticker,
+      walletId,
+    });
+    if (!matches.some(address => address.toLowerCase() === pair.address.toLowerCase()))
+      throw new Error(`TOKEN_CONTRACT_TICKER_MISMATCH:${pair.ticker}`);
+    const replace = (value: string | undefined) => value
+      && (value.replace(/^\$/, "").toUpperCase() === pair.ticker || value.toLowerCase() === pair.address.toLowerCase())
+      ? pair.address
+      : value;
+    if ("token" in normalized && typeof normalized.token === "string")
+      normalized = { ...normalized, token: replace(normalized.token)! } as WalletCommand;
+    if (normalized.kind === "swap_token_for_token") normalized = {
+      ...normalized,
+      fromToken: replace(normalized.fromToken)!,
+      toToken: replace(normalized.toToken)!,
+    };
+  }
+  return normalized;
 }
 
 function privateDiagnosticCode(error: unknown) {
@@ -3502,6 +3549,16 @@ export const executeCommand = internalAction({
         message:
           "🔒 This wallet isn't available right now. Reply with the request again shortly.",
       };
+    try {
+      command = await normalizeExplicitTickerContracts(ctx, wallet._id, command, args.text);
+    } catch (error) {
+      const ticker = (error instanceof Error ? error.message : "").match(/^TOKEN_CONTRACT_TICKER_MISMATCH:([A-Z0-9]{1,32})$/)?.[1];
+      if (ticker) return {
+        ok: false,
+        message: `⚠️ That contract address does not match an indexed $${ticker} token. Double-check that you've got the right contract address, then reply with it.`,
+      };
+      return { ok: false, message: safeFailure(error, command.kind) };
+    }
     const reservedTickerMessage = reservedLaunchTickerMessage(command);
     if (reservedTickerMessage) {
       return {
@@ -3738,7 +3795,12 @@ export const executeCommand = internalAction({
         if (preflightClaimPlan?.hasClaimableFees === false) {
           const summary = await ctx.runQuery(internal.wallets.creatorFeeClaimSourceSummary, { xUserId: args.xUserId });
           if (!command.token && !summary.hasLaunched && !summary.hasCreatorFeeSource) {
-            const message = withClaimLpFeeOffer("ℹ️ You haven't launched any tokens to generate creator fees.");
+            const base = "ℹ️ You haven't launched any tokens to generate creator fees.";
+            const hasClaimableLpFees = await ctx.runAction(internal.liquidity.hasClaimableLpFees, {
+              ownerXUserId: args.xUserId,
+              source,
+            }).catch(() => false);
+            const message = hasClaimableLpFees ? withClaimLpFeeOffer(base) : base;
             await ctx.runMutation(internal.wallets.updateWalletRequest, {
               requestId, status: "skipped", finalMessage: message,
               workflowStage: "creator_fee_source_precheck", diagnosticCode: "NO_CREATOR_FEE_SOURCE",

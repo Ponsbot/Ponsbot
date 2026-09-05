@@ -1,9 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { isTerminalCommand, normalizeLaunchFeeOptions, normalizeLaunchLinks, normalizeLaunchTelegram, normalizeTelegramUrl, normalizeWebsiteUrl, normalizeXUrl, parseWalletCommand, validateStructuredWalletCommand } from "../convex/walletCommands";
-import { safeFailure, significantAmount } from "../convex/wallets";
+import { explicitTickerContractPairs, safeFailure, significantAmount } from "../convex/wallets";
 import { requestedOperations } from "../convex/xWalletIntent";
 
 describe("X wallet commands", () => {
+  it("recognizes an explicit ticker and contract as one token identity", () => {
+    const address = "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07";
+    expect(explicitTickerContractPairs(`Buy $14 of $GIGPAPONS ${address}`)).toEqual([
+      { ticker: "GIGPAPONS", address },
+    ]);
+    expect(explicitTickerContractPairs(`${address}, token address $gigpapons`)).toEqual([
+      { ticker: "GIGPAPONS", address },
+    ]);
+  });
+
+  it("does not mistake a send recipient for a token contract", () => {
+    expect(explicitTickerContractPairs(
+      "send 10 PONS to 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    )).toEqual([]);
+  });
+
+  it("parses a buy containing both an ambiguous ticker and its contract", () => {
+    expect(parseWalletCommand(
+      "Buy $14 of $GIGPAPONS 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    )).toMatchObject({
+      kind: "buy",
+      amount: "14",
+      unit: "usd",
+      token: "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    });
+  });
+
   it("normalizes cbBTC launch-pair synonyms to cbBTC", () => {
     for (const alias of ["cbBTC", "$cbBTC", "BTC", "$BTC", "Bitcoin", "Coinbase Bitcoin", "Coinbase Wrapped Bitcoin", "Wrapped Bitcoin"]) {
       expect(parseWalletCommand(`launch Bitcoin Cat ticker BCAT pair with ${alias}`), alias).toMatchObject({
@@ -208,6 +235,17 @@ describe("X wallet commands", () => {
     expect(parseWalletCommand("buy back 0.001 ETH of PONS")).toEqual({
       kind: "buy", amount: "0.001", unit: "eth", token: "PONS", slippageBps: 250,
     });
+    expect(parseWalletCommand("buyback $25 of PONSBOT and send to @alice")).toEqual({
+      kind: "buy_and_send", amount: "25", unit: "usd", token: "PONSBOT", recipient: "@alice", slippageBps: 250,
+    });
+    expect(parseWalletCommand("buy back $25 of PONSBOT and burn it")).toEqual({
+      kind: "buy_and_burn", amount: "25", unit: "usd", token: "PONSBOT", slippageBps: 250,
+    });
+  });
+
+  it("asks only for a contract address when a ticker is ambiguous", () => {
+    expect(safeFailure(new Error("that ticker matches more than one token; use the contract address"), "buy"))
+      .toBe("⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!");
   });
 
   it("accepts USD written as a unit for buys and token sends", () => {
