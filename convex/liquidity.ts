@@ -561,9 +561,19 @@ export const handle = internalAction({
               }
             }
             if (!message && d.operation === "open" && d.fields.token && d.fields.amount && d.fields.unit && (!d.tokenAddress || !d.analyzed || (control?.kind === "refresh" || retryEmptyPoolAnalysis) && d.phase === "pool")) {
-              if (!context.tokenAddress) { message = R.unresolved; d.phase = "token"; }
+              let resolvedTokenAddress = context.tokenAddress;
+              if (!resolvedTokenAddress && context.wallet && !/^0x[a-f0-9]{40}$/i.test(d.fields.token)) {
+                const held = await ctx.runAction(internal.wallets.resolveHeldTokenTicker, {
+                  walletId: context.wallet._id,
+                  ownerXUserId: args.ownerXUserId,
+                  identifier: d.fields.token,
+                });
+                if (held.status === "found") resolvedTokenAddress = held.tokenAddress;
+                else if (held.status === "ambiguous") message = R.ambiguousWalletToken;
+              }
+              if (!resolvedTokenAddress) { message ||= R.unresolved; d.phase = "token"; }
               else {
-                d.tokenAddress = context.tokenAddress;
+                d.tokenAddress = resolvedTokenAddress;
                 const fingerprint = `${d.tokenAddress.toLowerCase()}:${d.fields.amount}:${d.fields.unit}`;
                 if (!d.fundingCheck || d.fundingCheck.fingerprint !== fingerprint || !d.fundingCheck.sufficient || control?.kind === "refresh") {
                   try {
@@ -596,7 +606,7 @@ export const handle = internalAction({
                   if (!searchLimit.allowed) throw new Error("LP_TERMINAL_SEARCH_LIMIT");
                   if (searchLimit.warn) terminalSearchWarning = `⚠️ You’ve used 25 of today’s 30 terminal liquidity pool searches. You have ${searchLimit.remaining} remaining.`;
                 }
-                const discovered = await discoverLiquidityPools(context.tokenAddress as `0x${string}`, d.fields.unit === "usd" ? Number(d.fields.amount) : undefined, undefined, { fresh: true, fields: d.fields });
+                const discovered = await discoverLiquidityPools(resolvedTokenAddress as `0x${string}`, d.fields.unit === "usd" ? Number(d.fields.amount) : undefined, undefined, { fresh: true, fields: d.fields });
                 d.symbol = discovered.symbol;
                 d.currentMarketCapUsd = discovered.currentMarketCapUsd;
                 const ranked = await rankLiquidityPoolsWithDiagnostics(discovered.candidates, `${d.fields.amount ?? "unknown"} ${d.fields.unit ?? ""}`);

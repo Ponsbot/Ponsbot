@@ -31,6 +31,7 @@ export const LIQUIDITY_RESPONSES = {
   next: "➡️ Reply next to see the remaining details.",
   failed: "⚠️ A required market, wallet, or quote check didn’t finish. Your choices are saved. Reply refresh to retry, or cancel.",
   unresolved: "🔎 I couldn’t identify one matching token. Reply with its contract address.",
+  ambiguousWalletToken: "⚠️ More than one token in your Pons Bot wallet uses that ticker. Reply with the contract address so I choose the right one.",
   position: "🔎 Which position? Provide its ID, with or without LP-. Say show my liquidity positions to see your list.",
   notOwner: "⚠️ That position doesn’t belong to your wallet.",
   help: "💧 Create a liquidity position with Delta Liquidity to earn a share of trading fees. I’ll compare pools and guide you through the settings, then give you a quote to confirm.\n\nCheck your positions, collect LP fees, or withdraw by position ID.\n\nAsk “what does this mean?” at any step for help.\n\nAsk me to \"create a $100 liquidity position for $PONSBOT\" to get started.",

@@ -1543,6 +1543,40 @@ async function discoverHeldTokenByTicker(
   return verified[0];
 }
 
+export const walletForHeldTokenResolution = internalQuery({
+  args: { walletId: v.id("cryptoWallets"), ownerXUserId: v.string() },
+  handler: async (ctx, args) => {
+    const wallet = await ctx.db.get(args.walletId);
+    return wallet?.ownerXUserId === args.ownerXUserId && wallet.status === "active" ? wallet : null;
+  },
+});
+
+export const resolveHeldTokenTicker = internalAction({
+  args: { walletId: v.id("cryptoWallets"), ownerXUserId: v.string(), identifier: v.string() },
+  handler: async (ctx, args): Promise<
+    | { status: "found"; tokenAddress: string; symbol: string }
+    | { status: "ambiguous" | "not_found" }
+  > => {
+    const wallet = await ctx.runQuery(internal.wallets.walletForHeldTokenResolution, {
+      walletId: args.walletId, ownerXUserId: args.ownerXUserId,
+    });
+    if (!wallet) return { status: "not_found" };
+    try {
+      const held = await discoverHeldTokenByTicker(wallet, args.ownerXUserId, args.identifier);
+      if (!held) return { status: "not_found" };
+      await ctx.runMutation(internal.wallets.indexWalletToken, {
+        walletId: wallet._id, tokenAddress: held.address, symbol: held.symbol,
+        involvedByLaunch: false, involvedByTransaction: false,
+      });
+      return { status: "found", tokenAddress: held.address, symbol: held.symbol };
+    } catch (error) {
+      if (error instanceof Error && error.message === "WALLET_TICKER_AMBIGUOUS")
+        return { status: "ambiguous" };
+      return { status: "not_found" };
+    }
+  },
+});
+
 export const listWalletTokenAddresses = internalQuery({
   args: { walletId: v.id("cryptoWallets") },
   handler: async (ctx, { walletId }) => {
