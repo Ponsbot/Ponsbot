@@ -1512,12 +1512,14 @@ async function resolveToken(identifier: string) {
   return { address, ...(await tokenMetadata(address)) };
 }
 
-async function tokenMetadata(address: Address) {
+async function tokenMetadata(address: Address, fresh = false) {
   const normalized = address.toLowerCase();
-  const memory = tokenMetadataCache.get(normalized);
+  const memory = !fresh ? tokenMetadataCache.get(normalized) : undefined;
   if (memory && memory.expiresAt > Date.now()) return { symbol: memory.symbol, name: memory.name, decimals: memory.decimals };
   const key = walletExecutionCacheKey("token_metadata", normalized);
-  const shared = await sharedWalletExecutionCache<{ symbol?: unknown; name?: unknown; decimals?: unknown }>(key, "token_metadata");
+  const shared = !fresh
+    ? await sharedWalletExecutionCache<{ symbol?: unknown; name?: unknown; decimals?: unknown }>(key, "token_metadata")
+    : null;
   if (shared && typeof shared.symbol === "string" && typeof shared.name === "string"
     && Number.isInteger(shared.decimals) && Number(shared.decimals) >= 0 && Number(shared.decimals) <= 255) {
     const value = { symbol: shared.symbol.slice(0, 64), name: shared.name.slice(0, 160), decimals: Number(shared.decimals) };
@@ -1534,6 +1536,11 @@ async function tokenMetadata(address: Address) {
   tokenMetadataCache.set(normalized, { ...value, expiresAt: Date.now() + ROUTE_MEMORY_CACHE_MS });
   await rememberWalletExecutionCache(key, "token_metadata", value, TOKEN_METADATA_CACHE_MS);
   return value;
+}
+
+/** Fresh, read-only ERC-20 identity verification for a user-supplied contract. */
+export async function tokenContractMetadata(address: Address) {
+  return tokenMetadata(address, true);
 }
 
 async function resolveActivePonsCurve(token: Address, factory: Address, fresh = false) {

@@ -964,7 +964,7 @@ function decodeGasResumeState(value?: string) {
   }
 }
 
-type AmbiguousTokenField = "token" | "fromToken" | "toToken";
+type AmbiguousTokenField = "token" | "fromToken" | "toToken" | "pairAsset";
 
 function ambiguousTokenField(command: WalletCommand, ticker?: string): AmbiguousTokenField | null {
   const normalizedTicker = ticker?.replace(/^\$/, "").toUpperCase();
@@ -974,6 +974,8 @@ function ambiguousTokenField(command: WalletCommand, ticker?: string): Ambiguous
     if (!normalizedTicker || command.fromToken.replace(/^\$/, "").toUpperCase() === normalizedTicker) return "fromToken";
     if (command.toToken.replace(/^\$/, "").toUpperCase() === normalizedTicker) return "toToken";
   }
+  if ("pairAsset" in command && typeof command.pairAsset === "string"
+    && (!normalizedTicker || command.pairAsset.replace(/^\$/, "").toUpperCase() === normalizedTicker)) return "pairAsset";
   return null;
 }
 
@@ -982,11 +984,14 @@ function replaceAmbiguousToken(intent: Extract<XWalletIntent, { kind: "command" 
     return { kind: "command", command: { ...intent.command, token } } as XWalletIntent;
   if (intent.command.kind === "swap_token_for_token")
     return { kind: "command", command: { ...intent.command, [field]: token } } as XWalletIntent;
+  if (field === "pairAsset" && "pairAsset" in intent.command)
+    return { kind: "command", command: { ...intent.command, pairAsset: token } } as XWalletIntent;
   return intent;
 }
 
 function ambiguousTokenValue(command: WalletCommand, field: AmbiguousTokenField) {
   if (field === "token") return "token" in command && typeof command.token === "string" ? command.token : null;
+  if (field === "pairAsset") return "pairAsset" in command && typeof command.pairAsset === "string" ? command.pairAsset : null;
   return command.kind === "swap_token_for_token" ? command[field] : null;
 }
 
@@ -997,7 +1002,7 @@ function decodeAmbiguousTokenState(value?: string) {
     if (parsed.type !== "ambiguous_token" || typeof parsed.explicitMentionAuthorized !== "boolean") return null;
     const intent = decodePersistedXWalletIntent(JSON.stringify(parsed.intent));
     if (intent.kind !== "command") return null;
-    const field = parsed.field === "token" || parsed.field === "fromToken" || parsed.field === "toToken"
+    const field = parsed.field === "token" || parsed.field === "fromToken" || parsed.field === "toToken" || parsed.field === "pairAsset"
       ? parsed.field
       : ambiguousTokenField(intent.command);
     return field ? { intent, field, explicitMentionAuthorized: parsed.explicitMentionAuthorized } : null;
@@ -1679,13 +1684,12 @@ export const retryInteraction = internalAction({
       const originalToken = ambiguousTokenValue(ambiguousTokenContext.intent.command, ambiguousTokenContext.field);
       if (typeof originalToken !== "string") return;
       const originalTicker = originalToken.replace(/^\$/, "").toUpperCase();
-      const owner = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: current.user.xUserId });
-      const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, {
-        identifier: originalToken,
-        ...(owner?.wallet?._id ? { walletId: owner.wallet._id } : {}),
+      const identity = await ctx.runAction(internal.wallets.verifyTokenTickerContract, {
+        ticker: originalTicker,
+        tokenAddress: suppliedContract,
       });
-      if (!matches.some(address => address.toLowerCase() === suppliedContract.toLowerCase())) {
-        const message = `⚠️ That contract address does not match an indexed $${originalTicker} token. Double-check that you've got the right contract address, then reply with it.`;
+      if (!identity.matches) {
+        const message = `⚠️ That contract address's onchain ticker does not match $${originalTicker}. Double-check that you've got the right contract address, then reply with it.`;
         const stateJson = JSON.stringify({
           type: "ambiguous_token",
           intent: ambiguousTokenContext.intent,
@@ -2518,7 +2522,7 @@ export const retryInteraction = internalAction({
             explicitMentionAuthorized: current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
           })
         : undefined;
-      const mismatchedTicker = reply.match(/^⚠️ That contract address does not match an indexed \$([A-Z0-9]{1,32}) token\./)?.[1];
+      const mismatchedTicker = reply.match(/^⚠️ That contract address's onchain ticker does not match \$([A-Z0-9]{1,32})\./)?.[1];
       const ambiguousField = intent.kind === "command" ? ambiguousTokenField(intent.command, mismatchedTicker) : null;
       const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
         && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!" || mismatchedTicker)

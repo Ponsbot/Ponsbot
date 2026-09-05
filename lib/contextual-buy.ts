@@ -3,7 +3,10 @@ export type ContextualBuy = { amount: string; unit: "usd" | "eth" };
 /** The reply author supplies all trading authority; the parent supplies only an identifier. */
 export function parseContextualBuy(text: string): ContextualBuy | undefined {
   const clean = text.trim().replace(/^(?:@[a-zA-Z0-9_]+\s+)+/, "").replace(/\s+@ponsbotfamily\b/gi, "").trim();
-  const match = clean.match(/^(?:please\s+)?buy(?:\s*back)?\s+(?:\$([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*ETH)\s+(?:(?:worth\s+)?(?:of\s+)?)?(?:this|that)(?:\s+(?:token|coin))?(?:\s+please)?[.!?]*$/i);
+  // Parent-post token inference is intentionally opt-in. A normal buy made as
+  // a reply must remain self-contained, so only the literal word "this" can
+  // authorize resolving a token from the parent post.
+  const match = clean.match(/^(?:please\s+)?buy(?:\s*back)?\s+(?:\$([\d,]+(?:\.\d+)?)|([\d,]+(?:\.\d+)?)\s*ETH)\s+(?:(?:worth\s+)?(?:of\s+)?)?this(?:\s+(?:token|coin))?(?:\s+please)?[.!?]*$/i);
   if (!match) return undefined;
   const amount = (match[1] || match[2]).replace(/,/g, "");
   if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) return undefined;

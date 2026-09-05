@@ -51,6 +51,11 @@ export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolea
     }
   }
   if (legacyMessage) lines.push(legacyMessage);
-  if (onlyV2) lines.push(VAULT_CLAIM_REMINDER);
+  if (onlyV2) {
+    // Keep the standing V2 guidance visually separate from the result or
+    // no-fees explanation that precedes it, especially in long X posts.
+    if (lines.length) lines.push("");
+    lines.push(VAULT_CLAIM_REMINDER);
+  }
   return lines.join("\n");
 }

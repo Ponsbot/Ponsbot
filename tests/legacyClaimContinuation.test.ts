@@ -115,8 +115,8 @@ describe("legacy claim continuations", () => {
     expect(f.executions).toEqual([]);
   });
 
-  it("offers LP fees when a launcher has no creator fees available", async () => {
-    const f = fixture("terminal", [a(1)]);
+  it("offers LP fees when a launcher has no creator fees available and LP fees are claimable", async () => {
+    const f = fixture("terminal", [a(1)], true);
     f.rows.tokenLaunches = [{ _id: "launch", tokenAddress: a(1), symbol: "EMPTY", ownerXUserId: "123", publicPublished: true }];
     const success = f.fetcher.getMockImplementation()!;
     f.fetcher.mockImplementation(async (url, options) => String(url).endsWith("/claim-plan")
@@ -144,7 +144,7 @@ describe("legacy claim continuations", () => {
     expect(f.rows.walletRequests.some(r => r.status === "skipped" && r.workflowStage === "preparatory_sweep_skipped")).toBe(true);
   });
   it.each(["x", "terminal"] as const)("explains automated claims after an empty legacy escrow on %s without submitting or retrying", async source => {
-    const f = fixture(source, []);
+    const f = fixture(source, [], true);
     f.rows.automatedFeePrograms = [{ _id: "program", launchId: "launch", normalizedControllerAddress: a(99),
       normalizedTokenAddress: a(1), normalizedVaultAddress: a(88), status: "enrolled", distributionMode: "wallet" }];
     f.rows.launches = [{ _id: "launch", tokenAddress: a(1), symbol: "DAMPER", publicPublished: true, creatorFeeRecipient: a(88) }];
@@ -159,6 +159,18 @@ describe("legacy claim continuations", () => {
     expect(f.scheduled).toHaveLength(0);
     expect(f.executions).toHaveLength(0);
   });
+  it("does not offer LP claims after an empty automated claim when no LP fees are claimable", async () => {
+    const f = fixture("x", [], false);
+    f.rows.automatedFeePrograms = [{ _id: "program", launchId: "launch", normalizedControllerAddress: a(99),
+      normalizedTokenAddress: a(1), normalizedVaultAddress: a(88), status: "enrolled", distributionMode: "wallet" }];
+    f.rows.launches = [{ _id: "launch", tokenAddress: a(1), symbol: "DAMPER", publicPublished: true, creatorFeeRecipient: a(88) }];
+    const success = f.fetcher.getMockImplementation()!;
+    f.fetcher.mockImplementation(async (url, options) => JSON.parse(options.body).operation?.type === "pons_v2_claim_fees"
+      ? new Response(JSON.stringify({ error: "no claimable creator fees are available in ETH" }), { status: 400 }) : success(url, options));
+    const result = await handler(wallets.executeCommand)(f.ctx, f.args);
+    expect(result.message).toBe(automatedFeeClaimInfo.EMPTY_CLAIM_MESSAGES.v2);
+    expect(result.message).not.toContain("Did you mean claim LP fees?");
+  });
   it("keeps an ordinary empty legacy claim as no fees, not automated guidance", async () => {
     const f = fixture("x", []); const success = f.fetcher.getMockImplementation()!;
     f.fetcher.mockImplementation(async (url, options) => JSON.parse(options.body).operation?.type === "pons_v2_claim_fees"
@@ -170,7 +182,7 @@ describe("legacy claim continuations", () => {
   });
   it.each(["x", "terminal"] as const)("persists legacy-only and mixed no-fee guidance correctly for %s", async source => {
     for (const mixed of [false, true]) {
-      const f = fixture(source, []);
+      const f = fixture(source, [], true);
       f.rows.tokenLaunches = [{ _id: "legacy", ownerXUserId: "123", tokenAddress: a(2), normalizedTokenAddress: a(2),
         creatorFeeRecipient: a(99), normalizedCreatorFeeRecipient: a(99), symbol: "OLDER", publicPublished: true }];
       if (mixed) {

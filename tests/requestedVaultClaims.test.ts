@@ -213,6 +213,12 @@ describe("confirmed net claim responses", () => {
     expect(eth).toContain("0.0019 ETH ($3.80)");
     expect(paired).toContain("1.9 USDG"); expect(paired).not.toContain("$3,800");
   });
+  it("puts the automatic-claim reminder in a separate paragraph", () => {
+    const text = vaultClaimResponse([{ tokenSymbol: "TEST", assetSymbol: "ETH", assetDecimals: 18,
+      amount: "1900000000000000", ponsbotBurned: "1000000000000000000", state: "paid" }], true, undefined, 2_000);
+    expect(text).not.toContain("Your TXN");
+    expect(text).toContain(`burned 1 $PONSBOT.\n\n${VAULT_CLAIM_REMINDER}`);
+  });
   it("keeps many vault payouts compact without losing totals or mixing assets", () => {
     const outcomes = Array.from({ length: 100 }, (_, i) => ({ tokenSymbol: `TOKEN${i}`, assetSymbol: "ETH", assetDecimals: 18,
       amount: net, state: "paid" as const, transactionHash: h(i + 1) }));

@@ -100,6 +100,10 @@ export const executionRequestSchema = z.object({
   operation: signerOperationSchema,
 }).strict();
 
+export const tokenMetadataRequestSchema = z.object({
+  chainId: z.literal(ROBINHOOD_CHAIN_ID), token: address,
+}).strict();
+
 export const freeLaunchSponsorshipRequestSchema = z.object({
   idempotencyKey: z.string().min(8).max(180),
   ownerReference,

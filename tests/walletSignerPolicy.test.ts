@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { automatedFeeControllerStatusRequestSchema, automatedFeeControllerSweepRequestSchema, automatedFeeControllerSweepStatusRequestSchema, automatedFeeControllerTransactionRequestSchema, automatedFeeDeliveryTransactionRequestSchema, automatedFeePairRouteRequestSchema, automatedFeeSweepTransactionRequestSchema, automatedFeeTransactionStatusRequestSchema, automatedFeeVaultDeploymentRequestSchema, executionRequestSchema, feeClaimPlanRequestSchema, freeLaunchDevBuyEligibilityRequestSchema, freeLaunchSponsorshipRequestSchema, transactionStatusRequestSchema } from "../lib/wallet-signer/policy";
+import { automatedFeeControllerStatusRequestSchema, automatedFeeControllerSweepRequestSchema, automatedFeeControllerSweepStatusRequestSchema, automatedFeeControllerTransactionRequestSchema, automatedFeeDeliveryTransactionRequestSchema, automatedFeePairRouteRequestSchema, automatedFeeSweepTransactionRequestSchema, automatedFeeTransactionStatusRequestSchema, automatedFeeVaultDeploymentRequestSchema, executionRequestSchema, feeClaimPlanRequestSchema, freeLaunchDevBuyEligibilityRequestSchema, freeLaunchSponsorshipRequestSchema, tokenMetadataRequestSchema, transactionStatusRequestSchema } from "../lib/wallet-signer/policy";
 
 const base = {
   idempotencyKey: "x:123456789:buy", chainId: 4663, ownerReference: "x:123456789",
@@ -9,6 +9,14 @@ const base = {
 const address = (digit: string) => `0x${digit.repeat(40)}`;
 
 describe("wallet signer operation policy", () => {
+  it("accepts only a Robinhood Chain contract for token identity reads", () => {
+    expect(tokenMetadataRequestSchema.parse({
+      chainId: 4663,
+      token: "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    }).token).toBe("0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07");
+    expect(() => tokenMetadataRequestSchema.parse({ chainId: 1, token: "ETH" })).toThrow();
+  });
+
   it("accepts an exact supported operation", () => {
     expect(executionRequestSchema.parse({ ...base, operation: {
       type: "eth_transfer", recipient: "0x2222222222222222222222222222222222222222",

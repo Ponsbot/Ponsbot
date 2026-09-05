@@ -4,12 +4,20 @@ import { shouldHandlePassiveChainText, contextualBuyParent } from "../convex/xRe
 const a = "0x1111111111111111111111111111111111111111";
 const b = "0x2222222222222222222222222222222222222222";
 describe("contextual X buys", () => {
-  it.each(["buy $20 of this", "buyback $20 of this", "buy back $20 of this", "@Ponsbotfamily buy $20 of that token!", "Please buy $20 of this please."])("accepts %s", text => {
+  it.each(["buy $20 of this", "buyback $20 of this", "buy back $20 of this", "@Ponsbotfamily buy $20 of this token!", "Please buy $20 of this please."])("accepts %s", text => {
     expect(parseContextualBuy(text)).toEqual({amount:"20",unit:"usd"});
     expect(shouldHandlePassiveChainText(text)).toBe(true);
   });
   it("accepts explicit ETH amounts", () => expect(parseContextualBuy("buy 0.01 ETH of this")).toEqual({amount:"0.01",unit:"eth"}));
-  it.each(["buy this", "don't buy $20 of this", 'say "buy $20 of this"', "buy $20 of this and send to @alice", "buy $0 of this"])("rejects %s", text => expect(parseContextualBuy(text)).toBeUndefined());
+  it.each(["buy this", "buy $20 of that", "don't buy $20 of this", 'say "buy $20 of this"', "buy $20 of this and send to @alice", "buy $0 of this"])("rejects %s", text => expect(parseContextualBuy(text)).toBeUndefined());
+
+  it.each([
+    "buy $14 of $GIGAPONS",
+    "buy $14 of 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+    "buy $14 of $GIGAPONS CA: 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+  ])("never treats a self-contained reply as contextual: %s", text => {
+    expect(parseContextualBuy(text)).toBeUndefined();
+  });
   it("uses a single CA even when the parent mentions pairing tickers", async () => {
     const resolve=vi.fn(); expect(await resolveContextualBuyToken(`${a} paired with $USDG`, resolve)).toBe(a); expect(resolve).not.toHaveBeenCalled();
   });

@@ -13,7 +13,7 @@ import {
   internalQuery,
 } from "./_generated/server";
 import type { ActionCtx } from "./_generated/server";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc } from "./_generated/dataModel";
 import {
   isTerminalCommand,
   isValueMovingCommand,
@@ -3028,6 +3028,19 @@ async function claimPriceArgument() {
   return ethUsd === undefined ? {} : { ethUsd };
 }
 
+async function offerLpClaimOnlyWhenAvailable(
+  ctx: ActionCtx,
+  ownerXUserId: string,
+  source: "x" | "terminal" | "telegram",
+  message: string,
+) {
+  const hasClaimableLpFees = await ctx.runAction(internal.liquidity.hasClaimableLpFees, {
+    ownerXUserId,
+    source,
+  }).catch(() => false);
+  return hasClaimableLpFees ? withClaimLpFeeOffer(message) : message;
+}
+
 export const persistLaunchPrediction = internalMutation({
   args: {
     requestId: v.string(),
@@ -3292,8 +3305,8 @@ export function explicitTickerContractPairs(text: string) {
   const pairs: Array<{ ticker: string; address: string }> = [];
   const seen = new Set<string>();
   const patterns = [
-    /\$([A-Za-z][A-Za-z0-9]{0,31})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address)\s*[:=]?\s*)?(0x[a-fA-F0-9]{40})\b/gi,
-    /\b(0x[a-fA-F0-9]{40})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address)\s*[:=]?\s*)?\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi,
+    /\$([A-Za-z][A-Za-z0-9]{0,31})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?(0x[a-fA-F0-9]{40})\b/gi,
+    /\b(0x[a-fA-F0-9]{40})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi,
   ];
   for (const [index, pattern] of patterns.entries()) for (const match of text.matchAll(pattern)) {
     const ticker = (index === 0 ? match[1] : match[2]).toUpperCase();
@@ -3304,21 +3317,48 @@ export function explicitTickerContractPairs(text: string) {
   return pairs;
 }
 
+export const verifyTokenTickerContract = internalAction({
+  args: { ticker: v.string(), tokenAddress: v.string() },
+  handler: async (_ctx, { ticker, tokenAddress }) => {
+    if (!safeAddress(tokenAddress) || !/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(ticker))
+      return { matches: false, symbol: null };
+    const metadata = await signerRequest<{ symbol?: string }>("/v1/tokens/metadata", {
+      chainId: ROBINHOOD_CHAIN_ID,
+      token: normalizedRpcAddress(tokenAddress),
+    });
+    const symbol = typeof metadata.symbol === "string" ? metadata.symbol.trim() : "";
+    return {
+      matches: symbol.length > 0 && symbol.toLowerCase() === ticker.replace(/^\$/, "").toLowerCase(),
+      symbol: symbol || null,
+    };
+  },
+});
+
 async function normalizeExplicitTickerContracts(
   ctx: ActionCtx,
-  walletId: Id<"cryptoWallets">,
   command: WalletCommand,
   text: string,
 ) {
   const pairs = explicitTickerContractPairs(text);
-  if (!pairs.length) return command;
-  let normalized = command;
+  // Launch pairing has its own Pons-factory approval workflow. An address in
+  // launch prose must never be reinterpreted as the launched token identity.
+  if (!pairs.length || command.kind === "launch") return command;
+  let normalized: WalletCommand = command;
   for (const pair of pairs) {
-    const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, {
-      identifier: pair.ticker,
-      walletId,
+    const values = [
+      "token" in normalized && typeof normalized.token === "string" ? normalized.token : undefined,
+      normalized.kind === "swap_token_for_token" ? normalized.fromToken : undefined,
+      normalized.kind === "swap_token_for_token" ? normalized.toToken : undefined,
+      "pairAsset" in normalized && typeof normalized.pairAsset === "string" ? normalized.pairAsset : undefined,
+    ].filter((value): value is string => Boolean(value));
+    const relevant = values.some(value => value.toLowerCase() === pair.address.toLowerCase()
+      || value.replace(/^\$/, "").toUpperCase() === pair.ticker);
+    if (!relevant) continue;
+    const identity = await ctx.runAction(internal.wallets.verifyTokenTickerContract, {
+      ticker: pair.ticker,
+      tokenAddress: pair.address,
     });
-    if (!matches.some(address => address.toLowerCase() === pair.address.toLowerCase()))
+    if (!identity.matches)
       throw new Error(`TOKEN_CONTRACT_TICKER_MISMATCH:${pair.ticker}`);
     const replace = (value: string | undefined) => value
       && (value.replace(/^\$/, "").toUpperCase() === pair.ticker || value.toLowerCase() === pair.address.toLowerCase())
@@ -3331,6 +3371,8 @@ async function normalizeExplicitTickerContracts(
       fromToken: replace(normalized.fromToken)!,
       toToken: replace(normalized.toToken)!,
     };
+    if ("pairAsset" in normalized && typeof normalized.pairAsset === "string")
+      normalized = { ...normalized, pairAsset: replace(normalized.pairAsset) } as WalletCommand;
   }
   return normalized;
 }
@@ -3550,12 +3592,12 @@ export const executeCommand = internalAction({
           "🔒 This wallet isn't available right now. Reply with the request again shortly.",
       };
     try {
-      command = await normalizeExplicitTickerContracts(ctx, wallet._id, command, args.text);
+      command = await normalizeExplicitTickerContracts(ctx, command, args.text);
     } catch (error) {
       const ticker = (error instanceof Error ? error.message : "").match(/^TOKEN_CONTRACT_TICKER_MISMATCH:([A-Z0-9]{1,32})$/)?.[1];
       if (ticker) return {
         ok: false,
-        message: `⚠️ That contract address does not match an indexed $${ticker} token. Double-check that you've got the right contract address, then reply with it.`,
+        message: `⚠️ That contract address's onchain ticker does not match $${ticker}. Double-check that you've got the right contract address, then reply with it.`,
       };
       return { ok: false, message: safeFailure(error, command.kind) };
     }
@@ -3812,7 +3854,7 @@ export const executeCommand = internalAction({
             ...(preflightResolvedClaimToken ? { tokenAddress: preflightResolvedClaimToken } : {}),
           }).catch(() => null);
           const base = guidance?.message || "ℹ️ There aren't any creator fees available to claim right now.";
-          const message = withClaimLpFeeOffer(base);
+          const message = await offerLpClaimOnlyWhenAvailable(ctx, args.xUserId, source, base);
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
             requestId, status: guidance?.kind && guidance.kind !== "legacy" ? "skipped" : "failed",
             finalMessage: message, safeError: message,
@@ -5755,7 +5797,7 @@ export const executeCommand = internalAction({
             });
             if (vaultClaim.hasVaults && !vaultClaim.pending) {
               const vaultMessage = vaultClaim.noFees
-                ? withClaimLpFeeOffer(vaultClaim.message)
+                ? await offerLpClaimOnlyWhenAvailable(ctx, args.xUserId, source, vaultClaim.message)
                 : vaultClaim.message;
               await ctx.runMutation(internal.wallets.updateWalletRequest, {
                 requestId, status: vaultClaim.unavailable && !vaultClaim.paid ? "failed" : "confirmed",
@@ -5769,7 +5811,7 @@ export const executeCommand = internalAction({
             }).catch(() => null);
             if (guidance) {
               const automated = guidance.kind !== "legacy";
-              const guidanceMessage = withClaimLpFeeOffer(guidance.message);
+              const guidanceMessage = await offerLpClaimOnlyWhenAvailable(ctx, args.xUserId, source, guidance.message);
               await ctx.runMutation(internal.wallets.updateWalletRequest, {
                 requestId, status: automated ? "skipped" : "failed",
                 workflowStage: automated ? "automated_fee_claim_information" : "empty_legacy_fee_claim_information",

@@ -6,12 +6,17 @@ import { requestedOperations } from "../convex/xWalletIntent";
 describe("X wallet commands", () => {
   it("recognizes an explicit ticker and contract as one token identity", () => {
     const address = "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07";
-    expect(explicitTickerContractPairs(`Buy $14 of $GIGPAPONS ${address}`)).toEqual([
-      { ticker: "GIGPAPONS", address },
+    expect(explicitTickerContractPairs(`Buy $14 of $GIGAPONS ${address}`)).toEqual([
+      { ticker: "GIGAPONS", address },
     ]);
-    expect(explicitTickerContractPairs(`${address}, token address $gigpapons`)).toEqual([
-      { ticker: "GIGPAPONS", address },
+    expect(explicitTickerContractPairs(`${address}, token address $gigapons`)).toEqual([
+      { ticker: "GIGAPONS", address },
     ]);
+    for (const label of ["CA:", "ca", "contract:", "contract address:", "address:"]) {
+      expect(explicitTickerContractPairs(`buy $14 of $GIGAPONS ${label} ${address}`), label).toEqual([
+        { ticker: "GIGAPONS", address },
+      ]);
+    }
   });
 
   it("does not mistake a send recipient for a token contract", () => {
@@ -22,7 +27,7 @@ describe("X wallet commands", () => {
 
   it("parses a buy containing both an ambiguous ticker and its contract", () => {
     expect(parseWalletCommand(
-      "Buy $14 of $GIGPAPONS 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
+      "Buy $14 of $GIGAPONS 0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07",
     )).toMatchObject({
       kind: "buy",
       amount: "14",
