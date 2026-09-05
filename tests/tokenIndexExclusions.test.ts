@@ -4,6 +4,7 @@ import { removePrivateTestIndexes } from "../convex/registry";
 
 const token = "0xe5d0aac01c27dcc95e8a787efd1b767b4945bb07";
 const publicTest = "0x19f496cdf0989378b0a2e4aa98f709d0e8760b07";
+const duplicatePdog = "0xdf1f5f5afce9ced806f753783d7103301708eb07";
 function fixture() {
   const rows: Record<string, any[]> = {
     automatedFeePrograms: [{ _id: "program", normalizedTokenAddress: token, privateTest: true, status: "exited" }],
@@ -29,6 +30,7 @@ function fixture() {
 describe("private TEST index removal", () => {
   it("excludes every address casing without excluding other TEST tokens", () => {
     expect(isTokenIndexExcluded(token.toUpperCase())).toBe(true);
+    expect(isTokenIndexExcluded(duplicatePdog.toUpperCase())).toBe(true);
     expect(isTokenIndexExcluded(publicTest)).toBe(false);
   });
   it("previews before deleting and preserves private program/audit history", async () => {

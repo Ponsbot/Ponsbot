@@ -45,7 +45,7 @@ export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolea
     } else if (outcome.state === "operator") {
       lines.push(`ℹ️ Fees from ${token} are still waiting for Pons to release them. Nothing was claimed from those fees yet.`);
     } else if (outcome.state === "no_fees") {
-      lines.push(`ℹ️ No fees are available to process from ${token} right now, or the amount is too small to buy back and burn.`);
+      lines.push(`ℹ️ No fees are available to process from ${token} right now.`);
     } else if (outcome.state === "unavailable") {
       lines.push(`⚠️ The fee cycle for ${token} couldn't complete. Any fees already processed remain recorded; no unconfirmed payout is included here.`);
     }

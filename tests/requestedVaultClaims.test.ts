@@ -247,7 +247,7 @@ describe("complete keeper cycles using mocked signer receipts", () => {
     }));
     expect(await handler(engine.processProgram)(f.ctx, { programId: "p" })).toMatchObject({ status: "cycle_no_fees_or_dust" });
     expect(f.rows.automatedFeeRuns[0].status).toBe("confirmed"); expect((await f.result()).pending).toBe(false);
-    expect((await f.result()).message).toContain("too small"); expect(paths).toHaveLength(2);
+    expect((await f.result()).message).toContain("No fees are available to process from $TEST right now."); expect(paths).toHaveLength(2);
   });
   it.each([0, 2])("runs under-threshold phase %s through buyback, burn and delivery exactly once", async phase => {
     const f = fixture(); await f.prepare();
