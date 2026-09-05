@@ -251,6 +251,8 @@ describe("X wallet commands", () => {
   it("asks only for a contract address when a ticker is ambiguous", () => {
     expect(safeFailure(new Error("that ticker matches more than one token; use the contract address"), "buy"))
       .toBe("⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!");
+    expect(safeFailure(new Error("WALLET_TICKER_AMBIGUOUS"), "buy"))
+      .toBe("⚠️ More than one token in your wallet uses that ticker. Reply with the contract address so I choose the right one!");
   });
 
   it("accepts USD written as a unit for buys and token sends", () => {

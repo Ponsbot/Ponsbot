@@ -2543,6 +2543,7 @@ export const retryInteraction = internalAction({
       const ambiguousField = intent.kind === "command" ? ambiguousTokenField(intent.command, mismatchedTicker) : null;
       const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
         && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!"
+          || reply === "⚠️ More than one token in your wallet uses that ticker. Reply with the contract address so I choose the right one!"
           || reply === NON_INDEXED_BUY_TARGET_MESSAGE || mismatchedTicker)
         ? JSON.stringify({
             type: "ambiguous_token",

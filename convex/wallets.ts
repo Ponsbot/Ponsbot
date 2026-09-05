@@ -45,6 +45,7 @@ import {
   normalizedRpcAddress,
 } from "../lib/address-normalization";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
+import { parseExplorerHoldings } from "../lib/wallet-holdings";
 import { assertBuyTarget, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
@@ -1494,6 +1495,53 @@ export const listKnownTokenMatches = internalQuery({
     return [...matches];
   },
 });
+
+async function discoverHeldTokenByTicker(
+  wallet: Doc<"cryptoWallets">,
+  xUserId: string,
+  identifier: string,
+) {
+  const symbol = identifier.replace(/^\$/, "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,32}$/.test(symbol)) return undefined;
+  const base = `https://robinhoodchain.blockscout.com/api/v2/addresses/${wallet.address}/tokens`;
+  let next: Record<string, string> | undefined;
+  const candidates = new Set<string>();
+  // This fallback runs only after the local wallet/index lookup misses. Keep
+  // it bounded so a token-spam wallet cannot create unbounded explorer reads.
+  for (let page = 0; page < 4; page += 1) {
+    const params = new URLSearchParams({ type: "ERC-20", ...(next || {}) });
+    const response = await fetch(`${base}?${params}`, {
+      signal: AbortSignal.timeout(8_000),
+    }).catch(() => undefined);
+    if (!response?.ok) break;
+    const payload = await response.json().catch(() => undefined) as Record<string, unknown> | undefined;
+    const parsed = parseExplorerHoldings(payload);
+    for (const holding of parsed.holdings) {
+      if (holding.symbol.toUpperCase() === symbol && holding.address
+        && !isTokenIndexExcluded(holding.address)) candidates.add(holding.address);
+    }
+    const rawNext = payload?.next_page_params;
+    if (!rawNext || typeof rawNext !== "object" || Array.isArray(rawNext)) break;
+    next = Object.fromEntries(Object.entries(rawNext as Record<string, unknown>)
+      .filter((entry): entry is [string, string | number] => typeof entry[1] === "string" || typeof entry[1] === "number")
+      .map(([key, value]) => [key, String(value)]));
+    if (!Object.keys(next).length) break;
+  }
+  const verified: Array<{ address: string; symbol: string }> = [];
+  for (const address of candidates) {
+    const balance = await signerRequest<{ raw?: string; symbol?: string }>("/v1/wallets/balance", {
+      chainId: ROBINHOOD_CHAIN_ID,
+      walletRef: wallet.signerWalletRef,
+      expectedAddress: wallet.address,
+      ownerReference: `x:${xUserId}`,
+      token: address,
+    }).catch(() => undefined);
+    if (balance?.raw && /^\d+$/.test(balance.raw) && BigInt(balance.raw) > 0n
+      && balance.symbol?.toUpperCase() === symbol) verified.push({ address, symbol: balance.symbol });
+  }
+  if (verified.length > 1) throw new Error("WALLET_TICKER_AMBIGUOUS");
+  return verified[0];
+}
 
 export const listWalletTokenAddresses = internalQuery({
   args: { walletId: v.id("cryptoWallets") },
@@ -3165,6 +3213,8 @@ export function safeFailure(
     return "⚠️ Burning native ETH isn't supported. Choose a token ticker or contract to burn instead.";
   if (message === "BUY_TARGET_UNRESOLVED")
     return NON_INDEXED_BUY_TARGET_MESSAGE;
+  if (message === "WALLET_TICKER_AMBIGUOUS")
+    return "⚠️ More than one token in your wallet uses that ticker. Reply with the contract address so I choose the right one!";
   if (operationKind === "upgrade_fees") {
     if (/FEE_UPGRADE_NOT_FOUND|launch is not eligible/i.test(message)) return FEE_UPGRADE_RESPONSES.notFound;
     if (/FEE_UPGRADE_AMBIGUOUS|multiple owned launches use that ticker/i.test(message)) return FEE_UPGRADE_RESPONSES.ambiguous;
@@ -3998,7 +4048,7 @@ export const executeCommand = internalAction({
             throw new Error("multiple owned launches use that ticker");
           controlledLaunch = owned;
         }
-        const commandToken =
+        let commandToken =
           "token" in command && typeof command.token === "string"
             ? command.kind === "reassign_fees" || command.kind === "upgrade_fees"
               ? controlledLaunch?.tokenAddress
@@ -4014,6 +4064,18 @@ export const executeCommand = internalAction({
                     walletId: wallet._id,
                   })
             : undefined;
+        if ("token" in command && typeof command.token === "string"
+          && commandToken && !safeAddress(commandToken)
+          && !["launch", "reassign_fees", "upgrade_fees"].includes(command.kind)) {
+          const held = await discoverHeldTokenByTicker(wallet, args.xUserId, command.token);
+          if (held) {
+            commandToken = held.address;
+            await ctx.runMutation(internal.wallets.indexWalletToken, {
+              walletId: wallet._id, tokenAddress: held.address, symbol: held.symbol,
+              involvedByLaunch: false, involvedByTransaction: false,
+            });
+          }
+        }
         if (command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "buy_and_burn") {
           assertBuyTarget(commandToken);
         }
