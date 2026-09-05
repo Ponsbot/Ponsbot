@@ -97,6 +97,7 @@ import {
   GUIDED_REASSIGN_TOKEN_PROMPT,
   withGuidedHelpCompletion,
 } from "../lib/guided-help-workflow";
+import { WORKFLOW_EXPIRED_MESSAGE } from "../lib/workflow-expiration";
 import { exceedsXReplyDepthLimit } from "../lib/x-reply-depth-policy";
 import {
   advanceGuidedLaunch,
@@ -932,6 +933,25 @@ export const insufficientEthResumeContext = internalQuery({
       sourceText: state?.sourceText || parent.text,
       resumable: Boolean(state?.sourceText) || /reply\s+[“\"]resume[”\"]/i.test(parent.safeError),
     };
+  },
+});
+
+export const expiredWorkflowResumeContext = internalQuery({
+  args: { ownerXUserId: v.string(), parentPostId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!args.parentPostId) return false;
+    const parent = await ctx.db.query("xReplyInteractions")
+      .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId!)).unique();
+    if (!parent || parent.authorXUserId !== args.ownerXUserId
+      || parent.updatedAt >= Date.now() - GUIDED_HELP_TTL_MS) return false;
+    if (parent.safeError && isInsufficientEthReply(parent.safeError)) return true;
+    if (guidedHelpOperationFromCommandKind(parent.commandKind)) return true;
+    try {
+      const intent = parent.parsedIntentJson ? decodePersistedXWalletIntent(parent.parsedIntentJson) : null;
+      return intent?.kind === "help" && ["capabilities", "launch"].includes(intent.topic);
+    } catch {
+      return false;
+    }
   },
 });
 
@@ -1910,7 +1930,7 @@ export const retryInteraction = internalAction({
       if (guidedLaunchContinuation) {
         const state = decodeGuidedLaunchState(guidedHelp.guidedHelpStateJson);
         if (!state) {
-          const message = "⚠️ This guided launch has expired or lost its place. Reply “launch” to the original how-to message to start again.";
+          const message = WORKFLOW_EXPIRED_MESSAGE;
           const responsePostId = await publishReplyOnce(ctx, message, postId, undefined, false, { ok: false, kind: "reply" });
           await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "rejected", commandKind: guidedHelpCommandKind("root"), responsePostId, safeError: message });
           return;
@@ -3326,6 +3346,7 @@ export const pollMentions = internalAction({
         contextualGasHelp: boolean; parentPostId?: string; replyDepth: number;
         botParentAuthorized: boolean;
         gasResume?: { parsedIntentJson?: string; mediaUrl?: string; recipientAddress?: string; explicitMentionAuthorized: boolean; resumable: boolean; sourceText?: string };
+        expiredWorkflowResume?: boolean;
         workflowCooldownNotice?: boolean;
       }> = [];
       const lpThreadGuards = new Map<string, "silent" | "redirect" | null>();
@@ -3400,6 +3421,11 @@ export const pollMentions = internalAction({
         const gasResume = isResumeReply(directText) && insufficientContext?.resumable
           ? insufficientContext
           : undefined;
+        const expiredWorkflowResume = !gasResume && isResumeReply(directText) && parentPostId
+          ? await ctx.runQuery(internal.xReplies.expiredWorkflowResumeContext, {
+              ownerXUserId: mention.author_id || "", parentPostId,
+            })
+          : false;
         const contextualGasHelp = Boolean(
           parentPostId &&
           isContextualGasCostFollowup(directText) &&
@@ -3439,7 +3465,7 @@ export const pollMentions = internalAction({
           directText,
           mention.referenced_tweets,
         );
-        const workflowAdmission = guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || ownedBotReply
+        const workflowAdmission = guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || ownedBotReply || expiredWorkflowResume
           ? await ctx.runMutation(internal.xReplies.admitWorkflowContinuation, {
               ownerXUserId: mention.author_id || "", postId: mention.id,
             })
@@ -3450,7 +3476,7 @@ export const pollMentions = internalAction({
         if (exceedsXReplyDepthLimit({
           replyDepth,
           maximumDepth: MAX_X_REPLY_DEPTH,
-          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation),
+          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || expiredWorkflowResume),
           liquidityRequest,
           contextualGasHelp,
           // The parent prompt is explicitly waiting for a response. Do not
@@ -3469,18 +3495,18 @@ export const pollMentions = internalAction({
         // publication. Transactions and self-wallet requests remain eligible.
         const directedHelp =
           restrictedReply &&
-          (contextualGasHelp || Boolean(gasResume) || directedInformationalHelp);
+          (contextualGasHelp || Boolean(gasResume) || expiredWorkflowResume || directedInformationalHelp);
         if (
           restrictedReply &&
           !directedHelp &&
           !liquidityContinuation && !liquidityRequest && !guidedHelpContinuation?.allowed && !ambiguousTokenContinuation && !gasResume &&
-          !shouldHandlePassiveChainText(directText)
+          !expiredWorkflowResume && !shouldHandlePassiveChainText(directText)
         )
           continue;
         if (!workflowCooldownNotice && !await ctx.runMutation(internal.xFloodProtection.admitBeforeProfile, {
           postId: mention.id, authorXUserId: mention.author_id, text: directText, parentPostId,
         })) continue;
-        admitted.push({ mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized });
+        admitted.push({ mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, expiredWorkflowResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized });
       }
       // No profiles for ignored thread chatter, duplicate posts or flood-limited
       // lookups. Transport failures throw before executable interactions exist,
@@ -3495,7 +3521,7 @@ export const pollMentions = internalAction({
         { id: a.mention.id, text: a.directText, verified: users.get(a.mention.author_id)?.verified === true, operation: straightforwardCommandOperation(directPostCommandText(a.directText)) ?? undefined },
         { id: b.mention.id, text: b.directText, verified: users.get(b.mention.author_id)?.verified === true, operation: straightforwardCommandOperation(directPostCommandText(b.directText)) ?? undefined },
       ));
-      for (const { mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized } of admitted) {
+      for (const { mention, directText, restrictedReply, directedHelp, contextualGasHelp, gasResume, expiredWorkflowResume, workflowCooldownNotice, parentPostId, replyDepth, botParentAuthorized } of admitted) {
         const user = users.get(mention.author_id);
         if (!user || user.id === botUserId) continue;
         // Search indexing can lag badge changes. Fail closed on the freshly
@@ -3604,6 +3630,18 @@ export const pollMentions = internalAction({
             ? { subscriptionType: user.subscription_type }
             : {}),
         });
+        if (expiredWorkflowResume) {
+          await ctx.runMutation(internal.xReplies.updateInteraction, {
+            postId: mention.id, status: "processing", commandKind: "workflow_expired",
+            safeError: WORKFLOW_EXPIRED_MESSAGE,
+          });
+          await ctx.runMutation(internal.xReplyQueue.enqueue, {
+            key: mention.id, postId: mention.id, text: WORKFLOW_EXPIRED_MESSAGE,
+            ok: false, kind: "guided_execution", allowLong: false,
+          });
+          processed += 1;
+          continue;
+        }
         if (gasResume && parentPostId && !await ctx.runMutation(internal.xReplies.claimInsufficientEthResume, {
           ownerXUserId: user.id, parentPostId, consumerPostId: mention.id,
         })) {

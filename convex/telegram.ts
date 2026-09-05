@@ -8,6 +8,7 @@ import { GENERAL_GUIDED_HELP_MESSAGE, guidedHelpCancelled, guidedHelpClaimLpOffe
 import { isLiquidityMessage } from "../lib/liquidity-workflow";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
 import { isResumeReply } from "../lib/x-direct-post-policy";
+import { WORKFLOW_EXPIRED_MESSAGE } from "../lib/workflow-expiration";
 import { CLAIM_LP_FEE_OFFER, guidedHelpPrivacySelection } from "../lib/guided-help-workflow";
 
 const LINK_TTL_MS = 10 * 60 * 1_000;
@@ -604,7 +605,7 @@ export const processUpdate = internalAction({
             ownerXUserId: link.ownerXUserId, operation: "cross_chain_privacy",
           });
           if (!saved) {
-            await sendMessage(chatId, "That request has expired or was already used. Send the full request again.");
+            await sendMessage(chatId, WORKFLOW_EXPIRED_MESSAGE);
             await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
             return;
           }
@@ -615,7 +616,7 @@ export const processUpdate = internalAction({
             conversationId: conversation._id, telegramUserId, telegramChatId: chatId, ownerXUserId: link.ownerXUserId,
           });
           if (!saved) {
-            await sendMessage(chatId, "That resume request has expired or was already used. Send the full request again.");
+            await sendMessage(chatId, WORKFLOW_EXPIRED_MESSAGE);
             await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
             return;
           }

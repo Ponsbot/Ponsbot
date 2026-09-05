@@ -21,10 +21,12 @@ export const LIQUIDITY_REASONS = {
   fee_paying: "🟢 Trades in this pool pay LP fees",
   range_risk: "🟡 Range-dependent liquidity",
 } as const;
+import { WORKFLOW_EXPIRED_MESSAGE } from "./workflow-expiration";
+
 export const LIQUIDITY_RESPONSES = {
   stale: "⌛ This reply is attached to an older liquidity step. Reply to the latest Pons Bot liquidity message so I use your current saved setup.",
   busy: "⏳ I’m still preparing your liquidity request.",
-  expired: "⌛ This setup expired. Reply with a complete new liquidity request to start again.",
+  expired: WORKFLOW_EXPIRED_MESSAGE,
   cancelled: "Liquidity setup cancelled. No funds were moved.",
   next: "➡️ Reply next to see the remaining details.",
   failed: "⚠️ A required market, wallet, or quote check didn’t finish. Your choices are saved. Reply refresh to retry, or cancel.",

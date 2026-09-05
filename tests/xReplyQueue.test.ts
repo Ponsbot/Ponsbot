@@ -267,6 +267,12 @@ describe("guided help thread ownership", () => {
     expect(await invoke(replies.insufficientEthResumeContext, ctx, {
       ownerXUserId: "101", parentPostId: "old-gas-reply",
     })).toBeNull();
+    expect(await invoke(replies.expiredWorkflowResumeContext, ctx, {
+      ownerXUserId: "101", parentPostId: "old-gas-reply",
+    })).toBe(true);
+    expect(await invoke(replies.expiredWorkflowResumeContext, ctx, {
+      ownerXUserId: "202", parentPostId: "old-gas-reply",
+    })).toBe(false);
     expect(await invoke(replies.claimInsufficientEthResume, ctx, {
       ownerXUserId: "101", parentPostId: "old-gas-reply", consumerPostId: "resume-one",
     })).toBe(false);

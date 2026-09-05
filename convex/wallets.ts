@@ -69,6 +69,7 @@ import {
   guidedHelpSelection,
   withClaimLpFeeOffer,
 } from "../lib/guided-help-workflow";
+import { WORKFLOW_EXPIRED_MESSAGE } from "../lib/workflow-expiration";
 import {
   AUTOMATED_FEE_WORKFLOW_CONTINUATION,
   automatedFeeControllerTransactionMayExist,
@@ -6047,9 +6048,10 @@ export const terminalGasResumeContext = internalQuery({
       .order("desc").take(8);
     const latest = recent[0];
     if (!latest || latest.ownerXUserId !== args.ownerXUserId || latest.role !== "assistant"
-      || latest.createdAt < Date.now() - GUIDED_HELP_TTL_MS
-      || latest.resumeConsumedByRequestId
       || !isGasResumePrompt(latest.text)) return null;
+    if (latest.createdAt < Date.now() - GUIDED_HELP_TTL_MS)
+      return { expired: true as const };
+    if (latest.resumeConsumedByRequestId) return null;
     const sourceIndex = recent.slice(1).findIndex(message => message.role === "user" && !isResumeReply(message.text)) + 1;
     if (sourceIndex <= 0) return null;
     const source = recent[sourceIndex];
@@ -6057,6 +6059,7 @@ export const terminalGasResumeContext = internalQuery({
       && guidedHelpOperationFromPrompt(message.text));
     const operation = prompt ? guidedHelpOperationFromPrompt(prompt.text) : null;
     return source?.text ? {
+      expired: false as const,
       sourceText: operation ? guidedHelpCommandText(source.text, operation) : source.text,
       promptMessageId: latest._id,
     } : null;
@@ -6629,6 +6632,17 @@ export const executeTerminalCommand = action({
             ownerXUserId: args.ownerXUserId,
           })
         : null;
+      if (gasResumeContext?.expired) {
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, {
+          sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "user",
+          messageType: "chat", text: displayText, requestId: args.eventId,
+        });
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, {
+          sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant",
+          messageType: "result", text: WORKFLOW_EXPIRED_MESSAGE, requestId: args.eventId,
+        });
+        return { ok: false, message: WORKFLOW_EXPIRED_MESSAGE };
+      }
       if (gasResumeContext && !await ctx.runMutation(internal.wallets.claimTerminalGasResume, {
         promptMessageId: gasResumeContext.promptMessageId,
         sessionId: args.sessionId,

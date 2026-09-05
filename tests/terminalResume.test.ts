@@ -56,7 +56,7 @@ describe("terminal gas resume", () => {
   it("rejects expired and wrong-owner prompts", async () => {
     const ctx = fixture();
     const promptMessageId = await ctx.db.insert("terminalMessages", { sessionId: "session", ownerXUserId: "owner", role: "assistant", messageType: "result", text: "⛽ You'll need to fund your wallet with ETH for gas to buy. Fund it, then reply “resume”.", createdAt: Date.now() - 11 * 60_000 });
-    expect(await invoke(wallets.terminalGasResumeContext, ctx, { sessionId: "session", ownerXUserId: "owner" })).toBeNull();
+    expect(await invoke(wallets.terminalGasResumeContext, ctx, { sessionId: "session", ownerXUserId: "owner" })).toMatchObject({ expired: true });
     expect(await invoke(wallets.claimTerminalGasResume, ctx, { promptMessageId, sessionId: "session", ownerXUserId: "other", requestId: "request" })).toBe(false);
   });
 });
