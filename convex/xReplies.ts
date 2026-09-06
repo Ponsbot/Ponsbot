@@ -1,3 +1,4 @@
+import { tokenPattern } from "../lib/token-pattern";
 import { v } from "convex/values";
 import { parseContextualBuy, resolveContextualBuyToken } from "../lib/contextual-buy";
 import { api, internal } from "./_generated/api";
@@ -2539,7 +2540,7 @@ export const retryInteraction = internalAction({
             explicitMentionAuthorized: current.interaction.botParentAuthorized === true || hasExplicitBotMention(current.interaction.text, undefined) || Boolean(guidedHelp?.sourceExplicitMention),
           })
         : undefined;
-      const mismatchedTicker = reply.match(/^⚠️ That contract address's onchain ticker does not match \$([A-Z0-9]{1,32})\./)?.[1];
+      const mismatchedTicker = reply.match(tokenPattern(/^⚠️ That contract address's onchain ticker does not match \$([A-Z0-9]{1,32})\./))?.[1];
       const ambiguousField = intent.kind === "command" ? ambiguousTokenField(intent.command, mismatchedTicker) : null;
       const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
         && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!"

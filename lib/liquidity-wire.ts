@@ -1,3 +1,4 @@
+import { tokenPattern } from "./token-pattern";
 import { z } from "zod";
 import { decodeFunctionData, keccak256, parseTransaction, recoverTransactionAddress, type Address, type Hex, type TransactionSerialized } from "viem";
 import type { LiquidityQuotePlan } from "./liquidity-quote";
@@ -56,7 +57,7 @@ const legSchema = z.object({
   tickLower: z.number().int().min(-887272).max(887272), tickUpper: z.number().int().min(-887272).max(887272),
 }).refine(leg => leg.tickLower < leg.tickUpper);
 const quoteSchema = z.object({
-  owner: address, token: address, symbol: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/),
+  owner: address, token: address, symbol: z.string().regex(tokenPattern(/^[A-Za-z0-9_.-]{1,32}$/)),
   version: z.union([z.literal(3), z.literal(4)]), poolId: z.string().regex(/^0x(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/),
   operation: z.enum(["open", "claim", "withdraw"]), quoteId: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
   expiresAt: z.number().int().positive().safe(), executionDeadline: z.number().int().positive().safe(),
@@ -209,7 +210,7 @@ const receiptSchema = z.object({
   status: z.enum(["confirmed", "reverted"]), legs: z.array(legSchema).max(100),
   blockNumber: integer.optional(),
   received: z.array(z.string().min(1).max(200)).max(32).optional(),
-  deposited: z.array(z.object({ symbol: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/), amount: z.string().regex(/^\d+(?:\.\d+)?$/), usd: z.number().finite().nonnegative() }).strict()).length(2).optional(),
+  deposited: z.array(z.object({ symbol: z.string().regex(tokenPattern(/^[A-Za-z0-9_.-]{1,32}$/)), amount: z.string().regex(/^\d+(?:\.\d+)?$/), usd: z.number().finite().nonnegative() }).strict()).length(2).optional(),
   depositedUsd: z.number().finite().nonnegative().optional(),
 });
 export function validateLiquidityFinalReceipt(value: unknown, operation: string) {

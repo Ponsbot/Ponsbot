@@ -1,3 +1,4 @@
+import { tokenPattern } from "../lib/token-pattern";
 import { v } from "convex/values";
 import { mapLiquidityBounded } from "../lib/liquidity-concurrency";
 import { inheritLiquidityPositionFields, isIndependentLiquidityRead, isOrdinaryWalletCommand, liquidityThreadRedirect, liquidityWalletAllowed, liquidityNftSelection, liquidityStatusSelection, liquidityClaimSelection, liquidityWithdrawalSelection, normalizeLiquidityTokenAliases } from "../lib/liquidity-workflow";
@@ -1252,7 +1253,7 @@ export const recordOperatorRecoveredOpen = internalMutation({
         || leg.tickLower !== recoveredBands[index]?.tickLower || leg.tickUpper !== recoveredBands[index]?.tickUpper
         || (decoded.functionName === "openV4" && BigInt(leg.liquidity) !== decoded.args[1][index]!.liquidity))) throw new Error("Recovered NFT bands do not match the open call");
     const deposited = args.depositedJson ? JSON.parse(args.depositedJson) as Array<{ symbol: string; amount: string; usd: number }> : undefined;
-    if (deposited && (!Array.isArray(deposited) || deposited.length !== 2 || deposited.some(asset => !/^[A-Za-z0-9_.-]{1,32}$/.test(asset.symbol)
+    if (deposited && (!Array.isArray(deposited) || deposited.length !== 2 || deposited.some(asset => !tokenPattern(/^[A-Za-z0-9_.-]{1,32}$/).test(asset.symbol)
       || !/^\d+(?:\.\d+)?$/.test(asset.amount) || !Number.isFinite(asset.usd) || asset.usd < 0))) throw new Error("Invalid recovered deposit details");
     if (args.depositedUsd !== undefined && (!Number.isFinite(args.depositedUsd) || args.depositedUsd <= 0)) throw new Error("Invalid recovered deposit value");
     let positionId: string;

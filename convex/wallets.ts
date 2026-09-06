@@ -1,3 +1,4 @@
+import { tokenPattern } from "../lib/token-pattern";
 import { v } from "convex/values";
 import { grokLaunchFeeRejection } from "../lib/launch-recipient-policy";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
@@ -223,7 +224,7 @@ export function significantAmount(value: string, significantDigits = 6) {
 function compactAssetDisplay(display: string | undefined) {
   if (!display) return display;
   return display.replace(
-    /(^|\n)([0-9][0-9,]*(?:\.[0-9]+)?)(?=\s+[$A-Za-z])/g,
+    tokenPattern(/(^|\n)([0-9][0-9,]*(?:\.[0-9]+)?)(?=\s+[$A-Za-z])/g),
     (_match, prefix: string, amount: string) =>
       `${prefix}${significantAmount(amount)}`,
   );
@@ -1502,7 +1503,7 @@ async function discoverHeldTokenByTicker(
   identifier: string,
 ) {
   const symbol = identifier.replace(/^\$/, "").trim().toUpperCase();
-  if (!/^[A-Z0-9]{1,32}$/.test(symbol)) return undefined;
+  if (!tokenPattern(/^[A-Z0-9]{1,32}$/).test(symbol)) return undefined;
   const base = `https://robinhoodchain.blockscout.com/api/v2/addresses/${wallet.address}/tokens`;
   let next: Record<string, string> | undefined;
   const candidates = new Set<string>();
@@ -1671,7 +1672,7 @@ export const prepareTopFiveWorkflow = internalMutation({
     if (args.targets.length !== 5) throw new Error("five eligible Pons Bot tokens were not available");
     const seen = new Set<string>();
     for (const target of args.targets) {
-      if (!safeAddress(target.tokenAddress) || !/^[A-Za-z0-9]{1,32}$/.test(target.symbol) || !Number.isFinite(target.marketCapUsd) || target.marketCapUsd <= 0)
+      if (!safeAddress(target.tokenAddress) || !tokenPattern(/^[A-Za-z0-9]{1,32}$/).test(target.symbol) || !Number.isFinite(target.marketCapUsd) || target.marketCapUsd <= 0)
         throw new Error("top-five token snapshot was invalid");
       const normalized = target.tokenAddress.toLowerCase();
       if (seen.has(normalized)) throw new Error("top-five token snapshot contained a duplicate");
@@ -3077,7 +3078,7 @@ async function reconstructConfirmedMessage(
         },
       );
       tokenSymbol =
-        balance.symbol && /^[A-Za-z0-9]{1,32}$/.test(balance.symbol)
+        balance.symbol && tokenPattern(/^[A-Za-z0-9]{1,32}$/).test(balance.symbol)
           ? balance.symbol
           : undefined;
     } catch {
@@ -3390,8 +3391,8 @@ export function explicitTickerContractPairs(text: string) {
   const pairs: Array<{ ticker: string; address: string }> = [];
   const seen = new Set<string>();
   const patterns = [
-    /\$([A-Za-z][A-Za-z0-9]{0,31})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?(0x[a-fA-F0-9]{40})\b/gi,
-    /\b(0x[a-fA-F0-9]{40})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi,
+    tokenPattern(/\$([A-Za-z][A-Za-z0-9]{0,31})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?(0x[a-fA-F0-9]{40})\b/gi),
+    tokenPattern(/\b(0x[a-fA-F0-9]{40})\s*(?:[,;:]?\s*(?:CA|contract(?:\s+address)?|token\s+address|address)\s*[:=]?\s*)?\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi),
   ];
   for (const [index, pattern] of patterns.entries()) for (const match of text.matchAll(pattern)) {
     const ticker = (index === 0 ? match[1] : match[2]).toUpperCase();
@@ -3405,7 +3406,7 @@ export function explicitTickerContractPairs(text: string) {
 export const verifyTokenTickerContract = internalAction({
   args: { ticker: v.string(), tokenAddress: v.string() },
   handler: async (_ctx, { ticker, tokenAddress }) => {
-    if (!safeAddress(tokenAddress) || !/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(ticker))
+    if (!safeAddress(tokenAddress) || !tokenPattern(/^[A-Za-z][A-Za-z0-9]{0,31}$/).test(ticker))
       return { matches: false, symbol: null };
     const metadata = await signerRequest<{ symbol?: string }>("/v1/tokens/metadata", {
       chainId: ROBINHOOD_CHAIN_ID,
@@ -3679,7 +3680,7 @@ export const executeCommand = internalAction({
     try {
       command = await normalizeExplicitTickerContracts(ctx, command, args.text);
     } catch (error) {
-      const ticker = (error instanceof Error ? error.message : "").match(/^TOKEN_CONTRACT_TICKER_MISMATCH:([A-Z0-9]{1,32})$/)?.[1];
+      const ticker = (error instanceof Error ? error.message : "").match(tokenPattern(/^TOKEN_CONTRACT_TICKER_MISMATCH:([A-Z0-9]{1,32})$/))?.[1];
       if (ticker) return {
         ok: false,
         message: `⚠️ That contract address's onchain ticker does not match $${ticker}. Double-check that you've got the right contract address, then reply with it.`,
@@ -3726,7 +3727,7 @@ export const executeCommand = internalAction({
           ...(knownTokens ? { knownTokens } : {}),
         });
         const ticker =
-          balance.symbol && /^[A-Za-z0-9]{1,32}$/.test(balance.symbol)
+          balance.symbol && tokenPattern(/^[A-Za-z0-9]{1,32}$/).test(balance.symbol)
             ? assetLabel(balance.symbol)
             : undefined;
         const compactBalance =
@@ -4130,7 +4131,7 @@ export const executeCommand = internalAction({
               })
             : undefined;
         const tokenSymbol =
-          tokenInfo?.symbol && /^[A-Za-z0-9]{1,32}$/.test(tokenInfo.symbol)
+          tokenInfo?.symbol && tokenPattern(/^[A-Za-z0-9]{1,32}$/).test(tokenInfo.symbol)
             ? tokenInfo.symbol
             : undefined;
         resolvedReplySymbol = tokenSymbol;

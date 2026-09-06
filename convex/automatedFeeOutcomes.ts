@@ -9,7 +9,7 @@ export function automatedFeeOutcomeMessage(outcome: FeeOutcome, symbol: string, 
     const site = process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/$/, "") || "https://www.ponsbot.family";
     return feeUpgradeSuccessMessage(symbol, `${site}/launch/${token}`);
   }
-  const label = /^[a-zA-Z0-9]{1,32}$/.test(symbol.replace(/^\$/, "")) ? `$${symbol.replace(/^\$/, "")}` : "this token";
+  const label = /^[a-zA-Z0-9\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ーｰ]{1,32}$/u.test(symbol.replace(/^\$/, "")) ? `$${symbol.replace(/^\$/, "")}` : "this token";
   return `✅ Success! Reassigned future creator fees for ${label}${outcome === "holders" ? " to holders" : ""}!\nYour TXN: https://robinhoodchain.blockscout.com/tx/${hash}`;
 }
 

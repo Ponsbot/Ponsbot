@@ -1,3 +1,4 @@
+import { tokenPattern } from "./token-pattern";
 export type ContextualBuy = { amount: string; unit: "usd" | "eth" };
 
 /** The reply author supplies all trading authority; the parent supplies only an identifier. */
@@ -19,7 +20,7 @@ export async function resolveContextualBuyToken(text: string, resolve: (identifi
   if (addresses.length === 1) return addresses[0];
   // Do not extract handles, URLs, or quoted instructions as trading authority.
   const plain = text.replace(/https?:\/\/\S+|@[a-zA-Z0-9_]+/gi, " ");
-  const tags = [...plain.matchAll(/\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/g)].map(m => m[1]);
+  const tags = [...plain.matchAll(tokenPattern(/\$([a-zA-Z][a-zA-Z0-9]{0,15})\b/g))].map(m => m[1]);
   const candidates = [...new Set(tags.map(w => w.toUpperCase()))];
   if (candidates.length > 24) throw new Error("CONTEXT_BUY_AMBIGUOUS");
   const matches = new Set<string>();

@@ -36,7 +36,7 @@ export async function inspectLiquidityPosition(raw: unknown): Promise<LiquidityP
       c.readContract({ address: asset, abi: erc20Abi, functionName: "symbol", blockNumber: block }),
       c.readContract({ address: asset, abi: erc20Abi, functionName: "decimals", blockNumber: block }),
     ]);
-    if (!/^[A-Za-z0-9_.-]{1,32}$/.test(symbol) || decimals > 36) throw new Error("Invalid asset metadata");
+    if (!/^[A-Za-z0-9_.\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ーｰ-]{1,32}$/u.test(symbol) || decimals > 36) throw new Error("Invalid asset metadata");
     return { symbol, decimals };
   }));
   const globals = version === 3 ? await Promise.all([

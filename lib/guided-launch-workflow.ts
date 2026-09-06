@@ -1,3 +1,4 @@
+import { tokenPattern, sliceTokenText } from "./token-pattern";
 import {
   knownLaunchPairTicker,
   normalizeOptionalTelegramUrl,
@@ -103,7 +104,7 @@ function unwrap(text: string) {
 }
 
 function safeText(text: string, maximum: number) {
-  return unwrap(text).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, maximum);
+  return sliceTokenText(unwrap(text).replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim(), maximum);
 }
 
 function isQuestion(text: string, phase: GuidedLaunchPhase) {
@@ -222,8 +223,8 @@ function next(state: GuidedLaunchState, phase: GuidedLaunchPhase, messagePrefix?
 }
 
 function parseTicker(text: string) {
-  const ticker = unwrap(text).replace(/^\$/, "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-  return /^[A-Z0-9]{1,16}$/.test(ticker) ? ticker : undefined;
+  const ticker = unwrap(text).replace(/^\$/, "").replace(tokenPattern(/[^a-zA-Z0-9]/g), "").toUpperCase();
+  return tokenPattern(/^[A-Z0-9]{1,16}$/).test(ticker) ? ticker : undefined;
 }
 
 function parseDevBuy(text: string, pairToken?: string) {
@@ -233,7 +234,7 @@ function parseDevBuy(text: string, pairToken?: string) {
   if (usd && Number(usd[1]) > 0) return { amount: usd[1], unit: "usd" as const };
   const eth = value.match(/^([0-9]+(?:\.[0-9]+)?)\s*(?:ETH|WETH)$/i);
   if (eth && Number(eth[1]) > 0) return { amount: eth[1], unit: "eth" as const };
-  const pair = value.match(/^([0-9]+(?:\.[0-9]+)?)\s+\$?([a-zA-Z][a-zA-Z0-9]{0,31})$/);
+  const pair = value.match(tokenPattern(/^([0-9]+(?:\.[0-9]+)?)\s+\$?([a-zA-Z][a-zA-Z0-9]{0,31})$/));
   if (pair && Number(pair[1]) > 0 && pairToken && pairToken.toLowerCase() !== "eth"
     && (knownLaunchPairTicker(pair[2]) || pair[2]).toLowerCase() === pairToken.toLowerCase()) {
     return { amount: pair[1], unit: "pair" as const };
@@ -376,7 +377,7 @@ export function advanceGuidedLaunch(
     // Unknown tickers are resolved against Robinhood's official catalog and
     // verified against the Pons factory by the execution backend. Keeping the
     // value here lets a newly approved Pons pair work without a code deploy.
-    if (!ADDRESS.test(pairToken) && !/^[A-Z][A-Z0-9.]{0,11}$/.test(pairToken))
+    if (!ADDRESS.test(pairToken) && !tokenPattern(/^[A-Z][A-Z0-9.]{0,11}$/).test(pairToken))
       return next(current, "pair", "⚠️ Pons doesn’t currently support that pairing asset. Reply with a different pairing asset to continue your launch.");
     // A developer buy denominated in the old pair cannot be carried across a
     // pair correction. Ask for it again against the newly selected asset.

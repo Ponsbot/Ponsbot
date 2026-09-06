@@ -1,10 +1,11 @@
+import { tokenPattern } from "./token-pattern";
 import type { LiquidityLeg, LiquidityTransaction } from "./liquidity-contracts";
 import { z } from "zod";
 import { liquidityFieldsSchema } from "./liquidity-workflow";
 
 export const liquidityClaimPositionSchema = z.object({
   positionId: z.string().regex(/^LP-[A-F0-9]{8}$/), token: z.string().regex(/^0x[a-fA-F0-9]{40}$/),
-  symbol: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/), version: z.union([z.literal(3), z.literal(4)]),
+  symbol: z.string().regex(tokenPattern(/^[A-Za-z0-9_.-]{1,32}$/)), version: z.union([z.literal(3), z.literal(4)]),
   poolId: z.string().regex(/^0x(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/), fields: liquidityFieldsSchema,
   legs: z.array(z.object({ tokenId: z.string().regex(/^[1-9]\d*$/), liquidity: z.string().regex(/^\d+$/), tickLower: z.number().int(), tickUpper: z.number().int() }).strict()).min(1).max(100),
 }).strict();

@@ -645,7 +645,7 @@ export async function inspectLiquidityReceipt(hash: Hex, suppliedPlan: Liquidity
     }
     for (const [asset, amount] of amounts) if (amount > 0n) {
       const [decimals, symbol] = await Promise.all([c.readContract({ address: asset as Address, abi: erc20Abi, functionName: "decimals" }), c.readContract({ address: asset as Address, abi: erc20Abi, functionName: "symbol" })]);
-      if (!/^[A-Za-z0-9_.-]{1,32}$/.test(symbol)) throw new Error("LP_INVALID_RECEIPT_SYMBOL");
+      if (!/^[A-Za-z0-9_.\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ーｰ-]{1,32}$/u.test(symbol)) throw new Error("LP_INVALID_RECEIPT_SYMBOL");
       const displayAmount = Number(Number(formatUnits(amount, decimals)).toPrecision(6));
       const usdValue = asset.toLowerCase() === A.usdg
         ? displayAmount

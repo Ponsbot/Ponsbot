@@ -1,3 +1,4 @@
+import { tokenPattern } from "./token-pattern";
 /** Only the explicit Upgrade IDENTIFIER phrase grants upgrade authority. */
 export function parseFeeUpgradePhrase(raw: string):
   | { kind: "upgrade_fees"; token: string }
@@ -25,13 +26,13 @@ export function parseFeeUpgradePhrase(raw: string):
   const supplied = (mentions[0][1] || "").replace(/[.:]+$/, "");
   const identifier = supplied.replace(/^\$/, "");
   const address = /^0x[a-fA-F0-9]{40}$/i.test(identifier);
-  if (!address && !/^[a-zA-Z][a-zA-Z0-9]{0,31}$/.test(identifier)) return invalid;
+  if (!address && !tokenPattern(/^[a-zA-Z][a-zA-Z0-9]{0,31}$/).test(identifier)) return invalid;
   if (!supplied.startsWith("$") && /^(?:a|an|the|and|with|to|for|my|this|that|it|all|fees?|tokens?|contract|wallet|please|now)$/i.test(identifier)) return invalid;
   // Extra conversation is fine; explicit additional actions or token choices
   // are not an authorization to pick one arbitrarily.
   const remainder = text.slice(0, mentions[0].index) + text.slice(mentions[0].index! + mentions[0][0].length);
-  if (/\b(?:buy|sell|send|burn|swap|transfer)\s+(?:\$?\d|all\b|half\b)|\b(?:claim|collect|reassign|assign)\s+(?:my\s+)?(?:fees|\$)|\b(?:launch|deploy)\s+(?:\$|[a-zA-Z])/i.test(remainder)
-    || /^\s*(?:and|or|,)\s*(?:0x[a-fA-F0-9]{40}|\$[a-zA-Z][a-zA-Z0-9]{0,31})(?=\s|$|[.,!?])/i.test(text.slice(mentions[0].index! + mentions[0][0].length))) return invalid;
+  if (tokenPattern(/\b(?:buy|sell|send|burn|swap|transfer)\s+(?:\$?\d|all\b|half\b)|\b(?:claim|collect|reassign|assign)\s+(?:my\s+)?(?:fees|\$)|\b(?:launch|deploy)\s+(?:\$|[a-zA-Z])/i).test(remainder)
+    || tokenPattern(/^\s*(?:and|or|,)\s*(?:0x[a-fA-F0-9]{40}|\$[a-zA-Z][a-zA-Z0-9]{0,31})(?=\s|$|[.,!?])/i).test(text.slice(mentions[0].index! + mentions[0][0].length))) return invalid;
   return { kind: "upgrade_fees", token: address ? identifier.toLowerCase() : identifier.toUpperCase() };
 }
 
@@ -49,7 +50,7 @@ export const FEE_UPGRADE_RESPONSES = {
 
 function feeUpgradeTokenLabel(symbol: string | undefined) {
   const ticker = symbol?.replace(/^\$/, "");
-  return ticker && /^[a-zA-Z0-9]{1,32}$/.test(ticker) ? `$${ticker}` : "That token";
+  return ticker && tokenPattern(/^[a-zA-Z0-9]{1,32}$/).test(ticker) ? `$${ticker}` : "That token";
 }
 
 export function feeUpgradeAlreadyMessage(symbol?: string) {

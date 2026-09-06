@@ -211,7 +211,7 @@ export async function discoverLiquidityPools(token: Address, budgetUsd?: number,
   const incompatibleSettings = new Set<string>();
   const c = options.fresh ? liquidityAnalysisRpc() : liquidityRpc(), block = await c.getBlockNumber();
   const [symbol, tokenDecimals] = await Promise.all([c.readContract({ address: token, abi: erc20Abi, functionName: "symbol", blockNumber: block }), c.readContract({ address: token, abi: erc20Abi, functionName: "decimals", blockNumber: block })]);
-  if (!/^[A-Za-z0-9_.-]{1,32}$/.test(symbol)) throw new Error("UNSUPPORTED_TOKEN_SYMBOL");
+  if (!/^[A-Za-z0-9_.\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ーｰ-]{1,32}$/u.test(symbol)) throw new Error("UNSUPPORTED_TOKEN_SYMBOL");
   const prices: Partial<{ ETH: number; USDG: number }> = { ...quotePrices };
   if (options.fresh && !(prices.ETH && prices.ETH > 0)) {
     prices.ETH = await ethUsdPrice().catch(() => { diagnostics.add("ETH_USD_UNAVAILABLE"); return undefined; });

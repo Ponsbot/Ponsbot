@@ -1,3 +1,4 @@
+import { tokenPattern } from "../lib/token-pattern";
 import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
 import { trailingLaunchBuy, ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, sharedLaunchNameAndTicker, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
@@ -87,7 +88,7 @@ function explicitAuthority(text: string, command: WalletCommand) {
     && /\b(?:send|transfer|give|pay|move|envoie)\b/i.test(text);
   if (command.kind === "send") return /\b(?:send|transfer|give|pay|move|envoie)\b/i.test(text);
   if (command.kind === "burn") return /\bburn\b/i.test(text);
-  if (command.kind === "buy") return /\b(?:buy(?:\s*back)?|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\b(?:put|get\s+me)\s+\$?[0-9a-z][0-9a-z,.]*\b|\bsend\s+it\s*:|\bi\s+want\b[\s\S]{0,30}\bworth\s+of\b/i.test(text);
+  if (command.kind === "buy") return tokenPattern(/\b(?:buy(?:\s*back)?|purchase|grab|gimme|ape|swap|spend|compra|ach[eè]te)\b|\b(?:put|get\s+me)\s+\$?[0-9a-z][0-9a-z,.]*\b|\bsend\s+it\s*:|\bi\s+want\b[\s\S]{0,30}\bworth\s+of\b/i).test(text);
   if (command.kind === "sell") return /\b(?:sell|trim|dump|cash\s+out|get\s+rid\s+of|unload|liquidate)\b/i.test(text);
   if (command.kind === "claim_fees") return (/\b(?:claim|collect|withdraw)\b/i.test(text) && /\b(?:fees?|revenue|rewards?)\b/i.test(text))
     || /\b(?:claim|collect)\s+everything(?:\s+(?:available|i\s+can\s+claim|i\s+can))?(?:\s+for\s+me)?\b/i.test(text);
@@ -98,7 +99,7 @@ function explicitAuthority(text: string, command: WalletCommand) {
 }
 
 function includesLoose(text: string, value: string) {
-  const canonical = (input: string) => input.toLowerCase().replace(/^\$/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const canonical = (input: string) => input.toLowerCase().replace(/^\$/, "").replace(tokenPattern(/[^a-z0-9]+/g), " ").trim();
   return canonical(text).includes(canonical(value));
 }
 
@@ -118,7 +119,7 @@ function amountIsGrounded(text: string, amount: string) {
 
 function identifierIsGrounded(text: string, value: string) {
   const escaped = value.replace(/^\$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[^a-zA-Z0-9])\\$?${escaped}(?=$|[^a-zA-Z0-9])`, "i").test(text)
+  return tokenPattern(`(?:^|[^a-zA-Z0-9])\\$?${escaped}(?=$|[^a-zA-Z0-9])`, "i").test(text)
     || identifierAppearsAsKnownRwa(text, value.replace(/^\$/, ""));
 }
 
@@ -147,7 +148,7 @@ function normalizedUrlIsGrounded(text: string, value: string, kind: "website" | 
 }
 
 function hasConflictingTradeIdentifiers(text: string) {
-  const explicitTickers = [...text.matchAll(/\$(?!\d)([A-Z][A-Z0-9]{1,31})\b/gi)];
+  const explicitTickers = [...text.matchAll(tokenPattern(/\$(?!\d)([A-Z][A-Z0-9]{1,31})\b/gi))];
   const contracts = [...text.matchAll(/\b0x[a-fA-F0-9]{6,}\b/gi)];
   const explicitTicker = explicitTickers.length > 0;
   const contractLike = contracts.length > 0;
@@ -155,7 +156,7 @@ function hasConflictingTradeIdentifiers(text: string) {
   // ticker and one complete address. Other mixed identifiers remain rejected.
   const oneRedundantIdentifier = explicitTickers.length === 1 && contracts.length === 1
     && contracts[0][0].length === 42
-    && /\$(?!\d)[A-Z][A-Z0-9]{0,31}\s+0x[a-fA-F0-9]{40}\b/i.test(text);
+    && tokenPattern(/\$(?!\d)[A-Z][A-Z0-9]{0,31}\s+0x[a-fA-F0-9]{40}\b/i).test(text);
   if (oneRedundantIdentifier) return false;
   return explicitTicker && contractLike && /\b(?:buy|sell|burn)\b/i.test(text);
 }
@@ -163,7 +164,7 @@ function hasConflictingTradeIdentifiers(text: string) {
 function recipientIsExplicitlyGrounded(text: string, recipient: string) {
   const escaped = recipient.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   if (/^@ponsbotfamily$/i.test(recipient) && (text.match(/@ponsbotfamily\b/gi)?.length || 0) < 2) return false;
-  return new RegExp(`(?:\\b(?:to|recipient|destination)\\s+${escaped}(?=$|[^a-zA-Z0-9_])|(?:->|→)\\s*${escaped}(?=$|[^a-zA-Z0-9_])|\\b(?:send|transfer|give|pay|move)\\s+${escaped}(?=$|[^a-zA-Z0-9_])|\\b(?:ETH|WETH|\\$?[A-Z][A-Z0-9]{0,31})\\s+${escaped}(?=$|[^a-zA-Z0-9_])|${escaped}\\s+(?:gets?|receives?)\\b)`, "i").test(text);
+  return tokenPattern(`(?:\\b(?:to|recipient|destination)\\s+${escaped}(?=$|[^a-zA-Z0-9_])|(?:->|→)\\s*${escaped}(?=$|[^a-zA-Z0-9_])|\\b(?:send|transfer|give|pay|move)\\s+${escaped}(?=$|[^a-zA-Z0-9_])|\\b(?:ETH|WETH|\\$?[A-Z][A-Z0-9]{0,31})\\s+${escaped}(?=$|[^a-zA-Z0-9_])|${escaped}\\s+(?:gets?|receives?)\\b)`, "i").test(text);
 }
 
 function explicitUsdAmount(text: string, amount: string) {
@@ -172,14 +173,14 @@ function explicitUsdAmount(text: string, amount: string) {
 }
 
 function pairSpendRoles(text: string) {
-  const match = withoutQuotedContent(text).match(/(?:^|\b)([0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:worth\s+of|of|into)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i);
+  const match = withoutQuotedContent(text).match(tokenPattern(/(?:^|\b)([0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:worth\s+of|of|into)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i));
   return match ? { amount: match[1].replaceAll(",", "").replace(/^\./, "0."), pairAsset: match[2], token: match[3] } : undefined;
 }
 
 function strictSwapRoles(text: string) {
-  const match = withoutQuotedContent(text).match(/\bswap\s+\$([0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?:worth\s+)?of\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i);
+  const match = withoutQuotedContent(text).match(tokenPattern(/\bswap\s+\$([0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?:worth\s+)?of\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i));
   if (match) return { amount: match[1].replaceAll(",", ""), unit: "usd" as const, fromToken: match[2], toToken: match[3] };
-  const all = withoutQuotedContent(text).match(/\bswap\s+all(?:\s+of)?\s+(?:my\s+)?\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i);
+  const all = withoutQuotedContent(text).match(tokenPattern(/\bswap\s+all(?:\s+of)?\s+(?:my\s+)?\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i));
   return all ? { amount: "100", unit: "percent" as const, fromToken: all[1], toToken: all[2] } : undefined;
 }
 
@@ -197,7 +198,7 @@ function canonicalPairIdentifier(value: string) {
 }
 
 function explicitUsdSendToken(text: string) {
-  return withoutQuotedContent(text).match(/\b(?:send|transfer|give|pay|move)\b[\s\S]{0,80}?\$[0-9][0-9,.]*(?:\.[0-9]+)?\s+(?:worth\s+)?of\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i)?.[1];
+  return withoutQuotedContent(text).match(tokenPattern(/\b(?:send|transfer|give|pay|move)\b[\s\S]{0,80}?\$[0-9][0-9,.]*(?:\.[0-9]+)?\s+(?:worth\s+)?of\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i))?.[1];
 }
 
 function commandRolesMatchText(text: string, command: WalletCommand) {
@@ -227,7 +228,7 @@ function commandRolesMatchText(text: string, command: WalletCommand) {
 }
 
 function hasMultipleLaunchSpecifications(text: string) {
-  const symbols = [...text.matchAll(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\b/gi)]
+  const symbols = [...text.matchAll(tokenPattern(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\b/gi))]
     .map((match) => match[1].toUpperCase());
   const names = [...text.matchAll(/\b(?:(?:full|token)\s+name|name)\s*(?:is|=|:)?\s*(?:["\u201c]([^"\u201d]+)["\u201d]|['\u2018]([^'\u2019]+)['\u2019]|([^,;|\n]+))/gi)]
     .map((match) => (match[1] || match[2] || match[3] || "").trim().toLowerCase());
@@ -254,8 +255,8 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
   if (command.kind === "burn" || command.kind === "buy" || command.kind === "sell") {
     const amountGrounded = amountIsGrounded(text, command.amount)
       || (command.unit === "percent" && command.amount === "100" && /\ball(?:\s+of)?\b/i.test(text))
-      || (command.unit === "percent" && command.amount === "100" && /\b(?:everything|entire\s+(?:balance|[a-z0-9$]+\s+bag))\b/i.test(text))
-      || (command.unit === "percent" && command.amount === "100" && /\b(?:entire|whole)\s+\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/i.test(text))
+      || (command.unit === "percent" && command.amount === "100" && tokenPattern(/\b(?:everything|entire\s+(?:balance|[a-z0-9$]+\s+bag))\b/i).test(text))
+      || (command.unit === "percent" && command.amount === "100" && tokenPattern(/\b(?:entire|whole)\s+\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/i).test(text))
       || (command.unit === "percent" && command.amount === "25" && /\b(?:a\s+quarter|quarter)\b/i.test(text))
       || (command.unit === "percent" && command.amount === "50" && /\bhalf(?:\s+of)?\b/i.test(text));
     return amountGrounded && identifierIsGrounded(text, command.token)
@@ -270,7 +271,7 @@ function fieldsAreGrounded(text: string, command: WalletCommand) {
   }
   if (command.kind === "show_balance") return !command.token || identifierIsGrounded(text, command.token);
   if (command.kind === "launch") {
-    const explicitlySuppliedSymbol = /\b(?:ticker|symbol)\b|\$(?![0-9])[A-Za-z][A-Za-z0-9]{0,15}\b/i.test(text);
+    const explicitlySuppliedSymbol = tokenPattern(/\b(?:ticker|symbol)\b|\$(?![0-9])[A-Za-z][A-Za-z0-9]{0,15}\b/i).test(text);
     const symbolIsGrounded = identifierIsGrounded(text, command.symbol)
       || (!explicitlySuppliedSymbol && tickerFromLaunchName(command.name) === command.symbol);
     return includesLoose(text, command.name) && symbolIsGrounded
@@ -449,6 +450,7 @@ const extractionReliabilityGuidance: Partial<Record<WalletOperation, string>> = 
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
   return `Extract parameters for exactly one ${operation} command. The intent classifier has already selected this operation. Do not change the operation, answer the user, or infer missing values. Return one JSON object only. If any required parameter is missing or ambiguous, set kind to "invalid". When the response format requires other properties, set every unavailable property to null.
+Token names and tickers may contain Chinese Han characters or Japanese hiragana and katakana, including mixed Latin characters and digits. Preserve these characters exactly. Never translate, romanize, or remove them. Uppercase Latin ticker letters only. The same applies to launch-name-derived tickers.
 
 ${extractionInstructions[operation]}
 ${operation === "launch" ? 'In a clear launch, trailing "buy $20", "and buy $20", "purchase $20", or "buy 0.01 ETH" (optionally ending with worth or please) is a developer buy of the new token. Use USD for dollar amounts and ETH for ETH amounts. A buy naming a different token is a separate operation, not a developer buy.' : ""}
@@ -485,7 +487,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
       item.symbol = sharedNameTicker.symbol;
     }
     if (/\bno\s+description\s+(?:needed|required)\b/i.test(text)) delete item.description;
-    const explicitSymbol = text.match(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i)?.[1];
+    const explicitSymbol = text.match(tokenPattern(/\b(?:ticker|symbol)\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'\u2018\u2019\u201c\u201d]?\s*\$?([A-Za-z0-9]{1,16})\s*["'\u2018\u2019\u201c\u201d]?/i))?.[1];
     if (explicitSymbol && !sharedNameTicker) item.symbol = explicitSymbol.toUpperCase();
     const labeledWebsite = text.match(/\b(?:website|site)\s*(?:is|=|:)?\s*((?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s,;]*)?)/i)?.[1];
     const labeledXHandle = text.match(/\b(?:x|twitter)\s*(?:is|=|:)?\s*@([a-zA-Z0-9_]{1,15})\b/i)?.[1];
@@ -507,14 +509,14 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const plainDescriptionMatch = text.match(/\b(?:description|desc)\s*(?:is|=|:)?\s*([^\n,;|]+?)(?=\s+(?:pair(?:ing)?(?:\s+asset)?|website|site|x|twitter|telegram|tg|dev(?:eloper)?\s*buy|initial\s+buy)\s*(?:is|=|:)?\b|$)/i);
     const exactDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2] || plainDescriptionMatch?.[1];
     if (exactDescription && !/\bno\s+description\s+(?:needed|required)\b/i.test(text)) item.description = exactDescription.trim().replace(/[.;,]+$/, "");
-    const explicitPair = extractGroundedPairToken(text) || text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pairing\b/i)?.[1]
-      || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pair\b/i)?.[1];
+    const explicitPair = extractGroundedPairToken(text) || text.match(tokenPattern(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pairing\b/i))?.[1]
+      || text.match(tokenPattern(/\b\$?(0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,11})\s+pair\b/i))?.[1];
     if (explicitPair) item.pairToken = canonicalPairIdentifier(explicitPair);
-    const leadingDecimalBuy = text.match(/(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)[^0-9.]{0,20}(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})\b/i)
-      || text.match(/(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})[^,.;\n]{0,20}(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)/i);
+    const leadingDecimalBuy = text.match(tokenPattern(/(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)[^0-9.]{0,20}(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})\b/i))
+      || text.match(tokenPattern(/(\.[0-9]+)\s*(ETH|[A-Za-z][A-Za-z0-9]{0,11})[^,.;\n]{0,20}(?:dev(?:eloper)?\s*(?:buy|purchase)|initial\s+buy|buy)/i));
     if (leadingDecimalBuy) item.devBuy = { amount: `0${leadingDecimalBuy[1]}`, unit: leadingDecimalBuy[2].toUpperCase() === "ETH" ? "eth" : "pair" };
     if (item.devBuy && typeof item.devBuy === "object") {
       const devBuy = { ...(item.devBuy as Record<string, unknown>) };
@@ -530,7 +532,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
   let command = validateStructuredWalletCommand(normalizedValue);
   if (command?.kind === "show_balance" && !command.token) {
     const explicitContract = text.match(/\b0x[a-fA-F0-9]{40}\b/)?.[0];
-    const explicitTicker = text.match(/\b(?:my|for)\s+\$?([A-Z][A-Z0-9]{1,11})\s+(?:token\s+)?balance\b/i)?.[1];
+    const explicitTicker = text.match(tokenPattern(/\b(?:my|for)\s+\$?([A-Z][A-Z0-9]{1,11})\s+(?:token\s+)?balance\b/i))?.[1];
     const token = explicitContract || explicitTicker;
     if (token) command = { ...command, token };
   }
@@ -540,13 +542,13 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     const quotedName = quotedNameMatch?.[1] || quotedNameMatch?.[2];
     const quotedDescriptionMatch = text.match(/\bdescription\s*(?:is|=|:)?\s*(?:["“]([^"”]+)["”]|['‘]([^'’]+)['’])/i);
     const quotedDescription = quotedDescriptionMatch?.[1] || quotedDescriptionMatch?.[2];
-    const explicitPair = extractGroundedPairToken(text) || text.match(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\b(?:pair\s+it\s+with|pair(?:ed|ing)?\s+(?:asset\s+)?(?:with|against)|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1]
-      || text.match(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i)?.[1]
-      || text.match(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i)?.[1];
-    const pairRaw = explicitPair || command.pairToken || text.match(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i)?.[1];
+    const explicitPair = extractGroundedPairToken(text) || text.match(tokenPattern(/\bpairing\s+asset\s*(?:is|=|:)?\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bpair\s*(?:is|=|:)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bpair\s+\$?(?!with\b|it\b|against\b)(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\b(?:pair\s+it\s+with|pair(?:ed|ing)?\s+(?:asset\s+)?(?:with|against)|against)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i))?.[1]
+      || text.match(tokenPattern(/\bwith\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pairing\b/i))?.[1]
+      || text.match(tokenPattern(/\b\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\s+pair\b/i))?.[1];
+    const pairRaw = explicitPair || command.pairToken || text.match(tokenPattern(/\b(?:paired?\s+with|pair(?:ing)?\s+(?:asset\s+)?(?:with\s+)?|pair\s+(?:it\s+)?with)\s*\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,11})\b/i))?.[1];
     command = { ...command, ...(quotedName ? { name: quotedName.trim() } : {}), ...(quotedDescription ? { description: quotedDescription.trim() } : {}), ...(twitter ? { twitter } : {}), ...(pairRaw ? { pairToken: canonicalPairIdentifier(pairRaw) } : {}) };
     // Creator-fee authority is deliberately grounded from the literal post,
     // never trusted from model output. Do this before returning the intent so
@@ -574,7 +576,7 @@ export function groundedCanonicalCommand(text: string): WalletCommand | null {
 
 function boundedLaunchCommandSegment(text: string) {
   const botDirected = /(?:^|[\n.!?;])\s*@ponsbot(?:family)?\b[\s,:!-]*(?:please\s+)?((?:launch|deploy|create|make)\b[^\n.!?;]*)/i.exec(text)?.[1]?.trim();
-  if (botDirected && /\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i.test(botDirected)) return botDirected;
+  if (botDirected && tokenPattern(/\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i).test(botDirected)) return botDirected;
   const marker = /(?:^|[\n.!?;])\s*(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:@ponsbot(?:family)?\b[\s,:!-]*)*(?:please\s+)?(?:launch|deploy|create|make)\b/gi;
   let match: RegExpExecArray | null;
   while ((match = marker.exec(text))) {
@@ -584,7 +586,7 @@ function boundedLaunchCommandSegment(text: string) {
     const remainder = text.slice(start);
     const end = remainder.search(/[\n.!?;]/);
     const candidate = (end < 0 ? remainder : remainder.slice(0, end)).trim();
-    if (/\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i.test(candidate)) return candidate;
+    if (tokenPattern(/\b(?:token|coin|ticker|symbol)\b|\$[A-Za-z][A-Za-z0-9_]{0,15}\b/i).test(candidate)) return candidate;
   }
   return null;
 }
@@ -605,7 +607,7 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
   if (/^(?:balance|balances|my balance|wallet balance|holdings|my holdings|portfolio|my portfolio)$/i.test(bare)) return "show_balance";
   if (/\b(?:explain|how\s+(?:do|does|would|can)|what\s+if|would\b[\s\S]{0,80}\bwork|does\b[\s\S]{0,80}\b(?:work|mean|count)|not\s+asking|just\s+curious)\b/i.test(embeddedLaunchSegment ?? unquoted)) return null;
   if (/\b(?:create|open|set\s*up|make|start)\b[\s\S]{0,20}\b(?:my\s+)?wallet\b/i.test(unquoted)
-    && !/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b/i.test(unquoted)) return "create_wallet";
+    && !tokenPattern(/\b(?:token|coin|ticker|symbol)\b|\$[a-zA-Z][a-zA-Z0-9]{0,11}\b/i).test(unquoted)) return "create_wallet";
   if (asksWhatIsInMyWallet(text)) return "show_balance";
   if (requestedOperations(text).length > 1) return null;
   if (explicitSelfWalletRequest(text)) return "show_wallet";
@@ -620,16 +622,16 @@ export function straightforwardCommandOperation(text: string): WalletOperation |
   const patterns: Partial<Record<WalletOperation, RegExp>> = {
     show_wallet: /\b(?:show|give|tell|what(?:'s|\s+is)|where)\b[\s\S]{0,35}\b(?:my\s+)?(?:wallet|deposit\s+address|receiving\s+address)\b/i,
     show_balance: /\b(?:show|check|view|what(?:'s|\s+is)|how\s+much)\b[\s\S]{0,40}\b(?:my\s+)?(?:balance|holdings?|portfolio)\b/i,
-    buy: /\b(?:buy(?:\s*back)?|purchase)\b[\s\S]{0,55}(?:\$[0-9]|[0-9][0-9,.]*\s+(?:ETH|WETH|[A-Z][A-Z0-9]{0,11})\b)/i,
+    buy: tokenPattern(/\b(?:buy(?:\s*back)?|purchase)\b[\s\S]{0,55}(?:\$[0-9]|[0-9][0-9,.]*\s+(?:ETH|WETH|[A-Z][A-Z0-9]{0,11})\b)/i),
     sell: /\bsell\b[\s\S]{0,45}\b(?:all|half|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
     send: /\b(?:send|transfer|give)\b[\s\S]{0,80}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
     burn: /\bburn\b[\s\S]{0,45}\b(?:all|half|entire|whole|[0-9][0-9,.]*|[0-9]+(?:\.[0-9]+)?%)\b/i,
     buy_and_send: /\bbuy(?:\s*back)?\b[\s\S]{0,80}\b(?:send|transfer|give)\b[\s\S]{0,60}(?:@[A-Za-z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i,
     buy_and_burn: /\b(?=[\s\S]*\b(?:buy(?:\s*back)?|purchase)\b)(?=[\s\S]*\bburn\b)[\s\S]*$/i,
     buy_top_five: /^buy(?:\s*back)?(?:\s+and\s+burn)?\s+\$[0-9][0-9,.]*\s+(?:of\s+)?each\s+of\s+the\s+top\s+5\s+pons\s+bot\s+tokens[.!?]*$/i,
-    swap_token_for_token: /\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i,
+    swap_token_for_token: tokenPattern(/\bswap\s+\$[0-9][0-9,.]*\s+(?:worth\s+)?of\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\s+(?:for|to)\s+\$?(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})\b/i),
     claim_fees: /\b(?:claim|collect|withdraw)\b[\s\S]{0,45}\b(?:fees?|revenue|rewards?)\b|\bclaim\s+(?:everything|all)\s+available(?:\s+for\s+me)?\b/i,
-    reassign_fees: /^reassign\s+(?:\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\s+fees|fees\s+for\s+\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31}))\s+to\s+(?:@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40}|holders)[.!]?$/i,
+    reassign_fees: tokenPattern(/^reassign\s+(?:\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\s+fees|fees\s+for\s+\$?(?:0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31}))\s+to\s+(?:@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40}|holders)[.!]?$/i),
     launch: /\b(?:launch|deploy|create|make|new\s+token|token\s+request|need\s+(?:a\s+)?(?:coin|launch|token\s+deployed))\b/i,
   };
   return patterns[command.kind]?.test(unquoted) ? command.kind : null;
@@ -702,7 +704,7 @@ export function isPromotionalLaunchReference(text: string) {
   // after the bot mention rather than requiring the entire post to begin with
   // it. The target grammar keeps narrative uses such as "the best way to
   // launch a project" from becoming executable authority.
-  const boundedDirective = /(?:^|[\n.!?;])\s*(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:@ponsbot(?:family)?\b[\s,:!-]*)*(?:please\s+)?(?:launch|deploy|create|make)\s+(?:(?:me|my|a|an|new|the)\s+){0,3}(?:(?:token|coin)\b|["“'‘]?[A-Za-z0-9][A-Za-z0-9 _.'’“-]{0,60}["”'’]?\s+(?:ticker|symbol|\$[A-Za-z]))/i.test(unquoted);
+  const boundedDirective = tokenPattern(/(?:^|[\n.!?;])\s*(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:@ponsbot(?:family)?\b[\s,:!-]*)*(?:please\s+)?(?:launch|deploy|create|make)\s+(?:(?:me|my|a|an|new|the)\s+){0,3}(?:(?:token|coin)\b|["“'‘]?[A-Za-z0-9][A-Za-z0-9 _.'’“-]{0,60}["”'’]?\s+(?:ticker|symbol|\$[A-Za-z]))/i).test(unquoted);
   const explicitDirective = /^(?:(?:hey|hi|yo|gm|please)\b[\s,:!-]*)*(?:(?:pons\s+)?(?:launch|deploy|create|make)\b|(?:i\s+(?:want|wanna|would\s+like)|we\s+(?:want|would\s+like)|need\s+you|can\s+you|could\s+you|would\s+you|please)\b[\s\S]{0,24}\b(?:launch|deploy|create|make)\b)/i.test(withoutBotMentions)
     || /\b(?:please\s+(?:launch|deploy|create|make)|(?:can|could|would)\s+you\s+(?:launch|deploy|create|make))\b/i.test(unquoted)
     || /\b(?:launch|deploy|create|make)\s+(?:me\s+|a\s+|my\s+)?(?:new\s+)?(?:token|coin)\b/i.test(unquoted);
@@ -735,8 +737,8 @@ export function isPromotionalLaunchReference(text: string) {
   // this wallet. Keep this deliberately narrow: require a third-person subject
   // plus a narrative verb and corroborating promotional context. Direct
   // imperatives and first-person requests have already bypassed this branch.
-  const thirdPartyNarrative = /\b(?!(?:i|we)\b)(?:he|she|they|it|the\s+(?:team|project|dev|creator)|[A-Z$][A-Za-z0-9_$-]{1,31})\s+(?:decided|chose|managed|planned|plans|is\s+planning|was\s+planning)\s+to\s+(?:launch|deploy|create)\b/i.test(unquoted)
-    || /\b(?!(?:i|we)\b)(?:he|she|they|it|the\s+(?:team|project|dev|creator)|[A-Z$][A-Za-z0-9_$-]{1,31})\s+(?:has|have|had|already|just)\s+launched\b/i.test(unquoted);
+  const thirdPartyNarrative = tokenPattern(/\b(?!(?:i|we)\b)(?:he|she|they|it|the\s+(?:team|project|dev|creator)|[A-Z$][A-Za-z0-9_$-]{1,31})\s+(?:decided|chose|managed|planned|plans|is\s+planning|was\s+planning)\s+to\s+(?:launch|deploy|create)\b/i).test(unquoted)
+    || tokenPattern(/\b(?!(?:i|we)\b)(?:he|she|they|it|the\s+(?:team|project|dev|creator)|[A-Z$][A-Za-z0-9_$-]{1,31})\s+(?:has|have|had|already|just)\s+launched\b/i).test(unquoted);
   const narrativePromotionSignals = [
     /\b(?:via|through|using)\s+@ponsbot(?:family)?\b/i,
     /\bbacked\s+by\b/i,
@@ -759,7 +761,7 @@ export function isPromotionalLaunchReference(text: string) {
     /\b(?:hold(?:er|ers|ing)?|conviction|bullish|ape|early|revenue|undervalued)\b/i,
     /\b(?:best|easiest|fastest)\s+way\s+to\s+launch\b/i,
   ].reduce((count, pattern) => count + Number(pattern.test(unquoted)), 0);
-  const discussesExistingToken = /\$[A-Za-z][A-Za-z0-9_]{1,15}\b/.test(unquoted);
+  const discussesExistingToken = tokenPattern(/\$[A-Za-z][A-Za-z0-9_]{1,15}\b/).test(unquoted);
   return (hasExistingAddress && promotionalSignals >= 2)
     || (discussesExistingToken && promotionalSignals >= 3);
 }
@@ -855,7 +857,7 @@ export function explicitInformationalTopic(text: string): WalletHelpTopic | null
   if (/\b(?:buys?|buying|sells?|selling|trade|trades|slippage|ape|dump|cash\s+out)\b/i.test(text)) return "buy_sell";
   if (/\b(?:pair|paired|pairing)\b/i.test(text)) return "pairs";
   if (/\b(?:send|sending|transfer|recipient|destination)\b/i.test(text)) return "send";
-  if (/\b(?:balance|holdings?|portfolio|hold\s+it|everything\s+in\s+my\s+wallet|how\s+much\s+\$?[a-z0-9]+\s+do\s+i\s+own)\b/i.test(text)) return "balance";
+  if (tokenPattern(/\b(?:balance|holdings?|portfolio|hold\s+it|everything\s+in\s+my\s+wallet|how\s+much\s+\$?[a-z0-9]+\s+do\s+i\s+own)\b/i).test(text)) return "balance";
   if (/\b(?:launch|launching|ticker|developer\s+buy|dev\s+buy)\b/i.test(text)) return "launch";
   if (/\bwallet|receiving\s+address|chain\b/i.test(text)) return "wallet";
   return "capabilities";
@@ -871,7 +873,7 @@ export function isDirectLaunchHelpRequest(text: string) {
   // A supplied ticker, symbol, or concrete named token belongs to the launch
   // command pipeline. This matcher is only for questions and incomplete
   // statements that are asking to be shown how launching works.
-  if (/\b(?:ticker|symbol|name(?:d)?|called)\b|\$[a-zA-Z][a-zA-Z0-9]{0,15}\b/i.test(clean)) return false;
+  if (tokenPattern(/\b(?:ticker|symbol|name(?:d)?|called)\b|\$[a-zA-Z][a-zA-Z0-9]{0,15}\b/i).test(clean)) return false;
   return /^(?:how\s+(?:do|can|would)\s+i\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|how\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|i(?:\s+(?:want|would\s+like)|['’]d\s+like)\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin)|\s+on\s+pons)?|can\s+you\s+(?:show|tell|teach)\s+me\s+how\s+to\s+launch(?:\s+(?:a\s+)?(?:token|coin))?)$/i.test(clean);
 }
 
@@ -888,7 +890,7 @@ function isDirectCapabilitiesRequest(text: string) {
 export function requestedOperations(text: string): WalletOperation[] {
   if (asksWhatIsInMyWallet(text)) return ["show_balance"];
   const unquotedText = withoutQuotedContent(text);
-  const hasLaunchDirective = /\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i.test(unquotedText);
+  const hasLaunchDirective = tokenPattern(/\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i).test(unquotedText);
   const launchWorthAllocation = /\b(?:buy|purchase)\s+\$[0-9][0-9,.]*(?:\.\d+)?\s+(?:usd\s+)?worth\b(?!\s+of\b)/gi;
   const finalBuy = hasLaunchDirective ? trailingLaunchBuy(text) : undefined;
   const operationText = (finalBuy ? unquotedText.slice(0, finalBuy.index) : unquotedText)
@@ -900,7 +902,7 @@ export function requestedOperations(text: string): WalletOperation[] {
     .replace(/\bgive\s+me\s+my\s+wallet(?:\s+address)?\b/gi, "show my wallet address");
   const strictSwap = strictSwapRoles(operationText);
   const buy = (/\b(?:buy(?:\s*back)?|purchase|grab|gimme|ape|spend|market\s+buy|pick\s+up|scoop|throw)\b|\bget\s+me\b|\bput\b[\s\S]{0,35}\b(?:to\s+(?:purchase|get)|into|on)\b|\bswap\b[\s\S]{0,35}\b(?:for|into)\b/i.test(operationText)) && !strictSwap;
-  const send = /\b(?:send|transfer|give|pay|move|forward|ship|toss|shoot)\b|(?:->|→)\s*@?[a-z0-9]/i.test(operationText);
+  const send = tokenPattern(/\b(?:send|transfer|give|pay|move|forward|ship|toss|shoot)\b|(?:->|→)\s*@?[a-z0-9]/i).test(operationText);
   const burn = /\bburn\b/i.test(operationText);
   if (strictSwap) {
     const extras: WalletOperation[] = [];
@@ -919,7 +921,7 @@ export function requestedOperations(text: string): WalletOperation[] {
     ["sell", /\b(?:sell|dump|cash\s+out|get\s+rid\s+of|unload|liquidate|trim|close\s+(?:my|the)|take[^.!?\n]{0,30}\bposition\s+off)\b/i],
     ["claim_fees", /\b(?:claim|collect|withdraw|get)\b[\s\S]{0,35}\b(?:fees?|revenue|rewards?)\b/i],
     ["upgrade_fees", parseFeeUpgradePhrase(text)?.kind === "upgrade_fees"],
-    ["launch", /\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i],
+    ["launch", tokenPattern(/\b(?:launch|deploy)\b|\bcreate\b[\s\S]{0,35}\b(?:token|coin|ticker|\$[a-z0-9]+)\b|\bmake\b[\s\S]{0,45}\b(?:token|coin|ticker|symbol|\$[a-z0-9]+)\b|\bnew\s+token\b|\btoken\s+request\b|\bneed\s+(?:a\s+)?(?:coin|launch|token\s+deployed)\b/i)],
   ];
   return patterns.filter(([, pattern]) => typeof pattern === "boolean" ? pattern : pattern.test(operationText))
     .map(([operation]) => operation).filter((operation, index, all) => all.indexOf(operation) === index);
@@ -928,20 +930,20 @@ export function requestedOperations(text: string): WalletOperation[] {
 export function canonicalCommandText(text: string) {
   return text
     .replace(/\bbuy\s*back\b/gi, "buy")
-    .replace(/\b(sell|send|burn)\s+my\s+entire\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/gi, "$1 all my $2")
-    .replace(/\bburn\s+(?:my\s+)?(?:entire|whole)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/gi, "burn all my $1")
+    .replace(tokenPattern(/\b(sell|send|burn)\s+my\s+entire\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/gi), "$1 all my $2")
+    .replace(tokenPattern(/\bburn\s+(?:my\s+)?(?:entire|whole)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+balance\b/gi), "burn all my $1")
     .replace(/\b(?:claim|collect)\s+everything(?:\s+(?:available|i\s+can\s+claim|i\s+can))?(?:\s+for\s+me)?\b/gi, "claim my fees")
-    .replace(/\bclaim\s+(?:the\s+)?\$?([a-z][a-z0-9]{1,11})\s+launch\s+fees?\b/gi, "claim my fees for $1")
+    .replace(tokenPattern(/\bclaim\s+(?:the\s+)?\$?([a-z][a-z0-9]{1,11})\s+launch\s+fees?\b/gi), "claim my fees for $1")
     .replace(/\bput\s+(\$[0-9][0-9,.]*)\s+into\b/gi, "buy $1 of")
     .replace(/\bgimme\b/gi, "buy")
     .replace(/\bget\s+me\b/gi, "buy")
     .replace(/\b(?:market\s+buy|purchase|grab(?:\s+me)?|pick\s+up|scoop|ape)\b/gi, "buy")
     .replace(/\bbuy\s+me\b/gi, "buy")
     .replace(/\b([0-9][0-9,.]*(?:\.[0-9]+)?)\s+bucks?\b/gi, "$1 dollars")
-    .replace(/\bbuy\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?!(?:of|worth|usd|dollars?|eth|weth)\b)(?!\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+(?:worth\s+of|of)\b)(?=\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b)/gi, "buy $1 of ")
+    .replace(tokenPattern(/\bbuy\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?)\s+(?!(?:of|worth|usd|dollars?|eth|weth)\b)(?!\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+(?:worth\s+of|of)\b)(?=\$?(?:0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b)/gi), "buy $1 of ")
     .replace(/\bswap\s+(\$?[0-9][0-9,.]*(?:\.[0-9]+)?|\.[0-9]+)(?:\s+(ETH|WETH))?\s+(?:worth\s+)?(?:for|into)\s+(?:CA\s+|contract\s+|token\s+address\s+)?/gi, (_match, amount: string, asset?: string) => `buy ${amount}${asset ? ` ${asset}` : ""} of `)
-    .replace(/\bspend\s+([0-9][0-9,.]*(?:\.[0-9]+)?)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+on\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b/gi, "buy $1 $2 of $3")
-    .replace(/\bspend\s+(\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\s+(?:usd\s+)?(?:on|buying)\b/gi, "buy $1 of")
+    .replace(tokenPattern(/\bspend\s+([0-9][0-9,.]*(?:\.[0-9]+)?)\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\s+on\s+\$?(0x[a-f0-9]{40}|[a-z][a-z0-9]{0,31})\b/gi), "buy $1 $2 of $3")
+    .replace(tokenPattern(/\bspend\s+(\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\s+(?:usd\s+)?(?:on|buying)\b/gi), "buy $1 of")
     .replace(/\bsend\s+it\s*:\s*(\$[0-9][0-9,.]*)\s+into\b/gi, "buy $1 of")
     .replace(/\bdump\b/gi, "sell")
     .replace(/\bcash\s+out\b/gi, "sell")
@@ -952,8 +954,8 @@ export function canonicalCommandText(text: string) {
     .replace(/\bthree\s+quarters(?:\s+of)?\b/gi, "75% of")
     .replace(/\b(?:a|one)\s+quarter(?:\s+of)?\b/gi, "25% of")
     .replace(/\b1\s*\/\s*2\b/gi, "50%")
-    .replace(/\bmy\s+entire\s+([a-z0-9$]+)\s+bag\b/gi, "all my $1")
-    .replace(/\bentire\s+([a-z0-9$]+)\s+bag\b/gi, "all $1")
+    .replace(tokenPattern(/\bmy\s+entire\s+([a-z0-9$]+)\s+bag\b/gi), "all my $1")
+    .replace(tokenPattern(/\bentire\s+([a-z0-9$]+)\s+bag\b/gi), "all $1")
     .replace(/\bpay\b/gi, "give")
     .replace(/\bmove\b/gi, "send")
     .replace(/\benvoie\b/gi, "send")
@@ -961,14 +963,14 @@ export function canonicalCommandText(text: string) {
     .replace(/\s*->\s*/g, " to ")
     .replace(/\bmake\s+me\s+a\s+token\b/gi, "launch token")
     .replace(/\bmake\s+a\s+token\s+named\b/gi, "launch token")
-    .replace(/\bmake\s+([a-z][a-z0-9 '’.-]{1,40}?)\s+(?=ticker|symbol)/gi, "launch $1 ")
+    .replace(tokenPattern(/\bmake\s+([a-z][a-z0-9 '’.-]{1,40}?)\s+(?=ticker|symbol)/gi), "launch $1 ")
     .replace(/\b(?:collect|withdraw|get)\s+(?:my\s+)?(?:creator\s+)?(?:fees?|revenue|rewards?)\b/gi, "claim my fees")
-    .replace(/\blaunch\s+([a-z][a-z0-9 ]{1,40}?)\s+([A-Z][A-Z0-9]{1,11})(?=\s+@ponsbotfamily|\s*$)/g,
+    .replace(tokenPattern(/\blaunch\s+([a-z][a-z0-9 ]{1,40}?)\s+([A-Z][A-Z0-9]{1,11})(?=\s+@ponsbotfamily|\s*$)/g),
       (match, name: string, symbol: string) => /\b(?:ticker|symbol)\b/i.test(name) ? match : `launch ${name} ticker ${symbol}`)
     .replace(/\bnew\s+token\s*:/gi, "launch token ")
     .replace(/\btwenty\s+dollars?\b/gi, "20 dollars")
     .replace(/\bi\s+want\s+(\d+(?:\.\d+)?)\s+dollars?\s+worth\s+of\b/gi, "buy $1 dollars of")
-    .replace(/\bten\s+([a-z0-9$]+)\b/gi, "10 $1");
+    .replace(tokenPattern(/\bten\s+([a-z0-9$]+)\b/gi), "10 $1");
 }
 
 function validateIntentDecision(text: string, classification: ClassifiedIntent): ClassifiedIntent {
@@ -1003,7 +1005,7 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
   if (/\b(?:show|give|send|tell|what(?:'s|\s+is)|where(?:'s|\s+is)|find)\b[\s\S]{0,35}\bmy\s+(?:wallet|wallet\s+address|deposit\s+address|receiving\s+address)\b/i.test(text)) {
     return { kind: "command", operation: "show_wallet" };
   }
-  if (/\b(?:what(?:'s|\s+is)|show|check|view|tell\s+me|how\s+much)\b[\s\S]{0,35}\bmy\s+(?:(?:eth|\$?[a-zA-Z][a-zA-Z0-9]{0,11})\s+)?balance\b/i.test(text)) {
+  if (tokenPattern(/\b(?:what(?:'s|\s+is)|show|check|view|tell\s+me|how\s+much)\b[\s\S]{0,35}\bmy\s+(?:(?:eth|\$?[a-zA-Z][a-zA-Z0-9]{0,11})\s+)?balance\b/i).test(text)) {
     return { kind: "command", operation: "show_balance" };
   }
   if (/\bcan\s+you\s+sell\b[\s\S]*\bif\s+i\s+don['’]?t\b/i.test(text)
@@ -1027,7 +1029,7 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
     return { kind: "command", operation: "show_balance" };
   }
   const canonical = groundedCanonicalCommand(text);
-  const explicitSlang = /\b(?:gimme|get\s+me|spend|dump|cash\s+out|get\s+rid\s+of|unload|liquidate|pay|move|envoie|compra|ach[eè]te|ape|grab|purchase|make\s+(?:me\s+)?a\s+token|new\s+token)\b|\bput\s+(?:\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\b|\buse\s+(?:\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\b[\s\S]{0,30}\bto\s+purchase\b|\bsend\s+it\s*:/i.test(text);
+  const explicitSlang = tokenPattern(/\b(?:gimme|get\s+me|spend|dump|cash\s+out|get\s+rid\s+of|unload|liquidate|pay|move|envoie|compra|ach[eè]te|ape|grab|purchase|make\s+(?:me\s+)?a\s+token|new\s+token)\b|\bput\s+(?:\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\b|\buse\s+(?:\$?[0-9][0-9,.]*|[a-z-]+(?:\s+[a-z-]+)?)\b[\s\S]{0,30}\bto\s+purchase\b|\bsend\s+it\s*:/i).test(text);
   if (canonical && canonical.kind !== "unknown"
     && ((classification.kind === "command" && classification.operation === canonical.kind)
       || (earlyOperations.length === 1 && earlyOperations[0] === canonical.kind) || explicitSlang)) {
@@ -1037,9 +1039,9 @@ function validateIntentDecision(text: string, classification: ClassifiedIntent):
     return { kind: "command", operation: "show_wallet" };
   }
   if (/\b(?:what(?:'s|\s+is)\s+my|show\s+me\s+my|need\s+(?:my|a))\s+(?:receiving|deposit)\s+address\b/i.test(text)) return { kind: "command", operation: "show_wallet" };
-  if (/\bdo\s+i\s+own\s+any\s+\$?[a-z0-9]+\b/i.test(text)) return { kind: "command", operation: "show_balance" };
-  if (/\b(?:holdings?|portfolio\s+check|what\s+tokens\s+am\s+i\s+holding|what(?:'s|\s+is)\s+in\s+(?:the|my)\s+wallet|do\s+i\s+have\s+any\s+\$?[a-z0-9]+|combien\s+j['’]?ai\s+dans\s+mon\s+wallet)\b/i.test(text)) return { kind: "command", operation: "show_balance" };
-  if (/\bhow\s+much\s+\$?[a-z0-9]+\s+do\s+i\s+(?:own|have)\b/i.test(text)) return { kind: "command", operation: "show_balance" };
+  if (tokenPattern(/\bdo\s+i\s+own\s+any\s+\$?[a-z0-9]+\b/i).test(text)) return { kind: "command", operation: "show_balance" };
+  if (tokenPattern(/\b(?:holdings?|portfolio\s+check|what\s+tokens\s+am\s+i\s+holding|what(?:'s|\s+is)\s+in\s+(?:the|my)\s+wallet|do\s+i\s+have\s+any\s+\$?[a-z0-9]+|combien\s+j['’]?ai\s+dans\s+mon\s+wallet)\b/i).test(text)) return { kind: "command", operation: "show_balance" };
+  if (tokenPattern(/\bhow\s+much\s+\$?[a-z0-9]+\s+do\s+i\s+(?:own|have)\b/i).test(text)) return { kind: "command", operation: "show_balance" };
   if (/\bcan\s+you\s+buy\b/i.test(text) && /\$|\beth\b/i.test(text)) return { kind: "command", operation: "buy" };
   if (/^\s*@ponsbotfamily\s+wallet\s*[?.!]*\s*$/i.test(text)) return { kind: "command", operation: "show_wallet" };
   if (/\b(?:what(?:'s|\s+is)|show|check|view|see|how\s+much)\b[\s\S]{0,30}\b(?:my\s+)?balance\b|\bhow\s+much\s+do\s+i\s+have\b/i.test(text)) {
@@ -1095,7 +1097,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
     return finish({ kind: "help", topic: "gas" }, "deterministic_guard");
   const unquotedOperative = withoutQuotedContent(operativeText);
   if (/\b(?:buyback|buy\s+back)\b/i.test(unquotedOperative) && /\bburn\b/i.test(unquotedOperative)) {
-    const target = unquotedOperative.match(/\b(?:of|into)\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\b/i)?.[1];
+    const target = unquotedOperative.match(tokenPattern(/\b(?:of|into)\s+\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\b/i))?.[1];
     if (!target || /^eth$/i.test(target)) return finish({ kind: "unknown_wallet" }, "deterministic_guard");
   }
   let classification: ClassifiedIntent | null = null;
@@ -1156,7 +1158,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   const command = fallback?.kind === classification.operation ? fallback : null;
   if (command) return finish({ kind: "command", command }, "deterministic_fallback");
   if (classification.operation === "show_balance" && (/\b(?:balance|how\s+much)\b/i.test(operativeText) || asksWhatIsInMyWallet(operativeText))) {
-    const named = operativeText.match(/\bhow\s+much\s+\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+do\s+i\s+(?:own|have)\b/i)?.[1];
+    const named = operativeText.match(tokenPattern(/\bhow\s+much\s+\$?([a-zA-Z][a-zA-Z0-9]{0,11})\s+do\s+i\s+(?:own|have)\b/i))?.[1];
     return finish({ kind: "command", command: { kind: "show_balance", ...(named ? { token: named.toUpperCase() } : {}) } }, "deterministic_fallback");
   }
   return finish({ kind: "unknown_wallet" }, "deterministic_fallback");

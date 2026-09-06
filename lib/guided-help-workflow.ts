@@ -1,3 +1,4 @@
+import { tokenPattern } from "./token-pattern";
 export const GUIDED_HELP_TTL_MS = 10 * 60_000;
 
 export const GENERAL_GUIDED_HELP_MESSAGE =
@@ -215,7 +216,7 @@ export function decodeGuidedReassignState(value?: string): GuidedReassignState |
   try {
     const parsed = JSON.parse(value) as GuidedReassignState;
     return parsed.version === 1 && parsed.type === "reassign_fees"
-      && (parsed.token === undefined || /^(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})$/.test(parsed.token))
+      && (parsed.token === undefined || tokenPattern(/^(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})$/).test(parsed.token))
       ? parsed
       : null;
   } catch {
@@ -225,7 +226,7 @@ export function decodeGuidedReassignState(value?: string): GuidedReassignState |
 
 export function guidedReassignTokenSelection(text: string) {
   const clean = cleanChoice(text).replace(/^\$/, "");
-  return /^(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})$/.test(clean) ? clean : null;
+  return tokenPattern(/^(?:0x[a-fA-F0-9]{40}|[A-Za-z][A-Za-z0-9]{0,31})$/).test(clean) ? clean : null;
 }
 
 export function guidedReassignRecipientSelection(text: string) {

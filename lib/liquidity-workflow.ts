@@ -1,3 +1,4 @@
+import { tokenPattern } from "./token-pattern";
 import { z } from "zod";
 import { keccak256, stringToHex } from "viem";
 import { liquidityMarketCapInput } from "./liquidity-market-cap";
@@ -29,7 +30,7 @@ export const DELTA_LIQUIDITY = {
 
 export const liquidityAddress = z.string().regex(/^0x[a-fA-F0-9]{40}$/).transform(s => s.toLowerCase());
 export const liquidityIdentifier = z.string().trim().min(1).max(64)
-  .regex(/^(?:0x[a-fA-F0-9]{40}|\$?[A-Za-z][A-Za-z0-9_.-]{0,31})$/)
+  .regex(tokenPattern(/^(?:0x[a-fA-F0-9]{40}|\$?[A-Za-z][A-Za-z0-9_.-]{0,31})$/))
   .transform(s => /^0x/i.test(s) ? s.toLowerCase() : s.replace(/^\$/, "").toUpperCase());
 export const liquidityOperation = z.enum(["open", "claim", "withdraw", "add", "compound", "status", "help"]);
 export const liquidityPositionIdentifier = z.string().trim().regex(/^(?:LP-)?[A-F0-9]{8}$/i)
@@ -103,7 +104,7 @@ export type LiquidityPhase = typeof phases[number];
 export const liquidityDraftSchema = z.object({
   operation: liquidityOperation, fields: liquidityFieldsSchema,
   phase: z.enum(phases), custom: z.boolean().default(false),
-  tokenAddress: liquidityAddress.optional(), symbol: z.string().regex(/^[A-Za-z0-9_.-]{1,32}$/).optional(),
+  tokenAddress: liquidityAddress.optional(), symbol: z.string().regex(tokenPattern(/^[A-Za-z0-9_.-]{1,32}$/)).optional(),
   analyzed: z.boolean().default(false), candidates: z.array(liquidityCandidateSchema).max(6).default([]),
   selected: liquidityCandidateSchema.optional(),
   analysis: z.object({
@@ -181,24 +182,24 @@ export function liquidityOpenInquirySelection(text: string): LiquidityFields | n
     || /\b(?:what|which|show|find|list|recommend|suggest)\b[^.!?]{0,90}\b(?:liquidity|LP)\s+(?:options?|opportunities|recommendations?)\b/i.test(clean)
     || /\b(?:best|available|recommended|existing)\s+(?:liquidity\s+)?pools?\b/i.test(clean)
     || /\b(?:are|is)\s+there\b[^.!?]{0,60}\b(?:liquidity\s+)?pools?\b/i.test(clean)
-    || /\b(?:\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+(?:liquidity\s+)?(?:pools?|LP\s+options?|liquidity\s+options?)\b/i.test(clean)
-    || /\bdoes\s+(?:\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+have\b[^.!?]{0,30}\b(?:liquidity\s+)?pools?\b/i.test(clean);
+    || tokenPattern(/\b(?:\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+(?:liquidity\s+)?(?:pools?|LP\s+options?|liquidity\s+options?)\b/i).test(clean)
+    || tokenPattern(/\bdoes\s+(?:\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+have\b[^.!?]{0,30}\b(?:liquidity\s+)?pools?\b/i).test(clean);
   const participation = /\b(?:want|would\s+like|interested|ready|trying|looking|help\s+me|can\s+i|how\s+(?:can|do)\s+i|where\s+can\s+i|let(?:'s|s))\b[^.!?]{0,90}\b(?:provide|create|open|set\s*up|make|add)\b[^.!?]{0,45}\b(?:liquidity|LP|pool|position)\b/i.test(clean)
     || /\b(?:want|would\s+like|interested|ready|trying|looking|help\s+me|get\s+me\s+started|can\s+i|how\s+(?:can|do)\s+i|where\s+can\s+i)\b[^.!?]{0,65}\b(?:liquidity|LP|pool|position)\b/i.test(clean)
     || /\b(?:want|would\s+like|can\s+i|how\s+(?:can|do)\s+i|where\s+can\s+i)\b[^.!?]{0,60}\b(?:earn|collect|get)\b[^.!?]{0,30}\bLP\s+fees?\b/i.test(clean);
   if (!discovery && !participation) return null;
 
   const candidates = [
-    /\bLP\s+fees?\s+(?:for|from|on)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i,
-    /\b(?:pools?|options?|opportunities|recommendations?|liquidity|LP)\s+(?:are\s+(?:there|available)\s+)?(?:for|with|on)\s+(?:token\s+)?(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i,
-    /\b(?:provide\s+liquidity|position|pool)\s+(?:for\s+|on\s+)?(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i,
-    /\bLP\s+(?:for|on)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i,
-    /\bLP\s+(\$[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i,
-    /\b(?:what|which|show|find|list|recommend|suggest)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31})\s+(?:liquidity\s+)?pools?\b/i,
-    /\b(\$?[A-Za-z][A-Za-z0-9_.-]{0,31})\s+(?:liquidity\s+)?(?:pools?|LP\s+options?|liquidity\s+options?)\b/i,
-    /\bdoes\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+have\b[^.!?]{0,30}\b(?:liquidity\s+)?pools?\b/i,
+    tokenPattern(/\bLP\s+fees?\s+(?:for|from|on)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i),
+    tokenPattern(/\b(?:pools?|options?|opportunities|recommendations?|liquidity|LP)\s+(?:are\s+(?:there|available)\s+)?(?:for|with|on)\s+(?:token\s+)?(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i),
+    tokenPattern(/\b(?:provide\s+liquidity|position|pool)\s+(?:for\s+|on\s+)?(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i),
+    tokenPattern(/\bLP\s+(?:for|on)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i),
+    tokenPattern(/\bLP\s+(\$[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\b/i),
+    tokenPattern(/\b(?:what|which|show|find|list|recommend|suggest)\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31})\s+(?:liquidity\s+)?pools?\b/i),
+    tokenPattern(/\b(\$?[A-Za-z][A-Za-z0-9_.-]{0,31})\s+(?:liquidity\s+)?(?:pools?|LP\s+options?|liquidity\s+options?)\b/i),
+    tokenPattern(/\bdoes\s+(\$?[A-Za-z][A-Za-z0-9_.-]{0,31}|0x[a-fA-F0-9]{40})\s+have\b[^.!?]{0,30}\b(?:liquidity\s+)?pools?\b/i),
   ].map(pattern => pattern.exec(clean)?.[1]).filter((value): value is string => Boolean(value));
-  const explicit = /(?:^|\s)(0x[a-fA-F0-9]{40}|\$[A-Za-z][A-Za-z0-9_.-]{0,31})(?=$|\s|[,.!?])/i.exec(clean)?.[1];
+  const explicit = tokenPattern(/(?:^|\s)(0x[a-fA-F0-9]{40}|\$[A-Za-z][A-Za-z0-9_.-]{0,31})(?=$|\s|[,.!?])/i).exec(clean)?.[1];
   const raw = explicit ?? candidates[0];
   if (!raw) return {};
   const blocked = new Set(["A", "AN", "ARE", "AVAILABLE", "BEST", "DO", "EXISTING", "FOR", "I", "IS", "LIQUIDITY", "MY", "NEW", "POOL", "POOLS", "RECOMMENDED", "THE", "THERE", "WHAT", "WHICH", "WITH"]);
@@ -248,8 +249,8 @@ export function liquidityStatusSelection(text: string): LiquidityFields | null {
   const match = /^(?:check|show|view|status(?:\s+(?:of|for))?)(?:\s+(?:my\s+)?position)?\s+(?:LP-)?([a-f0-9]{8})$/i.exec(clean);
   if (match) return { position: `LP-${match[1].toUpperCase()}` };
   if (/^(?:please\s+)?(?:check|show|view|get)(?:\s+me)?\s+(?:all\s+)?my\s+(?:liquidity\s+)?positions?(?:\s+please)?$/i.test(clean)) return {};
-  const token = /^(?:please\s+)?(?:check|show|view|get)(?:\s+me)?\s+(?:my\s+)?(?:\$?([A-Za-z][A-Za-z0-9_.-]{0,31})|(0x[a-f0-9]{40}))\s+(?:liquidity\s+)?positions?(?:\s+please)?$/i.exec(clean)
-    ?? /^(?:please\s+)?(?:check|show|view|get)(?:\s+me)?\s+(?:my\s+)?(?:liquidity\s+)?positions?\s+(?:for|in|of)\s+(?:\$?([A-Za-z][A-Za-z0-9_.-]{0,31})|(0x[a-f0-9]{40}))(?:\s+please)?$/i.exec(clean);
+  const token = tokenPattern(/^(?:please\s+)?(?:check|show|view|get)(?:\s+me)?\s+(?:my\s+)?(?:\$?([A-Za-z][A-Za-z0-9_.-]{0,31})|(0x[a-f0-9]{40}))\s+(?:liquidity\s+)?positions?(?:\s+please)?$/i).exec(clean)
+    ?? tokenPattern(/^(?:please\s+)?(?:check|show|view|get)(?:\s+me)?\s+(?:my\s+)?(?:liquidity\s+)?positions?\s+(?:for|in|of)\s+(?:\$?([A-Za-z][A-Za-z0-9_.-]{0,31})|(0x[a-f0-9]{40}))(?:\s+please)?$/i).exec(clean);
   return token ? { token: token[1] || token[2] } : null;
 }
 
@@ -263,7 +264,7 @@ export function normalizeLiquidityTokenAliases(text: string) {
  * Explicit partial requests stay partial so they receive the unsupported reply. */
 export function liquidityWithdrawalSelection(text: string): LiquidityFields | null {
   const clean = text.replace(/@[A-Za-z0-9_]+/g, " ").trim().replace(/[.!]+$/, "").replace(/\s+please$/i, "").trim();
-  const match = /^(?:please\s+)?withdraw(?:\s+(all|half|quarter|\d+(?:\.\d+)?%)(?:\s+of)?)?(?:\s+my)?(?:\s+(?:(\$?[A-Za-z][A-Za-z0-9_.-]*|0x[a-f0-9]{40})\s+)?(?:liquidity|positions?))?(?:\s+((?:LP-)?[A-F0-9]{8}))?$/i.exec(clean);
+  const match = tokenPattern(/^(?:please\s+)?withdraw(?:\s+(all|half|quarter|\d+(?:\.\d+)?%)(?:\s+of)?)?(?:\s+my)?(?:\s+(?:(\$?[A-Za-z][A-Za-z0-9_.-]*|0x[a-f0-9]{40})\s+)?(?:liquidity|positions?))?(?:\s+((?:LP-)?[A-F0-9]{8}))?$/i).exec(clean);
   if (!match) return null;
   const percent = match[1] ? ({ all: 100, half: 50, quarter: 25 }[match[1].toLowerCase()] ?? Number(match[1].replace("%", ""))) : 100;
   const parsed = liquidityFieldsSchema.safeParse({ withdrawPercent: percent, ...(match[2] ? { token: match[2] } : {}), ...(match[3] ? { position: match[3].toUpperCase() } : {}) });

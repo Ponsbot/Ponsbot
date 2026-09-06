@@ -23,7 +23,7 @@ export function liquidityClaimTotalLine(received: string[]) {
 }
 
 export function parseLiquidityClaimedFee(value: string): LiquidityClaimedFee | undefined {
-  const match = /^\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+([A-Za-z0-9_.-]{1,32})(?:\s+\(\$([0-9][0-9,]*(?:\.[0-9]+)?)\))?\s*$/.exec(value);
+  const match = /^\s*([0-9][0-9,]*(?:\.[0-9]+)?)\s+([A-Za-z0-9_.\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{M}ーｰ-]{1,32})(?:\s+\(\$([0-9][0-9,]*(?:\.[0-9]+)?)\))?\s*$/u.exec(value);
   if (!match) return undefined;
   const amount = Number(match[1].replaceAll(",", ""));
   const usd = match[3] === undefined ? undefined : Number(match[3].replaceAll(",", ""));
