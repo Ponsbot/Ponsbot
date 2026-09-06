@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { safeFailure } from "../convex/wallets";
 
 describe("wallet failure messages", () => {
+  it.each([
+    "signer /v1/transactions/execute returned 400: launchAndBuy reverted with selector 0x85b8e2f4",
+    "execution reverted: MetadataTooLong()",
+  ])("explains the Pons metadata byte limit for %s", (detail) => {
+    expect(safeFailure(new Error(detail), "launch")).toBe(
+      "⚠️ The special characters in the name or ticker exceed Pons's onchain byte limit. Shorten the name or ticker, then reply with the launch request again.",
+    );
+  });
+
   it("explains when a launch wallet cannot cover value and gas", () => {
     expect(safeFailure(new Error("The total cost (gas * gas fee + value) of executing this transaction exceeds the balance of the account.")))
       .toBe("⛽ You'll need to fund your wallet with ETH for gas to complete this transaction. Fund it, then reply “resume”.");

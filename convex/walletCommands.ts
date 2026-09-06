@@ -274,7 +274,7 @@ export function trailingLaunchBuy(text: string) {
 export function launchFeeOptionsFromText(text: string) {
   const operative = textOutsideQuotedContent(text);
   const assigned = operative.match(/\bassign fees to\s+(@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i)?.[1];
-  const holderFeeSharing = /\b(?:holder fee sharing|share with holders)\b/i.test(operative);
+  const holderFeeSharing = /\b(?:holder\s+fee\s+sharing|share\s+with\s+holders|assign\s+fees\s+to\s+holders)\b/i.test(operative);
   if (assigned && holderFeeSharing) throw new Error("Choose either an assigned fee recipient or holder fee sharing, not both.");
   return { ...(assigned ? { feeRecipient: assigned } : {}), ...(holderFeeSharing ? { holderFeeSharing: true } : {}) };
 }

@@ -3302,6 +3302,8 @@ export function safeFailure(
     return "❌ There aren't enough funds for that amount. Check the balance or try a smaller amount.";
   if (/no claimable creator fees/i.test(message))
     return "ℹ️ There aren't any creator fees available to claim in that asset right now.";
+  if (/\b0x85b8e2f4\b|MetadataTooLong/i.test(message))
+    return "⚠️ The special characters in the name or ticker exceed Pons's onchain byte limit. Shorten the name or ticker, then reply with the launch request again.";
   if (/named paired asset does not match|paired with ETH; specify an ETH or dollar amount/i.test(message))
     return "⚠️ That spend asset doesn't match this token's Pons V2 pair. Reply with the full request using that pair or a dollar amount.";
   if (
