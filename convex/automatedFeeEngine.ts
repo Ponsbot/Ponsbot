@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { finalizeFeeWalletOutcome } from "./automatedFeeOutcomes";
+import { queueCreatorBurnRequest } from "./creatorBurnEnrollment";
 import { attachRequestedClaims, liveRequestedClaims, requestedVaultClaimsEnabled } from "./automatedFeeClaimInfo";
 import { existingFeeUpgradeState } from "../lib/fee-upgrade-command";
 import { PONSBOT_BURN_TOKEN } from "../lib/burn-stats";
@@ -693,6 +694,14 @@ export const finalizeVerifiedEnrollment = internalMutation({
     if (program.enrollmentSource === "upgrade") {
       await finalizeFeeWalletOutcome(ctx, { ...program, status: "enrolled", enrollmentTransactionHash: args.enrollmentTransactionHash },
         program.enrollmentRequestId ?? "", "upgrade", args.enrollmentTransactionHash);
+    }
+    if(program.enrollmentSource==="new_launch"&&program.enrollmentRequestId){
+      const wr=await ctx.db.query("walletRequests").withIndex("by_request_id",q=>q.eq("requestId",program.enrollmentRequestId!)).unique();
+      const command=wr?JSON.parse(wr.normalizedJson):null;
+      if(command?.kind==="launch"&&command.selfBurnBps!==undefined){
+        const wallet=await ctx.db.get(wr!.walletId);if(!wallet)throw new Error("Launch owner wallet missing");
+        await queueCreatorBurnRequest(ctx,{requestId:`${program.enrollmentRequestId}:self-burn`,tokenAddress:program.tokenAddress,ownerXUserId:wallet.ownerXUserId,bps:command.selfBurnBps});
+      }
     }
   },
 });
@@ -1469,6 +1478,7 @@ export const reserveProcessingRun = internalMutation({
   handler: async (ctx, args) => {
     const program = await ctx.db.get(args.programId);
     if (!program || program.status !== "enrolled") throw new Error("automated fee program is not executable");
+    if(await ctx.db.query("creatorBurnRequests").withIndex("by_program_status",q=>q.eq("programId",program._id).eq("status","pending")).first())throw new Error("creator self-burn configuration is being finalized");
     const creatorLayers = await ctx.db.query("creatorBurnLayers").withIndex("by_program", q=>q.eq("programId",args.programId)).collect();
     if(creatorLayers.some(l=>l.pending || (l.leaseUntil??0)>Date.now())) throw new Error("creator layer cycle is still being finalized");
     if (!PRODUCTION_EXECUTION_IMPLEMENTATION_READY || !automatedFeeProcessingAllowed(configuration())) {
@@ -2708,6 +2718,7 @@ export const programByToken = internalQuery({
 
 export const reserveControllerChange = internalMutation({
   args: {
+    enrollmentLayer:v.optional(v.string()),
     selfBurnBps:v.optional(v.number()),
     requestId: v.string(), programId: v.id("automatedFeePrograms"),
     parentRequestId: v.optional(v.string()),
@@ -2740,6 +2751,7 @@ export const reserveControllerChange = internalMutation({
       .withIndex("by_request_id", (q) => q.eq("requestId", args.requestId)).unique();
     if (existing) {
       const sameIdentity = existing.programId === args.programId
+        && existing.enrollmentLayer===args.enrollmentLayer
         && existing.selfBurnBps===args.selfBurnBps
         && (existing.parentRequestId ?? "") === (args.parentRequestId ?? "")
         && existing.operation === args.operation
@@ -2878,7 +2890,7 @@ export const markControllerChangeStatus = internalMutation({
       ...(args.status === "confirmed" || args.transactionSettled ? { transactionSettledAt: Date.now() } : {}),
       updatedAt: Date.now(),
     });
-    if (args.workflowComplete && change.workflowRoot) {
+    if (args.workflowComplete && change.workflowRoot && !change.enrollmentLayer && change.selfBurnBps===undefined) {
       const program = await ctx.db.get(change.programId);
       const hash = args.transactionHash ?? change.transactionHash;
       if (!program || !hash) throw new Error("automated fee completed controller outcome is missing");
@@ -2919,6 +2931,7 @@ type ControllerExecution = {
 
 export const executeVerifiedControllerChange = internalAction({
   args: {
+    enrollmentLayer:v.optional(v.string()),
     selfBurnBps:v.optional(v.number()),
     requestId: v.string(), programId: v.id("automatedFeePrograms"), ownerXUserId: v.string(),
     walletRef: v.string(), expectedAddress: v.string(),
@@ -2932,6 +2945,7 @@ export const executeVerifiedControllerChange = internalAction({
       throw new Error("automated fee program is unavailable");
     }
     const change = await ctx.runMutation(internal.automatedFeeEngine.reserveControllerChange, {
+      enrollmentLayer:args.enrollmentLayer,
       selfBurnBps:args.selfBurnBps,
       requestId: args.requestId, programId: args.programId, operation: args.operation,
       previousControllerAddress: args.expectedAddress,
@@ -3100,11 +3114,17 @@ export const executeVerifiedControllerChange = internalAction({
     };
     try {
       let hash: string;
+      if(args.enrollmentLayer){
+        const found=await signerRequest<{layer:{layer:string;owner:string;exited:boolean}|null}>("/v1/creator-burn/discover",{vaultAddress:program.vaultAddress});
+        if(!found.layer||found.layer.exited||found.layer.layer.toLowerCase()!==args.enrollmentLayer.toLowerCase()
+          ||found.layer.owner.toLowerCase()!==args.expectedAddress.toLowerCase()||args.recipient.toLowerCase()!==args.enrollmentLayer.toLowerCase()
+          ||args.operation!=="reassign"||args.selfBurnBps!==undefined)throw new Error("CREATOR_BURN_ENROLLMENT_OWNER_CHANGED");
+      }
       if(args.selfBurnBps!==undefined&&!program.creatorBurnLayerAddress)throw new Error("creator percentage requires an active layer");
       if (!(await ctx.runMutation(internal.automatedFeeEngine.acquireKeeperLease, {
         controllerRequestId: args.requestId, leaseId: executionLeaseId, now: Date.now(),
       }))) throw new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION);
-      if(program.creatorBurnLayerAddress) {
+      if(program.creatorBurnLayerAddress && !args.enrollmentLayer) {
         const execution:ControllerExecution={maxBuybackAmount:"0",minPonsbotOut:"0",minSweepBuybackTokensOut:"0",deadline:Math.floor(Date.now()/1000)+300,routeTarget:"0x0000000000000000000000000000000000000000",routeData:"0x",quoteSignature:"0x"};
         const changed=args.selfBurnBps!==undefined
           ? await executeOne(args.requestId,{type:"percentage",bps:args.selfBurnBps},{type:"percentage",bps:args.selfBurnBps})
@@ -3145,8 +3165,10 @@ export const executeVerifiedControllerChange = internalAction({
         await deliverFormerBeneficiary(exited.blockNumber);
       } else {
         let inspection = await signerRequest<Inspection>("/v1/automated-fees/inspect", { chainId: ROBINHOOD_CHAIN_ID, vaultAddress: program.vaultAddress });
-        const alreadyReassigned = inspection.controller.toLowerCase() === args.recipient.toLowerCase()
-          && inspection.beneficiary.toLowerCase() === args.recipient.toLowerCase();
+        const alreadyReassigned = args.enrollmentLayer
+          ? inspection.creatorBurnLayer?.toLowerCase() === args.enrollmentLayer.toLowerCase()
+          : inspection.controller.toLowerCase() === args.recipient.toLowerCase()
+            && inspection.beneficiary.toLowerCase() === args.recipient.toLowerCase();
         if (!alreadyReassigned && inspection.phase === 0 && inspection.lastCurveSweepBlock === "0") {
           const sweepRequestId = `${args.requestId}:controller-sweep`;
           let sweep = await ctx.runMutation(internal.automatedFeeEngine.reserveControllerChange, {
@@ -3236,7 +3258,8 @@ export const executeVerifiedControllerChange = internalAction({
         }
         await deliverFormerBeneficiary(reassignmentBlockNumber);
       }
-      await ctx.runMutation(internal.automatedFeeEngine.recordControllerChange, {
+      if(args.enrollmentLayer) await ctx.runAction(internal.creatorBurnEngine.sync,{programId:program._id});
+      else await ctx.runMutation(internal.automatedFeeEngine.recordControllerChange, {
         programId: args.programId, transactionHash: hash, previousControllerAddress: args.expectedAddress,
         ...(args.operation === "reassign" ? { newControllerAddress: args.recipient, newBeneficiaryAddress: args.recipient, outcome: "reassigned" as const }
           : { outcome: "holders" as const }),
@@ -3339,7 +3362,7 @@ export const recoverControllerChanges = internalAction({
       let ownsWalletLease = false;
       try {
         const completedHash = row.transactionHash || program.lastControllerChangeTransactionHash;
-        if (stateComplete && completedHash && !program.creatorBurnLayerAddress) {
+        if (stateComplete && completedHash && !program.creatorBurnLayerAddress && !row.enrollmentLayer) {
           await ctx.runMutation(internal.automatedFeeEngine.markControllerChangeStatus, {
             requestId: row.requestId, status: "confirmed", workflowComplete: true,
             transactionHash: completedHash,
@@ -3364,9 +3387,9 @@ export const recoverControllerChanges = internalAction({
         const result = await ctx.runAction(internal.automatedFeeEngine.executeVerifiedControllerChange, {
           requestId: row.requestId, programId: row.programId, ownerXUserId: row.ownerXUserId,
           walletRef: row.walletRef, expectedAddress: row.previousControllerAddress,
-          operation: row.operation, recipient,selfBurnBps:row.selfBurnBps,
+          operation: row.operation, recipient,selfBurnBps:row.selfBurnBps,enrollmentLayer:row.enrollmentLayer,
         });
-        if(row.selfBurnBps===undefined)await ctx.runMutation(internal.automatedFeeEngine.finalizeRecoveredWalletRequest, {
+        if(row.selfBurnBps===undefined&&!row.enrollmentLayer)await ctx.runMutation(internal.automatedFeeEngine.finalizeRecoveredWalletRequest, {
           requestId: row.requestId, programId: row.programId,
           operation: row.operation === "holders" ? "holders" : "reassign",
           transactionHash: result.transactionHash,

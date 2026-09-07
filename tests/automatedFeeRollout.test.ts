@@ -738,6 +738,25 @@ describe("durable enrollment and shared-wallet serialization", () => {
 });
 
 describe("complete public controller path with a strict mock signer", () => {
+  it("enrollment keeps the human owner after the signer normalizes an active layer",async()=>{
+    const ctx=fixture();vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS",a(31));let active=false,signs=0;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+      const path=new URL(url).pathname;let result:any={};
+      if(path.endsWith("discover"))result={layer:{layer:a(30),owner:a(1),active,exited:false,bps:0}};
+      else if(path.endsWith("/inspect"))result={active:true,paused:false,phase:2,controller:a(1),beneficiary:a(1),executionNonce:"0",...(active?{creatorBurnLayer:a(30)}:{})};
+      else if(path.endsWith("/authorize"))return new Response(JSON.stringify({error:"no processable automated creator fees"}),{status:400});
+      else if(path.endsWith("prepare-controller")){automatedFeeControllerTransactionRequestSchema.parse(JSON.parse(String(init.body)));signs++;result={transactionHash:h(7),signedTransaction:"0x1234",nonce:0};}
+      else if(path.endsWith("broadcast-controller")){active=true;result={status:"broadcast"};}
+      else if(path.endsWith("controller-status"))result={status:"confirmed",blockNumber:"100"};
+      else if(path.endsWith("claimable"))result={amount:"0"};
+      else throw new Error(path);return new Response(JSON.stringify(result));
+    }));
+    const args={requestId:"enroll",programId:"p",ownerXUserId:"123",walletRef:a(1),expectedAddress:a(1),operation:"reassign",recipient:a(30),enrollmentLayer:a(30)};
+    await handler(engine.executeVerifiedControllerChange)(ctx,args);
+    await handler(engine.executeVerifiedControllerChange)(ctx,args);
+    expect(signs).toBe(1);expect(ctx.rows.automatedFeePrograms[0].controllerAddress).toBe(a(1));
+    expect(ctx.rows.automatedFeePrograms[0].creatorBurnLayerAddress).toBe(a(30));
+  });
   it.each(["reassign","holders"] as const)("finishes layer %s after state changes before receipt finality",async operation=>{
     const ctx=fixture();vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS",a(31));
     ctx.rows.automatedFeePrograms[0].creatorBurnLayerAddress=a(30);

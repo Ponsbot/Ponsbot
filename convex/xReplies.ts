@@ -2462,7 +2462,7 @@ export const retryInteraction = internalAction({
               ? intent.command.feeRecipient
               : undefined;
         const recipientAddress =
-          recipient && recipient.toLowerCase() !== "holders"
+          recipient && recipient.toLowerCase() !== "holders" && recipient !== "self"
             ? current.interaction.recipientAddress ||
               (/^0x[a-fA-F0-9]{40}$/.test(recipient)
                 ? recipient
@@ -2524,7 +2524,7 @@ export const retryInteraction = internalAction({
       // result blocks and token links. They are eligible for X long-post
       // publishing instead of being compressed into a 280-character reply.
       const longCommandResult = intent.kind === "command" &&
-        (intent.command.kind === "claim_fees" || intent.command.kind === "buy_top_five");
+        (intent.command.kind === "claim_fees" || intent.command.kind === "buy_top_five" || (intent.command.kind === "reassign_fees" && intent.command.selfBurnBps!==undefined));
       const longHelpResult = intent.kind === "help" && intent.topic === "pairs";
       const outcomeCommandKind = reply.trim().endsWith(CLAIM_LP_FEE_OFFER)
         ? guidedHelpCommandKind("claim_lp_offer")

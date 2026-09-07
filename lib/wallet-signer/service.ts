@@ -852,7 +852,8 @@ export async function prepareAutomatedFeeSweepTransaction(request: AutomatedFeeS
 export async function prepareAutomatedFeeDeliveryTransaction(request: AutomatedFeeDeliveryTransactionRequest) {
   await assertAutomatedFeeDeliveryAccess({ vaultAddress: request.vaultAddress });
   const layer = await inspectCreatorBurn(request.vaultAddress as Address);
-  if (layer?.active) {
+  const directOwnerCredit = layer?.active ? await rpcClient().readContract({address:request.vaultAddress as Address,abi:automatedFeeVaultAbi,functionName:"claimable",args:[request.beneficiary as Address,request.asset as Address]}) : 0n;
+  if (layer?.active && directOwnerCredit === 0n) {
     if (request.asset.toLowerCase() !== layer.asset.toLowerCase()) throw new Error("CREATOR_BURN_DELIVERY_OWNER_MISMATCH");
     const available = await rpcClient().readContract({ address: layer.vault, abi: automatedFeeVaultAbi, functionName: "claimable", args: [layer.layer, layer.asset] });
     if (available !== BigInt(request.amount)) {
@@ -1016,7 +1017,11 @@ function automatedFeeControllerCalldata(operation: AutomatedFeeControllerTransac
 }
 
 async function creatorLayerControllerCall(vault: Address, operation: AutomatedFeeControllerTransactionRequest["operation"], candidate?: Address) {
-  const layer = await inspectCreatorBurn(vault, candidate);
+    const layer = await inspectCreatorBurn(vault, candidate);
+    // A persisted enrollment envelope targets the PRIMARY vault, even after
+    // its first broadcast activates the layer. Never reinterpret it as reassign(layer).
+    if(layer&&operation.type==="reassign"&&operation.newController.toLowerCase()===layer.layer.toLowerCase()
+      &&operation.newBeneficiary.toLowerCase()===layer.layer.toLowerCase())return null;
   if (!layer || (!layer.active && !(layer.exited && operation.type === "exit"))) return null;
   if(operation.type==="percentage")return {layer,to:layer.layer,data:encodeFunctionData({abi:creatorBurnVaultAbi,functionName:"setPercentage",args:[operation.bps]})};
   if (operation.type === "reassign") {
@@ -1128,7 +1133,11 @@ export async function automatedFeeControllerTransactionStatus(request: Automated
   }
   if (receipt.status !== "success") return { status: "reverted" as const, blockNumber: receipt.blockNumber.toString() };
   const inspection = await inspectAutomatedFeeVault({ chainId: ROBINHOOD_CHAIN_ID, vaultAddress: request.vaultAddress });
-  const matches = request.operation.type === "percentage"
+    const enrollingLayer = request.operation.type === "reassign" && inspection.creatorBurnLayer
+      && inspection.creatorBurnLayer.toLowerCase() === request.operation.newController.toLowerCase()
+      && request.operation.newController.toLowerCase() === request.operation.newBeneficiary.toLowerCase()
+      && inspection.controller.toLowerCase() === request.expectedAddress.toLowerCase();
+    const matches = enrollingLayer ? inspection.active && !inspection.paused : request.operation.type === "percentage"
     ? Boolean(inspection.creatorBurnLayer && inspection.creatorBurnBps===request.operation.bps && inspection.controller.toLowerCase()===request.expectedAddress.toLowerCase())
     : request.operation.type === "reassign"
     ? inspection.controller.toLowerCase() === request.operation.newController.toLowerCase()

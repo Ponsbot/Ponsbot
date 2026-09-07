@@ -330,6 +330,7 @@ export const begin = internalMutation({
       return null;
     const p = await ctx.db.get(l.programId);
     if (!p) return null;
+    if(l.active&&!l.pending&&await ctx.db.query("creatorBurnRequests").withIndex("by_program_status",q=>q.eq("programId",p._id).eq("status","pending")).first())return null;
     if (!l.pending) {
       const runs = await Promise.all(
         (
@@ -782,6 +783,9 @@ export const run = internalAction({
 export const tick = internalAction({
   args: {},
   handler: async (ctx): Promise<void> => {
+    for(const r of await ctx.runQuery(internal.creatorBurnEnrollment.due,{}))
+      if(enabled() || (r.deploymentSigned && !r.deploymentSettled))
+        await ctx.scheduler.runAfter(0,internal.creatorBurnEnrollment.run,{id:r._id});
     // No provider calls while disabled unless an existing signed hash needs reconciling.
     const rows = [
       ...new Map(

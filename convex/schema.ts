@@ -258,6 +258,14 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_asset", ["normalizedAssetAddress"]),
 
+  creatorBurnRequests: defineTable({
+    requestId:v.string(),programId:v.id("automatedFeePrograms"),ownerXUserId:v.string(),ownerAddress:v.string(),bps:v.number(),
+    status:v.union(v.literal("pending"),v.literal("confirmed"),v.literal("manual_review")),
+    nextAttemptAt:v.number(),leaseUntil:v.optional(v.number()),leaseId:v.optional(v.string()),
+    deploymentHash:v.optional(v.string()),deploymentSigned:v.optional(v.string()),deploymentIdentity:v.optional(v.string()),
+    deploymentSettled:v.optional(v.boolean()),layerAddress:v.optional(v.string()),transactionHash:v.optional(v.string()),
+    attempts:v.number(),diagnostic:v.optional(v.string()),createdAt:v.number(),
+  }).index("by_request",["requestId"]).index("by_program_status",["programId","status"]).index("by_due",["status","nextAttemptAt"]),
   creatorBurnLayers: defineTable({
     historyNextBlock:v.optional(v.string()),
     manualReview:v.optional(v.boolean()),
@@ -391,6 +399,7 @@ export default defineSchema({
     .index("by_status_updated", ["status", "updatedAt"]),
 
   automatedFeeControllerChanges: defineTable({
+    enrollmentLayer: v.optional(v.string()),
     selfBurnBps:v.optional(v.number()),
     requestId: v.string(),
     parentRequestId: v.optional(v.string()),

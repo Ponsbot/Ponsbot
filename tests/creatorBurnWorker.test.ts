@@ -99,6 +99,7 @@ function fixture() {
       const [module, name] = getFunctionName(ref).split(":");
       mutations.push(name);
       if (module === "automatedFeeEngine") return true;
+      if (module === "creatorBurnEnrollment" && name === "due") return [];
       return handler((worker as any)[name])(ctx, args);
     },
   };

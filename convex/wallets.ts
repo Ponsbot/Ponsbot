@@ -3654,7 +3654,7 @@ export const executeCommand = internalAction({
         exact.kind !== command.kind ||
         exact.token.toLowerCase() !== command.token.toLowerCase() ||
         (command.kind === "reassign_fees" &&
-          (exact.kind !== "reassign_fees" || exact.recipient.toLowerCase() !== command.recipient.toLowerCase()))
+          (exact.kind !== "reassign_fees" || exact.recipient.toLowerCase() !== command.recipient.toLowerCase() || exact.selfBurnBps!==command.selfBurnBps))
       ) {
         return {
           ok: false,
@@ -3667,6 +3667,9 @@ export const executeCommand = internalAction({
       command = normalizeLaunchLinks(command, args.text);
       command = normalizeLaunchTelegram(command, args.text);
       command = normalizeLaunchFeeOptions(command, args.text);
+      if(command.kind==="launch"&&command.selfBurnBps!==undefined
+        &&(process.env.CREATOR_SELF_BUYBACK_ENABLED!=="true"||process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED!=="true"))
+        return {ok:false,message:"⚠️ Creator self-buyback and burn is not enabled yet. No launch was started."};
     } catch (error) {
       return { ok: false, message: safeFailure(error) };
     }
@@ -4765,6 +4768,11 @@ export const executeCommand = internalAction({
           });
           return { ok: true, transactionHash: routed.transactionHash, message };
         }
+        if(command.kind==="reassign_fees"&&command.selfBurnBps!==undefined){
+          if(!commandToken)throw new Error("Token not found");
+          await ctx.runMutation(internal.creatorBurnEnrollment.request,{requestId,tokenAddress:commandToken,ownerXUserId:args.xUserId,bps:command.selfBurnBps});
+          throw new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION);
+        }
         if (command.kind === "reassign_fees" && command.recipient !== "holders" && automatedFeeProgram) {
           if (
             automatedFeeProgram.status !== "enrolled" ||
@@ -5564,6 +5572,7 @@ export const executeCommand = internalAction({
           const enrollmentPairToken = String(operation.pairToken || "0x0000000000000000000000000000000000000000");
           const automatedPairSupported = /^0x0{40}$/i.test(enrollmentPairToken)
             || AUTOMATED_FEE_PAIR_ROUTES.some((route) => route.pairAsset.toLowerCase() === enrollmentPairToken.toLowerCase());
+          if(command.selfBurnBps!==undefined&&!automatedPairSupported)throw new Error("Self-buyback and burn is not available for this launch pairing yet. No launch was started.");
           if (
             process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true" &&
             process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true" &&

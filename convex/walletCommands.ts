@@ -2,6 +2,7 @@ import { tokenPattern, tokenCharacterCount, sliceTokenText } from "../lib/token-
 import { launchIdentityTooLong, LAUNCH_METADATA_BYTE_MESSAGE } from "../lib/launch-metadata-limits";
 import { parseBurnedTokenInquiry } from "../lib/burned-token-inquiry";
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
+import { parseCreatorBurnCommand, launchCreatorBurnOption } from "../lib/creator-burn-command";
 import { TOP_FIVE_SLIPPAGE_BPS } from "../lib/top-five-recovery";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
 
@@ -21,7 +22,7 @@ export type WalletCommand =
   | { kind: "swap_token_for_token"; amount: string; unit: "usd" | "percent"; fromToken: string; toToken: string; slippageBps: number }
   | { kind: "sell"; amount: string; unit: "eth" | "usd" | "token" | "percent"; token: string; slippageBps: number }
   | { kind: "claim_fees"; token?: string }
-  | { kind: "reassign_fees"; token: string; recipient: string }
+  | { kind: "reassign_fees"; token: string; recipient: string; selfBurnBps?: number }
   | { kind: "upgrade_fees"; token: string }
   | {
       kind: "launch";
@@ -35,6 +36,7 @@ export type WalletCommand =
       pairToken?: string;
       feeRecipient?: string;
       holderFeeSharing?: boolean;
+      selfBurnBps?: number;
       devBuy?: { amount: string; unit: "eth" | "usd" | "pair" };
     }
   | { kind: "unknown"; reason: string };
@@ -280,7 +282,9 @@ export function launchFeeOptionsFromText(text: string) {
   const assigned = operative.match(/\bassign fees to\s+(@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i)?.[1];
   const holderFeeSharing = /\b(?:holder\s+fee\s+sharing|share\s+with\s+holders|assign\s+fees\s+to\s+holders)\b/i.test(operative);
   if (assigned && holderFeeSharing) throw new Error("Choose either an assigned fee recipient or holder fee sharing, not both.");
-  return { ...(assigned ? { feeRecipient: assigned } : {}), ...(holderFeeSharing ? { holderFeeSharing: true } : {}) };
+  const selfBurnBps=launchCreatorBurnOption(operative).bps;
+  if(selfBurnBps!==undefined&&(assigned||holderFeeSharing))throw new Error("Choose self-buyback and burn or a different fee recipient, not both in one launch.");
+  return { ...(assigned ? { feeRecipient: assigned } : {}), ...(holderFeeSharing ? { holderFeeSharing: true } : {}),...(selfBurnBps!==undefined?{selfBurnBps}:{}) };
 }
 
 export function normalizeLaunchFeeOptions(command: WalletCommand, text: string): WalletCommand {
@@ -288,7 +292,7 @@ export function normalizeLaunchFeeOptions(command: WalletCommand, text: string):
   const options = launchFeeOptionsFromText(text);
   // These security-sensitive fields are always grounded deterministically in
   // the original post. Structured AI output cannot invent or broaden them.
-  return { ...command, feeRecipient: options.feeRecipient, holderFeeSharing: options.holderFeeSharing };
+  return { ...command, feeRecipient: options.feeRecipient, holderFeeSharing: options.holderFeeSharing,selfBurnBps:options.selfBurnBps };
 }
 
 export function normalizeXUrl(value: string) {
@@ -558,6 +562,7 @@ function parseLaunch(text: string): WalletCommand | null {
 }
 
 export function parseWalletCommand(raw: string): WalletCommand {
+  const selfBurn=parseCreatorBurnCommand(raw);if(selfBurn)return selfBurn;
   const burned = parseBurnedTokenInquiry(raw);
   if (burned) return burned;
   const topFive = parseTopFiveBuyCommand(raw);
@@ -580,7 +585,7 @@ export function parseWalletCommand(raw: string): WalletCommand {
       || raw.match(/\b(?:send|transfer|give)\s+(@[a-zA-Z0-9_]{1,15})\b/i)?.[1]
     : undefined;
   let text = raw.replace(/@[a-zA-Z0-9_]{1,15}/g, " ").replace(/\s+/g, " ").trim();
-  const launch = parseLaunch(text);
+  const launch = parseLaunch(launchCreatorBurnOption(text).text);
   if (launch) return launch.kind === "launch" ? { ...launch, ...rawLaunchFeeOptions } : launch;
   text = text.replace(/\bbuy\s*back\b/gi, "buy");
   const swapMatch = text.match(tokenPattern(`\\bswap\\s+\\$${NUMBER}\\s+(?:worth\\s+)?of\\s+\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\\s+(?:for|to)\\s+\\$?(0x[a-fA-F0-9]{40}|[a-zA-Z][a-zA-Z0-9]{0,31})\\b`, "i"));
@@ -866,6 +871,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
   }
   if (kind === "reassign_fees") {
     const token = tokenIdentifier(item.token);
+    if(item.recipient==="self"&&token&&Number.isInteger(item.selfBurnBps)&&Number(item.selfBurnBps)>=0&&Number(item.selfBurnBps)<=10000)return {kind,token,recipient:"self",selfBurnBps:Number(item.selfBurnBps)};
     const recipient = typeof item.recipient === "string" && (/^@[a-zA-Z0-9_]{1,15}$/.test(item.recipient) || /^0x[a-fA-F0-9]{40}$/.test(item.recipient) || /^holders$/i.test(item.recipient))
       ? item.recipient.toLowerCase() === "holders" ? "holders" : item.recipient
       : undefined;

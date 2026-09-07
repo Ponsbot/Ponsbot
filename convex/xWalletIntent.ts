@@ -1084,6 +1084,7 @@ export async function parseXWalletIntent(text: string, hasImage: boolean, diagno
   }
   const strictReassignment = parseWalletCommand(operativeText);
   if (strictReassignment.kind === "reassign_fees") {
+    if(hasPromptInjection(operativeText)||hasNonExecutableFraming(operativeText))return finish({kind:"irrelevant"},"deterministic_guard");
     return finish({ kind: "command", command: strictReassignment }, "deterministic_guard");
   }
   // High-confidence non-authority framing wins before either AI call. Complete

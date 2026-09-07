@@ -16,6 +16,7 @@ const launchDetails = [
   { title: "Add a developer buy", body: "A dev buy is optional. Enter it in USD, ETH, or the exact paired asset. For non-ETH pairs, USD and ETH funding is converted to the paired asset before the launch." },
   { title: "Choose where creator fees go", body: "By default, creator fees go to the launcher. Use the exact phrase assign fees to followed by an X handle or wallet address, or use holder fee sharing." },
   { title: "Claim creator fees", body: "Creator-fee claims happen automatically. For eligible launches, 95% goes to the assigned recipient and 5% buys and burns $PONSBOT. Launches using holder fee sharing distribute their creator fees to holders instead." },
+  { title: "Buy back and burn your token", body: "Add “assign 50% of fees to buyback and burn” to a launch to reserve half of your 95% creator share for buying and burning that token. The current fee owner can later post “Reassign 50% of $TICKER fees to buyback and burn”, using 0–100% or a contract address instead of the ticker. Reassigning fees to someone else resets future self-buybacks to zero; already reserved fees keep their original allocation. Holder fee sharing is a separate choice." },
 ];
 
 export default function LaunchGuidePage() {
