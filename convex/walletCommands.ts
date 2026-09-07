@@ -50,6 +50,7 @@ export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 // mapping deterministic: the AI may recognize a company name, but execution
 // still normalizes it to the exact indexed ticker before token resolution.
 const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ["Bittensor", "TAO"], ["TAO", "TAO"],
   ["United Parcel Service", "UPS"], ["UPS", "UPS"],
   ["Snap Inc", "SNAP"], ["Snap", "SNAP"], ["Snapchat", "SNAP"],
   ["Lululemon Athletica", "LULU"], ["Lululemon", "LULU"],

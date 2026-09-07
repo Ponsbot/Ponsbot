@@ -53,5 +53,6 @@
   { "address": "0x411eFb0E7f985935DAec3D4C3ebaEa0d0AD7D89f", "symbol": "SLV", "name": "iShares Silver Trust" },
   { "address": "0xF53F66751B1Eff985311b693531E3290F600c410", "symbol": "SHOP", "name": "Shopify" },
   { "address": "0x822CC93fFD030293E9842c30BBD678F530701867", "symbol": "BE", "name": "Bloom Energy" },
-  { "address": "0x25C288E6D899b9BC30160965aD9644c67e73bE0C", "symbol": "F", "name": "Ford Motor" }
+  { "address": "0x25C288E6D899b9BC30160965aD9644c67e73bE0C", "symbol": "F", "name": "Ford Motor" },
+  { "address": "0xf3081494B87e8D5fb7960f066E931D1D0e6E3d67", "symbol": "TAO", "name": "Bittensor", "decimals": 18 }
 ]
