@@ -1,4 +1,5 @@
 import { tokenPattern, tokenCharacterCount, sliceTokenText } from "../lib/token-pattern";
+import { parseBurnedTokenInquiry } from "../lib/burned-token-inquiry";
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
 import { TOP_FIVE_SLIPPAGE_BPS } from "../lib/top-five-recovery";
 import { stripDirectLaunchImageInstruction } from "../lib/x-launch-image-policy";
@@ -9,6 +10,7 @@ export type WalletCommand =
   | { kind: "create_wallet" }
   | { kind: "show_wallet" }
   | { kind: "show_balance"; token?: string }
+  | { kind: "show_burned"; token: string; expectedTicker?: string }
   | { kind: "send"; amount: string; unit: AmountUnit; token?: string; recipient: string }
   | { kind: "burn"; amount: string; unit: AmountUnit; token: string }
   | { kind: "buy"; amount: string; unit: "eth" | "usd" | "pair" | "token"; token: string; pairAsset?: string; slippageBps: number }
@@ -117,7 +119,7 @@ export function identifierAppearsAsKnownLaunchPair(text: string, ticker: string)
 }
 
 export function isTerminalCommand(command: WalletCommand) {
-  return ["show_wallet", "show_balance", "buy", "buy_and_send", "buy_and_burn", "buy_top_five", "swap_token_for_token", "sell", "send", "burn", "claim_fees"].includes(command.kind);
+  return ["show_wallet", "show_balance", "show_burned", "buy", "buy_and_send", "buy_and_burn", "buy_top_five", "swap_token_for_token", "sell", "send", "burn", "claim_fees"].includes(command.kind);
 }
 
 /** A deliberately narrow, anchored command that is never advertised. */
@@ -553,6 +555,8 @@ function parseLaunch(text: string): WalletCommand | null {
 }
 
 export function parseWalletCommand(raw: string): WalletCommand {
+  const burned = parseBurnedTokenInquiry(raw);
+  if (burned) return burned;
   const topFive = parseTopFiveBuyCommand(raw);
   if (topFive) return topFive;
   const reassignmentText = raw.replace(/(?:^|\s)@ponsbotfamily\b/gi, " ").trim();
@@ -768,6 +772,11 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
   if (!value || typeof value !== "object") return null;
   const item = value as Record<string, unknown>;
   const kind = item.kind;
+  if (kind === "show_burned") {
+    const token = tokenIdentifier(item.token);
+    const expectedTicker = item.expectedTicker === undefined ? undefined : tokenIdentifier(item.expectedTicker);
+    return token && (item.expectedTicker === undefined || expectedTicker) ? { kind, token, ...(expectedTicker ? { expectedTicker } : {}) } : null;
+  }
   if (kind === "create_wallet" || kind === "show_wallet") return { kind };
   if (kind === "show_balance") {
     const token = item.token === undefined ? undefined : tokenIdentifier(item.token);

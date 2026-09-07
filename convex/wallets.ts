@@ -48,6 +48,7 @@ import {
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { parseExplorerHoldings } from "../lib/wallet-holdings";
 import { assertBuyTarget, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
+import { BURNED_TOKEN_CA_MESSAGE } from "../lib/burned-token-inquiry";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
 import { confirmedAllEthDisplay } from "../lib/native-send-display";
@@ -3690,7 +3691,9 @@ export const executeCommand = internalAction({
           "🔒 This wallet isn't available right now. Reply with the request again shortly.",
       };
     try {
-      command = await normalizeExplicitTickerContracts(ctx, command, args.text);
+      // Burn inquiries preserve their explicit ticker separately and validate
+      // it in the inquiry handler, where failed matches can save a CA reply.
+      if (command.kind !== "show_burned") command = await normalizeExplicitTickerContracts(ctx, command, args.text);
     } catch (error) {
       const ticker = (error instanceof Error ? error.message : "").match(tokenPattern(/^TOKEN_CONTRACT_TICKER_MISMATCH:([A-Z0-9]{1,32})$/))?.[1];
       if (ticker) return {
@@ -3705,6 +3708,33 @@ export const executeCommand = internalAction({
         ok: false,
         message: reservedTickerMessage,
       };
+    }
+    if (command.kind === "show_burned") {
+      try {
+        let token = await ctx.runQuery(internal.wallets.resolveKnownToken, { identifier: command.token, walletId: wallet._id });
+        if (!safeAddress(token)) {
+          const held = await ctx.runAction(internal.wallets.resolveHeldTokenTicker, { walletId: wallet._id, ownerXUserId: args.xUserId, identifier: command.token });
+          if (held.status === "ambiguous") throw new Error("WALLET_TICKER_AMBIGUOUS");
+          if (held.status !== "found") throw new Error("BURNED_TOKEN_UNRESOLVED");
+          token = held.tokenAddress;
+        }
+        if (command.expectedTicker) {
+          const identity = await ctx.runAction(internal.wallets.verifyTokenTickerContract, { ticker: command.expectedTicker, tokenAddress: token });
+          if (!identity.matches) throw new Error(`TOKEN_CONTRACT_TICKER_MISMATCH:${command.expectedTicker}`);
+        }
+        const result = await signerRequest<{ display: string; symbol?: string }>("/v1/tokens/burned", { chainId: ROBINHOOD_CHAIN_ID, token });
+        await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source || "x" });
+        return { ok: true, message: `🔥 $${result.symbol || "TOKEN"} (${token.slice(0, 6)}...${token.slice(-4)})\nBurned: ${result.display}\nHeld at the dead address. ${result.display.includes("$") ? "Dollar value is estimated at the current token price." : "Current dollar value is unavailable."}` };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "";
+        const mismatch = detail.startsWith("TOKEN_CONTRACT_TICKER_MISMATCH:");
+        const message = mismatch
+          ? `⚠️ That contract address's onchain ticker does not match $${command.expectedTicker}. Double-check that you've got the right contract address, then reply with it.`
+          : detail === "BURNED_TOKEN_UNRESOLVED" ? BURNED_TOKEN_CA_MESSAGE : safeFailure(error, command.kind);
+        if (mismatch || detail === "BURNED_TOKEN_UNRESOLVED" || /ticker matches|WALLET_TICKER_AMBIGUOUS/.test(detail))
+          await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source || "x", ticker: command.expectedTicker || (safeAddress(command.token) ? undefined : command.token) });
+        return { ok: false, message };
+      }
     }
     if (command.kind === "create_wallet" || command.kind === "show_wallet") {
       return {
@@ -6832,6 +6862,12 @@ export const executeTerminalCommand = action({
       executionText = gasResumeContext?.sourceText || (guidedContext
         ? guidedHelpCommandText(displayText, guidedContext.operation)
         : displayText);
+      const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, { owner: args.ownerXUserId, source: "terminal", text: displayText });
+      if (burnedResume === "expired") {
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: WORKFLOW_EXPIRED_MESSAGE, requestId: args.eventId });
+        return { ok: false, message: WORKFLOW_EXPIRED_MESSAGE };
+      }
+      if (burnedResume) executionText = burnedResume;
       const intent = await parseXWalletIntent(executionText, false);
       if (intent.kind === "help") {
         const activeQuestion = Boolean(

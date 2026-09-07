@@ -13,6 +13,7 @@ const intakeFilterGuardState = v.object({
 });
 
 export default defineSchema({
+  burnedLookupContinuations: defineTable({ owner: v.string(), source: v.string(), ticker: v.optional(v.string()), expiresAt: v.number() }).index("by_owner_source", ["owner", "source"]),
   ...liquidityTables,
   ...liquidityWorkflowTables,
   ...xReplyQueueTables,

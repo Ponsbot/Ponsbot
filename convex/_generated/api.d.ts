@@ -9,6 +9,7 @@
  */
 
 import type * as automatedFeeClaimInfo from "../automatedFeeClaimInfo.js";
+import type * as burnedLookups from "../burnedLookups.js";
 import type * as automatedFeeEngine from "../automatedFeeEngine.js";
 import type * as automatedFeeOutcomes from "../automatedFeeOutcomes.js";
 import type * as automatedFeeQueue from "../automatedFeeQueue.js";
@@ -52,6 +53,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  burnedLookups: typeof burnedLookups;
   automatedFeeClaimInfo: typeof automatedFeeClaimInfo;
   automatedFeeEngine: typeof automatedFeeEngine;
   automatedFeeOutcomes: typeof automatedFeeOutcomes;

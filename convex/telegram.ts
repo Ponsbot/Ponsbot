@@ -697,6 +697,13 @@ export const processUpdate = internalAction({
           await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
           return;
         }
+        const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, { owner: link.ownerXUserId, source: "telegram", text });
+        if (burnedResume === "expired") {
+          await sendMessage(chatId, WORKFLOW_EXPIRED_MESSAGE);
+          await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+          return;
+        }
+        if (burnedResume) effectiveText = burnedResume;
         const intent = await parseXWalletIntent(effectiveText, false);
         if (intent.kind === "help") {
           await sendMessage(chatId, operation && operation !== "liquidity" && guidedHelpQuestion(text)

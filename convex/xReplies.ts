@@ -26,6 +26,7 @@ import { grokLaunchFeeRejection, GROK_EXTERNAL_LAUNCH_FEES } from "../lib/launch
 import { normalizeLaunchFeeOptions } from "./walletCommands";
 import type { WalletCommand } from "./walletCommands";
 import { buyTargetContractReply, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
+import { BURNED_TOKEN_CA_MESSAGE } from "../lib/burned-token-inquiry";
 import { restrictedXSearchQuery, intakeSourceTransition, walletBalanceReadsExcluded, verifiedXReadsOnly, effectiveXIntakeFilters } from "../lib/x-intake-filter";
 import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-intake-spike-guard";
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
@@ -989,6 +990,7 @@ function decodeGasResumeState(value?: string) {
 type AmbiguousTokenField = "token" | "fromToken" | "toToken" | "pairAsset";
 
 function ambiguousTokenField(command: WalletCommand, ticker?: string): AmbiguousTokenField | null {
+  if (command.kind === "show_burned") return "token";
   const normalizedTicker = ticker?.replace(/^\$/, "").toUpperCase();
   if ("token" in command && typeof command.token === "string"
     && (!normalizedTicker || command.token.replace(/^\$/, "").toUpperCase() === normalizedTicker)) return "token";
@@ -2545,7 +2547,7 @@ export const retryInteraction = internalAction({
       const ambiguousTokenStateJson = !ok && intent.kind === "command" && ambiguousField
         && (reply === "⚠️ More than one indexed token uses that ticker. Reply with the contract address so I choose the right one!"
           || reply === "⚠️ More than one token in your wallet uses that ticker. Reply with the contract address so I choose the right one!"
-          || reply === NON_INDEXED_BUY_TARGET_MESSAGE || mismatchedTicker)
+          || reply === NON_INDEXED_BUY_TARGET_MESSAGE || reply === BURNED_TOKEN_CA_MESSAGE || mismatchedTicker)
         ? JSON.stringify({
             type: "ambiguous_token",
             intent: mismatchedTicker

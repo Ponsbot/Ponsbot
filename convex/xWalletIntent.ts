@@ -293,7 +293,7 @@ function extractJson(raw: string) {
   try { return JSON.parse(source.slice(start, end + 1)) as unknown; } catch { return null; }
 }
 
-export type WalletOperation = "create_wallet" | "show_wallet" | "show_balance" | "send" | "burn" | "buy" | "buy_and_send" | "buy_and_burn" | "buy_top_five" | "swap_token_for_token" | "sell" | "claim_fees" | "reassign_fees" | "upgrade_fees" | "launch";
+export type WalletOperation = "show_burned" | "create_wallet" | "show_wallet" | "show_balance" | "send" | "burn" | "buy" | "buy_and_send" | "buy_and_burn" | "buy_top_five" | "swap_token_for_token" | "sell" | "claim_fees" | "reassign_fees" | "upgrade_fees" | "launch";
 type ClassifiedIntent =
   | { kind: "irrelevant" }
   | { kind: "unknown_wallet" }
@@ -422,6 +422,7 @@ If the post contains a real attempted wallet, trading, transfer, burn, fee, or l
 }
 
 const extractionInstructions: Record<WalletOperation, string> = {
+  show_burned: `Return {"kind":"show_burned","token":"ticker or contract"} for a question about how much has been burned. This is read-only.`,
   create_wallet: `Return {"kind":"create_wallet"}. Return null if the user did not explicitly ask to create, open, or set up a wallet.`,
   show_wallet: `Return {"kind":"show_wallet"}. Requests for the user's wallet, deposit address, receiving address, or where to send ETH qualify.`,
   show_balance: `Return {"kind":"show_balance"} with optional "token". Include token when the post explicitly names a ticker or contract, including forms such as "my ETH balance" and "show SNDK balance". Never invent a ticker or address.`,
@@ -1060,6 +1061,8 @@ function isClearlyConversational(text: string, operations = requestedOperations(
 }
 
 export async function parseXWalletIntent(text: string, hasImage: boolean, diagnostics?: AiWorkflowDiagnostics): Promise<XWalletIntent> {
+  const burnedInquiry = parseWalletCommand(text);
+  if (burnedInquiry.kind === "show_burned") return { kind: "command", command: burnedInquiry };
   // A direct attachment is already authoritative. Remove only the exact,
   // unquoted media instruction before AI and deterministic parsing so it
   // cannot be mistaken for a field or a separate request.
