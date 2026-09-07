@@ -11,6 +11,7 @@ import type { QueryCtx } from "./_generated/server";
 import { paginationOptsValidator } from "convex/server";
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { hasPublicFeeBuyback } from "../lib/burn-stats";
+import { isPonsbotHalfTotal } from "../lib/creator-burn-percentage";
 
 function publicLaunch(
   launch: {
@@ -259,7 +260,12 @@ export const automatedFeeBurnStats = query({
     const state = await ctx.db.query("automatedFeeEngineState")
       .withIndex("by_key", (q) => q.eq("key", "ponsbot-automated-buyback-burn-v1"))
       .unique();
-    return { ponsbotBurned: state?.lifetimePonsbotBurned ?? "0" };
+    return {
+      ponsbotBurned: (
+        BigInt(state?.lifetimePonsbotBurned ?? "0")
+        + BigInt(state?.lifetimeCreatorSelfPonsbotBurned ?? "0")
+      ).toString(),
+    };
   },
 });
 
@@ -448,9 +454,12 @@ export const getLaunch = query({
       ? await ctx.db.query("creatorBurnRequests").withIndex("by_program_status", q =>
           q.eq("programId", automatedFeeProgram._id).eq("status", "pending")).order("desc").first()
       : null;
-    const displayedCreatorBurnBps = pendingControllerChange ? 0
+    const rawDisplayedCreatorBurnBps = pendingControllerChange ? 0
       : pendingCreatorBurn ? pendingCreatorBurn.executionBps ?? pendingCreatorBurn.bps
         : automatedFeeProgram?.creatorBurnBps;
+    const displayedCreatorBurnBps = rawDisplayedCreatorBurnBps !== undefined
+      && isPonsbotHalfTotal(normalized, rawDisplayedCreatorBurnBps)
+      ? 5000 : rawDisplayedCreatorBurnBps;
     const normalizedAssignedFeeRecipient = assignedFeeRecipient?.toLowerCase();
     const feeWallet = normalizedAssignedFeeRecipient
       ? await ctx.db

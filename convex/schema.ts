@@ -246,6 +246,9 @@ export default defineSchema({
     lifetimeBeneficiaryDelivered: v.optional(v.string()),
     lifetimeBuybackSpent: v.optional(v.string()),
     lifetimePonsbotBurned: v.optional(v.string()),
+    // PONSBOT burned by its own optional creator-percentage layer. This is
+    // distinct from the base 5% accumulator, then combined for public stats.
+    lifetimeCreatorSelfPonsbotBurned: v.optional(v.string()),
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 

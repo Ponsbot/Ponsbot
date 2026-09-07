@@ -13,7 +13,7 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe("cached burn data sources", () => {
   it("caches the two sources independently for five minutes", () => {
-    expect(mocks.cache).toHaveBeenCalledWith(expect.any(Function), ["public-automatic-ponsbot-burns-v1"], { revalidate: 300 });
+    expect(mocks.cache).toHaveBeenCalledWith(expect.any(Function), ["public-automatic-ponsbot-burns-v2"], { revalidate: 300 });
     expect(mocks.cache).toHaveBeenCalledWith(expect.any(Function), ["public-total-ponsbot-burns-v1"], { revalidate: 300 });
   });
   it("reads the canonical token's dead-address balance and never adds automatic burns again", async () => {

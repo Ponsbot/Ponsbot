@@ -261,6 +261,23 @@ export const ingest = internalMutation({
         blockNumber: a.blockNumber,
         createdAt: Date.now(),
       });
+      if (row.kind === "burn" && !program.privateTest
+        && program.normalizedTokenAddress === "0xb1e9b822b81bbbdab375f7f4d86e44fa04d12b07"
+        && BigInt(row.tokensBurned) > 0n) {
+        const engine = await ctx.db.query("automatedFeeEngineState")
+          .withIndex("by_key", q => q.eq("key", "ponsbot-automated-buyback-burn-v1")).unique();
+        const patch = {
+          lifetimeCreatorSelfPonsbotBurned: (
+            BigInt(engine?.lifetimeCreatorSelfPonsbotBurned ?? "0") + BigInt(row.tokensBurned)
+          ).toString(),
+          updatedAt: Date.now(),
+        };
+        if (engine) await ctx.db.patch(engine._id, patch);
+        else await ctx.db.insert("automatedFeeEngineState", {
+          key: "ponsbot-automated-buyback-burn-v1",
+          ...patch,
+        });
+      }
       if (
         row.kind === "payout" &&
         !program.privateTest &&

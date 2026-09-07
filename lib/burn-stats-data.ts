@@ -17,7 +17,7 @@ const cachedAutomaticBurns = unstable_cache(async () => {
   const total = await client.query(api.site.automatedFeeBurnStats, {});
   if (!/^\d+$/.test(total.ponsbotBurned)) throw new Error("Invalid automatic burn total");
   return total.ponsbotBurned;
-}, ["public-automatic-ponsbot-burns-v1"], { revalidate: 300 });
+}, ["public-automatic-ponsbot-burns-v2"], { revalidate: 300 });
 
 const cachedTotalBurns = unstable_cache(async () => {
   const client = createPublicClient({ transport: reliableHttp(

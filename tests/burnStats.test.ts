@@ -30,11 +30,13 @@ describe("burn statistics presentation", () => {
 });
 
 describe("public burn data", () => {
-  it("exposes only the existing confirmed aggregate, not private engine details", async () => {
+  it("combines the base flywheel and dedicated PONSBOT creator-percentage burns", async () => {
     const query = vi.fn(() => ({ withIndex: () => ({ unique: async () => ({
-      lifetimePonsbotBurned: "123000000000000000000", leaseId: "private", lastDiagnosticCode: "private",
+      lifetimePonsbotBurned: "123000000000000000000",
+      lifetimeCreatorSelfPonsbotBurned: "7000000000000000000",
+      leaseId: "private", lastDiagnosticCode: "private",
     }) }) }));
-    expect(await handler(automatedFeeBurnStats)({ db: { query } }, {})).toEqual({ ponsbotBurned: "123000000000000000000" });
+    expect(await handler(automatedFeeBurnStats)({ db: { query } }, {})).toEqual({ ponsbotBurned: "130000000000000000000" });
     expect(query).toHaveBeenCalledExactlyOnceWith("automatedFeeEngineState");
   });
   it("reports zero before any public fee cycle has completed", async () => {
