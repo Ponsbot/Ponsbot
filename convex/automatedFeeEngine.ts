@@ -2786,13 +2786,17 @@ export const reserveControllerChange = internalMutation({
       throw new Error("automated fee controller rights are unavailable");
     }
     const workflowRootRequestId = args.parentRequestId ?? args.requestId;
-    if (program.configurationChangeRequestId
-      && program.configurationChangeRequestId !== workflowRootRequestId
-      && !args.requestId.startsWith(`${program.configurationChangeRequestId}:`)) {
-      throw new Error("another automated fee controller change is still being finalized");
-    }
     const creatorEnrollment = await ctx.db.query("creatorBurnRequests")
       .withIndex("by_program_status", q => q.eq("programId", program._id).eq("status", "pending")).first();
+    const sameCreatorEnrollment = Boolean(creatorEnrollment
+      && program.configurationChangeRequestId === `${creatorEnrollment.requestId}:enroll`
+      && workflowRootRequestId === `${creatorEnrollment.requestId}:percentage`);
+    if (program.configurationChangeRequestId
+      && program.configurationChangeRequestId !== workflowRootRequestId
+      && !args.requestId.startsWith(`${program.configurationChangeRequestId}:`)
+      && !sameCreatorEnrollment) {
+      throw new Error("another automated fee controller change is still being finalized");
+    }
     if (creatorEnrollment && ![`${creatorEnrollment.requestId}:enroll`, `${creatorEnrollment.requestId}:percentage`]
       .some(root => args.requestId === root || args.parentRequestId === root)) {
       throw new Error("A creator-fee configuration is already being finalized for this token.");

@@ -8,6 +8,7 @@ import {
   type WalletCommand,
 } from "../convex/walletCommands";
 import { PUBLISHED_PAIR_SYMBOLS } from "./pair-catalog";
+import { creatorBurnPercentageBps } from "./creator-burn-policy";
 
 export type GuidedLaunchPhase =
   | "name"
@@ -37,6 +38,7 @@ type GuidedLaunchDraft = {
   devBuy?: { amount: string; unit: "eth" | "usd" | "pair" };
   feeRecipient?: string;
   holderFeeSharing?: boolean;
+  selfBurnBps?: number;
 };
 
 export type GuidedLaunchState = {
@@ -67,6 +69,7 @@ export function guidedLaunchPairRecoveryState(
       ...(command.devBuy ? { devBuy: command.devBuy } : {}),
       ...(command.feeRecipient ? { feeRecipient: command.feeRecipient } : {}),
       ...(command.holderFeeSharing ? { holderFeeSharing: true } : {}),
+      ...(command.selfBurnBps !== undefined ? { selfBurnBps: command.selfBurnBps } : {}),
     },
   };
 }
@@ -151,7 +154,7 @@ export function guidedLaunchPrompt(phase: GuidedLaunchPhase) {
     telegram: "✈️ Would you like to add Telegram? Reply with a t.me/XXXXX link, or say “no.”",
     pair: "🔗 What should this token be paired with? Reply with ETH or a supported pairing asset, or say “no” for ETH.",
     dev_buy: "💰 Would you like a developer buy? Reply with an amount such as “$100,” “0.02 ETH,” or an amount of the paired asset, or say “no.”",
-    fees: "💸 Would you like to assign future creator fees to another X user or wallet, or share them with holders? Reply with @user, a wallet address, “holders,” or “no.”",
+    fees: "💸 Choose where your creator-fee share goes. Reply with @user, a wallet address, “holders,” “buyback and burn 50%,” or “no” to keep it in your Pons Bot wallet.",
     confirm: "Reply “confirm” to launch, or “cancel.”",
   };
   return prompts[phase];
@@ -169,7 +172,7 @@ function explanation(phase: GuidedLaunchPhase) {
     telegram: "The optional Telegram link must use the t.me/XXXXX format. A bare @handle is not accepted.",
     pair: `ETH is the default pairing asset. Supported Pons V2 pairing assets are ${PUBLISHED_PAIR_SYMBOLS.join(", ")}.`,
     dev_buy: "A developer buy purchases tokens for your Pons Bot wallet in the launch transaction. It is optional and uses your wallet funds.",
-    fees: "By default, 95% of creator fees go to your Pons Bot wallet and 5% buys back and burns $PONSBOT. If fees are reassigned, that 95% goes to the assigned wallet or holders, and the new assignee controls future reassignment.",
+    fees: "By default, 95% of creator fees go to your Pons Bot wallet and 5% buys back and burns $PONSBOT. You can instead assign your share to another wallet or holders, or use a percentage of it to buy back and burn your launched token.",
     confirm: "Confirmation submits the launch using the details shown. A launch is an on-chain action and cannot be undone.",
   };
   return explanations[phase];
@@ -260,6 +263,7 @@ function launchCommand(state: GuidedLaunchState) {
     devBuy: state.draft.devBuy,
     feeRecipient: state.draft.feeRecipient,
     holderFeeSharing: state.draft.holderFeeSharing,
+    selfBurnBps: state.draft.selfBurnBps,
   };
   const command = validateStructuredWalletCommand(raw);
   return command?.kind === "launch" ? command : null;
@@ -278,6 +282,7 @@ function commandText(command: Extract<WalletCommand, { kind: "launch" }>) {
       : `dev buy ${command.devBuy.amount} ${command.pairToken}`);
   if (command.feeRecipient) parts.push(`assign fees to ${command.feeRecipient}`);
   if (command.holderFeeSharing) parts.push("holder fee sharing");
+  if (command.selfBurnBps !== undefined) parts.push(`assign ${command.selfBurnBps / 100}% of fees to buyback and burn`);
   return parts.join(", ");
 }
 
@@ -295,7 +300,7 @@ function summary(state: GuidedLaunchState) {
     `Telegram: ${d.telegram || "None"}`,
     `Pair: ${d.pairToken || "ETH"}`,
     `Developer buy: ${d.devBuy ? `${d.devBuy.unit === "usd" ? "$" : ""}${d.devBuy.amount}${d.devBuy.unit === "eth" ? " ETH" : d.devBuy.unit === "pair" ? ` ${d.pairToken}` : ""}` : "None"}`,
-    `Creator fees: ${d.holderFeeSharing ? "Shared with holders" : d.feeRecipient ? `Assigned to ${d.feeRecipient}` : "Your Pons Bot wallet"}`,
+    `Creator fees: ${d.holderFeeSharing ? "Shared with holders" : d.feeRecipient ? `Assigned to ${d.feeRecipient}` : d.selfBurnBps !== undefined ? `${d.selfBurnBps / 100}% of your share buys back and burns $${d.symbol}` : "Your Pons Bot wallet"}`,
     "",
     guidedLaunchPrompt("confirm"),
   ];
@@ -395,14 +400,25 @@ export function advanceGuidedLaunch(
   if (state.phase === "fees") {
     if (SKIP.test(control)) return { kind: "prompt", state: { ...current, phase: "confirm" }, message: summary(current), allowLong: true };
     if (/^(?:holders|holder fee sharing|share with holders|assign fees to holders|fees to holders)$/i.test(control)) {
-      const updated = { ...current, phase: "confirm" as const, draft: { ...draft, holderFeeSharing: true, feeRecipient: undefined } };
+      const updated = { ...current, phase: "confirm" as const, draft: { ...draft, holderFeeSharing: true, feeRecipient: undefined, selfBurnBps: undefined } };
       return { kind: "prompt", state: updated, message: summary(updated), allowLong: true };
+    }
+    const selfBurn = control.match(/^(?:assign\s+|set\s+)?(?:(\d+(?:\.\d+)?)%\s+(?:of\s+(?:my\s+)?(?:(?:creator[- ]fee\s+)?share|creator\s+fees?|fees?)\s+)?(?:to\s+)?(?:buy\s*back|buyback)\s+and\s+burn|(?:buy\s*back|buyback)\s+and\s+burn\s+(\d+(?:\.\d+)?)%|(?:half|all)\s+(?:of\s+(?:my\s+)?(?:(?:creator[- ]fee\s+)?share|creator\s+fees?|fees?)\s+)?(?:to\s+)?(?:buy\s*back|buyback)\s+and\s+burn|(?:buy\s*back|buyback)\s+and\s+burn\s+(half|all))$/i);
+    if (selfBurn) {
+      const word = /\bhalf\b/i.test(selfBurn[3] || control) ? "50" : /\ball\b/i.test(selfBurn[3] || control) ? "100" : selfBurn[1] || selfBurn[2];
+      try {
+        const selfBurnBps = creatorBurnPercentageBps(word);
+        const updated = { ...current, phase: "confirm" as const, draft: { ...draft, selfBurnBps, feeRecipient: undefined, holderFeeSharing: undefined } };
+        return { kind: "prompt", state: updated, message: summary(updated), allowLong: true };
+      } catch {
+        return next(current, "fees", "⚠️ Choose a buyback-and-burn percentage from 0 to 100.");
+      }
     }
     const recipient = value.match(/@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40}/)?.[0];
     if (!recipient || (!HANDLE.test(recipient) && !ADDRESS.test(recipient))) {
-      return next(current, "fees", "⚠️ Reply with an X handle, wallet address, “holders,” or “no.”");
+      return next(current, "fees", "⚠️ Reply with an X handle, wallet address, “holders,” “buyback and burn 50%,” or “no.”");
     }
-    const updated = { ...current, phase: "confirm" as const, draft: { ...draft, feeRecipient: recipient, holderFeeSharing: undefined } };
+    const updated = { ...current, phase: "confirm" as const, draft: { ...draft, feeRecipient: recipient, holderFeeSharing: undefined, selfBurnBps: undefined } };
     return { kind: "prompt", state: updated, message: summary(updated), allowLong: true };
   }
   if (CANCEL.test(control)) return { kind: "cancelled", message: "Guided launch cancelled." };

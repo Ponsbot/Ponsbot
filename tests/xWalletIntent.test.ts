@@ -207,6 +207,7 @@ describe("deterministic X wallet replies", () => {
     expect(isDirectLaunchHelpRequest(text)).toBe(true);
     await expect(parseXWalletIntent(text, false)).resolves.toEqual({ kind: "help", topic: "launch" });
     expect(walletHelpMessage("launch")).toContain("reply “get started”");
+    expect(walletHelpMessage("launch")).toContain("creator buyback-and-burn percentage");
   });
 
   it("documents worth-of buy syntax", () => {

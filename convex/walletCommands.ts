@@ -906,6 +906,13 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       if (!["eth", "usd", "pair"].includes(String(raw.unit))) return null;
       if (amount) devBuy = { amount, unit: raw.unit as "eth" | "usd" | "pair" };
     }
+    const feeRecipient = typeof item.feeRecipient === "string"
+      && (/^@[a-zA-Z0-9_]{1,15}$/.test(item.feeRecipient) || /^0x[a-fA-F0-9]{40}$/.test(item.feeRecipient))
+      ? item.feeRecipient : undefined;
+    const holderFeeSharing = item.holderFeeSharing === true;
+    const selfBurnBps = Number.isInteger(item.selfBurnBps) && Number(item.selfBurnBps) >= 0
+      && Number(item.selfBurnBps) <= 10000 ? Number(item.selfBurnBps) : undefined;
+    if (selfBurnBps !== undefined && (feeRecipient || holderFeeSharing)) return null;
     return {
       kind, launchMode: "pons", name: normalizedName, symbol,
       ...(optionalText("description", 280) ? { description: optionalText("description", 280) } : {}),
@@ -913,8 +920,9 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
       ...(twitter ? { twitter: normalizedXOrRaw(twitter) } : {}),
       ...(telegram ? { telegram } : {}),
       ...(pairToken ? { pairToken } : {}),
-      ...(typeof item.feeRecipient === "string" && (/^@[a-zA-Z0-9_]{1,15}$/.test(item.feeRecipient) || /^0x[a-fA-F0-9]{40}$/.test(item.feeRecipient)) ? { feeRecipient: item.feeRecipient } : {}),
-      ...(item.holderFeeSharing === true ? { holderFeeSharing: true } : {}),
+      ...(feeRecipient ? { feeRecipient } : {}),
+      ...(holderFeeSharing ? { holderFeeSharing: true } : {}),
+      ...(selfBurnBps !== undefined ? { selfBurnBps } : {}),
       ...(devBuy ? { devBuy } : {}),
     };
   }

@@ -212,6 +212,48 @@ export const status = internalQuery({
       : null;
   },
 });
+
+// Recovery for the precise historical state where layer enrollment confirmed,
+// but the immediately-following percentage step was stopped by the enrollment
+// workflow's own durable scheduler lock. No transaction is retried here: the
+// request is merely returned to the normal signer/worker path after verifying
+// that the completed enrollment is the only lock owner.
+export const resumeConfirmedEnrollmentPercentage = internalMutation({
+  args: { requestId: v.string() },
+  handler: async (ctx, { requestId }) => {
+    const request = await ctx.db.query("creatorBurnRequests")
+      .withIndex("by_request", q => q.eq("requestId", requestId)).unique();
+    if (!request || request.status !== "manual_review"
+      || !request.diagnostic?.includes("another automated fee controller change is still being finalized")
+      || !request.deploymentSettled) {
+      throw new Error("creator percentage request is not safely resumable");
+    }
+    const program = await ctx.db.get(request.programId);
+    const enrollmentRequestId = `${request.requestId}:enroll`;
+    const enrollment = await ctx.db.query("automatedFeeControllerChanges")
+      .withIndex("by_request_id", q => q.eq("requestId", enrollmentRequestId)).unique();
+    const confirmedLayer = request.layerAddress ?? program?.creatorBurnLayerAddress;
+    if (!program || program.status !== "enrolled" || !confirmedLayer
+      || program.creatorBurnLayerAddress?.toLowerCase() !== confirmedLayer.toLowerCase()
+      || program.configurationChangeRequestId !== enrollmentRequestId
+      || !enrollment || enrollment.status !== "confirmed" || !enrollment.workflowCompletedAt
+      || enrollment.enrollmentLayer?.toLowerCase() !== confirmedLayer.toLowerCase()) {
+      throw new Error("confirmed creator layer enrollment does not match the blocked request");
+    }
+    const now = Date.now();
+    await ctx.db.patch(request._id, {
+      status: "pending",
+      diagnostic: undefined,
+      leaseId: undefined,
+      leaseUntil: 0,
+      nextAttemptAt: now,
+      attempts: 0,
+    });
+    // The next root is deterministic and remains covered by the same lock.
+    // The reservation path atomically moves this lock to :percentage.
+    return { requestId, resumed: true, nextAttemptAt: now };
+  },
+});
 export const begin = internalMutation({
   args: { id: v.id("creatorBurnRequests"), leaseId: v.string() },
   handler: async (ctx, a) => {

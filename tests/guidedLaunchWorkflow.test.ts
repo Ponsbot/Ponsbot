@@ -186,6 +186,26 @@ describe("guided X launch workflow", () => {
     expect(state.draft).toMatchObject(expected);
   });
 
+  it.each([
+    ["buyback and burn 50%", 5000],
+    ["50% buyback and burn", 5000],
+    ["assign 25% of fees to buyback and burn", 2500],
+    ["half to buyback and burn", 5000],
+    ["buyback and burn all", 10000],
+  ] as const)("collects a creator buyback-and-burn choice: %s", (choice, selfBurnBps) => {
+    let state = reachOptionalFields();
+    for (let index = 0; index < 5; index += 1) state = answer(state, "no");
+    const result = prompt(advanceGuidedLaunch(state, choice));
+    expect(result.state).toMatchObject({ phase: "confirm", draft: { selfBurnBps } });
+    expect(result.message).toContain(`${selfBurnBps / 100}% of your share buys back and burns $GHRB`);
+    const executed = advanceGuidedLaunch(result.state, "confirm");
+    expect(executed.kind).toBe("execute");
+    if (executed.kind === "execute") {
+      expect(executed.command).toMatchObject({ kind: "launch", selfBurnBps });
+      expect(executed.commandText).toContain(`assign ${selfBurnBps / 100}% of fees to buyback and burn`);
+    }
+  });
+
   it("answers a step question without losing the draft or advancing", () => {
     const state = reachOptionalFields();
     const result = prompt(advanceGuidedLaunch(state, "What does artwork mean?"));

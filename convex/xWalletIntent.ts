@@ -66,7 +66,7 @@ export function walletHelpMessage(topic: WalletHelpTopic) {
     cross_chain: "🌐 Send Robinhood Chain ETH cross-chain with “Send $25 to WALLET ADDRESS as ASSET on CHAIN.” Add “private” or “privately” for private routing. Pons Bot processes the route immediately and posts the result when it finishes. Ask me for available chains and assets!",
     cross_chain_assets: "🌐 Available routes: ETH on Ethereum, Base, Robinhood, Arbitrum, or Optimism; SOL on Solana; BTC on Bitcoin; USDC on Ethereum, Base, Arbitrum, or Solana; USDT on Ethereum or Tron; BNB on BNB Chain; AVAX on Avalanche; POL on Polygon.",
     burn: "🔥 Say burn, the amount, and the ticker or contract. To purchase and immediately burn what you receive, say buy or purchase plus burn: buy $25 of PONSBOT and burn it.",
-    launch: "🚀 Post “@Ponsbotfamily launch NAME $TICKER” to launch! Add an image, and optional description, social links, dev buy, and paired asset. Or, reply “get started” to this post and I’ll walk you through the process!",
+    launch: "🚀 Post “@Ponsbotfamily launch NAME $TICKER” to launch! Add an image and optional description, social links, dev buy, paired asset, or creator buyback-and-burn percentage. Or reply “get started” and I’ll walk you through it!",
     pairs: `🔗 Pons launch pairs\n\nPairing sets the asset used for trades and creator fees. Current options:\n\n${PUBLISHED_PAIR_LINES}`,
     fees: "💸 Pons Bot V2 payouts are automatic: 95% goes to the assigned wallet or holders, and 5% buys and burns $PONSBOT. Say “claim my fees” to request a V2 cycle and claim legacy ETH fees. Reassign with “Reassign $TICKER fees to @user” or “Reassign $TICKER fees to holders.”",
   };
