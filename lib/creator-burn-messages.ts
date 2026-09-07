@@ -1,7 +1,8 @@
 import { isPonsbotHalfTotal } from "./creator-burn-percentage";
 
+
 export function creatorBurnConfiguredMessage(symbol: string, bps: number, tokenAddress?: string, executionBps = bps) {
-  if (isPonsbotHalfTotal(tokenAddress, executionBps)) return "✅ 50% of total creator fees from $PONSBOT now buys back and burns $PONSBOT.";
+  if (isPonsbotHalfTotal(tokenAddress, executionBps)) return "✅ 50% of total creator fees from $PONSBOT buy back and burn $PONSBOT starting with the next Pons fee sweep.";
   return (bps === 0
     ? `✅ Creator self-buyback and burn is off for $${symbol}. Your creator-fee share goes to the assigned wallet.`
     : `✅ ${bps / 100}% of your creator-fee share from $${symbol} now buys back and burns $${symbol}.`);

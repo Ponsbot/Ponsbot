@@ -3214,6 +3214,13 @@ export const executeVerifiedControllerChange = internalAction({
           ? inspection.creatorBurnLayer?.toLowerCase() === args.enrollmentLayer.toLowerCase()
           : inspection.controller.toLowerCase() === args.recipient.toLowerCase()
             && inspection.beneficiary.toLowerCase() === args.recipient.toLowerCase();
+        // Deployed primary vaults call escrow.claim() even for zero credit.
+        // Pons rejects that empty claim. Wait for genuine protocol fees rather
+        // than repeatedly simulating a guaranteed revert or fabricating fees.
+        if (!alreadyReassigned && !change.signedTransaction && !change.transactionHash
+          && inspection.phase === 2 && inspection.escrowBalance === "0") {
+          throw new Error(`${AUTOMATED_FEE_WORKFLOW_CONTINUATION}\nCREATOR_ENROLLMENT_WAITING_FOR_ESCROW`);
+        }
         if (!alreadyReassigned && inspection.phase === 0 && inspection.lastCurveSweepBlock === "0") {
           const sweepRequestId = `${args.requestId}:controller-sweep`;
           let sweep = await ctx.runMutation(internal.automatedFeeEngine.reserveControllerChange, {

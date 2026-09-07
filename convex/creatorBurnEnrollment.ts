@@ -208,7 +208,8 @@ export const save = internalMutation({
     delete patch.manualReview;
     // Stop repeated pre-sign/configuration failures. Never abandon an uncertain
     // signed deployment or controller envelope merely because a retry budget ran out.
-    if (!done && diagnostic && diagnostic !== "Creator burn enrollment paused by configuration" && r.attempts >= 12
+    if (!done && diagnostic && diagnostic !== "Creator burn enrollment paused by configuration"
+      && diagnostic !== "Waiting for Pons to credit creator fees to escrow" && r.attempts >= 12
       && !(r.deploymentSigned && !(a.deploymentSettled ?? r.deploymentSettled))) {
       const children = (await Promise.all(
         (["reserved", "prepared", "broadcast", "confirmed", "failed", "manual_review"] as const).map(status =>
@@ -233,7 +234,7 @@ export const save = internalMutation({
         ? { status: "manual_review" as const, leaseUntil: 0 }
         : {}),
       ...(diagnostic
-        ? { diagnostic, nextAttemptAt: Date.now() + Math.min(15 * 60000, 60000 * 2 ** Math.min(4, Math.floor(r.attempts / 3))), leaseUntil: 0 }
+        ? { diagnostic, nextAttemptAt: Date.now() + (diagnostic === "Waiting for Pons to credit creator fees to escrow" ? 60000 : Math.min(15 * 60000, 60000 * 2 ** Math.min(4, Math.floor(r.attempts / 3)))), leaseUntil: 0 }
         : {}),
     });
     if (done || manualReview) {
@@ -501,7 +502,8 @@ export const run = internalAction({
       });
     } catch (e) {
       await save({
-        diagnostic: redactSignerDiagnostic(
+        diagnostic: e instanceof Error && e.message.includes("CREATOR_ENROLLMENT_WAITING_FOR_ESCROW")
+          ? "Waiting for Pons to credit creator fees to escrow" : redactSignerDiagnostic(
           e instanceof Error ? e.message : String(e),
         ),
       });

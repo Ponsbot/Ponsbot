@@ -75,6 +75,12 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe("creator burn enrollment authorization and persistence", () => {
+  it("does not exhaust recovery while waiting for genuine escrow fees", async () => {
+    const { ctx, rows } = setup();
+    rows.creatorBurnRequests.push({ _id: "r", ...args, programId: "p", attempts: 12, leaseId: "lease", status: "pending" });
+    await (enrollment.save as any)._handler(ctx, { id: "r", leaseId: "lease", diagnostic: "Waiting for Pons to credit creator fees to escrow" });
+    expect(rows.creatorBurnRequests[0].status).toBe("pending");
+  });
   it("pins the canonical half-total conversion without rewriting old requests", async () => {
     vi.stubEnv("CREATOR_SELF_BUYBACK_ENABLED", "true");
     const { ctx, rows } = setup();

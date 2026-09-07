@@ -16,7 +16,7 @@ describe("canonical PONSBOT half-total exception", () => {
     expect(creatorBurnExecutionBps("0x" + "1".repeat(40), 5000)).toBe(5000);
   });
   it("shows 50 total on X and the website, not 47.37 of the creator share", () => {
-    expect(creatorBurnConfiguredMessage("PONSBOT", 5000, token, 4737)).toContain("50% of total creator fees");
+    expect(creatorBurnConfiguredMessage("PONSBOT", 5000, token, 4737)).toBe("✅ 50% of total creator fees from $PONSBOT buy back and burn $PONSBOT starting with the next Pons fee sweep.");
     expect(creatorFeeBurnDisplay("PONSBOT", {active:true, percentageBps:4737}, false, token).suffix).toBe("(50% buyback and burn $PONSBOT)");
     expect(creatorFeeBurnDisplay("PONSBOT", {active:true, percentageBps:4737}).suffix).toContain("47.37%");
     expect(creatorFeeBurnDisplay("PONSBOT", {active:true, percentageBps:0}, false, token).suffix).toBeNull();
