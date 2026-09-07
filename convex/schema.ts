@@ -227,6 +227,9 @@ export default defineSchema({
     adminLeaseId: v.optional(v.string()),
     adminLeaseUntil: v.optional(v.number()),
     adminProgramId: v.optional(v.id("automatedFeePrograms")),
+    // Outlives a worker lease until an operator deployment has reconciled all
+    // signed envelopes. Prevents normal enrollments racing an uncertain nonce.
+    adminExternalDeploymentId: v.optional(v.string()),
     lastStartedAt: v.optional(v.number()),
     lastCompletedAt: v.optional(v.number()),
     lastStatus: v.optional(

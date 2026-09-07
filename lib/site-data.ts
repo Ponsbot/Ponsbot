@@ -1,4 +1,5 @@
 import "server-only";
+import type { CreatorSelfBurnDisplay } from "./creator-fee-display";
 import { ConvexHttpClient } from "convex/browser";
 import { unstable_cache } from "next/cache";
 import { readPublicMarketStates } from "./public-display-cache";
@@ -19,6 +20,7 @@ export type PublicLaunch = {
   launchPostUrl?: string;
   creatorFeeRecipient?: string; feeRecipientUsername?: string; holderFeeSharing?: boolean; feesReassignedAt?: number;
   automatedFeeBuybackEnabled?: boolean;
+  creatorSelfBurn?: CreatorSelfBurnDisplay;
 };
 
 export class SiteDataUnavailableError extends Error {}

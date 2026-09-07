@@ -11,6 +11,7 @@ import { TokenActivity } from "@/components/TokenActivity";
 import { TokenMarketCap, TokenGraduationBadge } from "@/components/TokenMarketSnapshot";
 import { tokenImageUrl } from "@/lib/token-image";
 import { getLaunch } from "@/lib/site-data";
+import { creatorFeeBurnDisplay } from "@/lib/creator-fee-display";
 
 type Props = { params: Promise<{ address: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -36,13 +37,20 @@ export default async function LaunchPage({ params }: Props) {
     <div className="detail-link-row"><div className="detail-socials">{launch.website ? <SocialIconLink href={launch.website} label="Website" icon="web" /> : null}{launch.twitter ? <SocialIconLink href={launch.twitter} label="X" icon="x" /> : null}{launch.telegram ? <SocialIconLink href={launch.telegram} label="Telegram" icon="telegram" /> : null}</div>
     <div className="detail-actions"><Link className="button button-primary" href={`/terminal?action=buy&token=${launch.tokenAddress}`}>Buy</Link><Link className="button button-quiet" href={`/terminal?action=sell&token=${launch.tokenAddress}`}>Sell</Link><a className="button button-dark" href={`https://www.ponsfamily.com/launchpad/${launch.tokenAddress}`} target="_blank" rel="noreferrer">View Token on Pons ↗</a></div></div></div>;
   const feeRecipientUsername = launch.feeRecipientUsername?.replace(/^@/, "");
+  const creatorBurnDisplay = creatorFeeBurnDisplay(launch.symbol, launch.creatorSelfBurn, launch.holderFeeSharing);
+  const feeRecipient = launch.holderFeeSharing ? "Holders"
+    : creatorBurnDisplay.fullAllocation || <>
+      {feeRecipientUsername ? <a href={`https://x.com/${feeRecipientUsername}`} target="_blank" rel="noreferrer">@{feeRecipientUsername}</a>
+        : launch.creatorFeeRecipient ? <CopyAddress address={launch.creatorFeeRecipient} displayAddress={shortAddress(launch.creatorFeeRecipient)} /> : "—"}
+      {creatorBurnDisplay.suffix ? <> {creatorBurnDisplay.suffix}</> : null}
+    </>;
   const details = <>
     <div className="facts">
       <div className="fact fact-launched"><span>Launched</span><strong><LaunchTime createdAt={launch.createdAt} /></strong></div>
       <div className="fact fact-launcher"><span>Launched by</span><strong>{username ? <a href={`https://x.com/${username}`} target="_blank" rel="noreferrer">@{username}</a> : "Pons Bot"}</strong></div>
       <div className="fact fact-market"><span>Market cap</span><TokenMarketCap /></div>
       <div className="fact fact-pair"><span>Pairing</span><strong>{launch.pairSymbol ? `Paired with $${launch.pairSymbol}` : "\u00a0"}</strong></div>
-      <div className="fact fact-fee-recipient"><span>CREATOR FEES ASSIGNED TO</span><strong>{launch.holderFeeSharing ? "Holders" : feeRecipientUsername ? <a href={`https://x.com/${feeRecipientUsername}`} target="_blank" rel="noreferrer">@{feeRecipientUsername}</a> : launch.creatorFeeRecipient ? <CopyAddress address={launch.creatorFeeRecipient} displayAddress={shortAddress(launch.creatorFeeRecipient)} /> : "—"}</strong></div>
+      <div className="fact fact-fee-recipient"><span>CREATOR FEES ASSIGNED TO</span><strong>{feeRecipient}</strong></div>
       <div className="fact fact-launch-post"><span>Launch Post</span><strong>{launch.launchPostUrl ? <a href={launch.launchPostUrl} target="_blank" rel="noreferrer">View Post ↗</a> : "—"}</strong></div>
     </div>
     {launch.automatedFeeBuybackEnabled ? <p className="token-fee-buyback-strip">5% of creator fees from this token buyback and burn $PONSBOT</p> : null}

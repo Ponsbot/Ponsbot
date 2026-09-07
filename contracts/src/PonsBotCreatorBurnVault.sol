@@ -12,7 +12,7 @@ interface ICreatorHolderRegistry {
 }
 
 /// @notice Opt-in second layer. Receives ONLY the upstream beneficiary allocation.
-/// @dev Not deployed or connected to production. Executor requires a separate audit.
+/// @dev Replacement layer version 2. The existing primary vault is unchanged.
 contract PonsBotCreatorBurnVault {
     PonsBotFeeVault public immutable upstream;
     address public immutable token;
@@ -22,6 +22,7 @@ contract PonsBotCreatorBurnVault {
     bytes32 public immutable executorCodeHash;
     address public immutable holderRegistry;
     address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
+    uint256 public constant MAX_QUOTE_LIFETIME = 10 minutes;
     address public owner;
     uint16 public selfBurnBps;
     uint256 public configurationNonce;
@@ -30,11 +31,13 @@ contract PonsBotCreatorBurnVault {
     uint256 public lifetimeSelfBurned;
     uint256 public lifetimeSelfSpend;
     bool public exited;
+    bool public everActivated;
     bool private entered;
     mapping(address => uint256) public payableTo;
     mapping(address => uint256) public burnReserve;
 
     event Allocation(address indexed owner, uint256 received, uint256 cash, uint256 reserve);
+    event SurplusReceived(address indexed owner, uint256 amount);
     event ConfigurationChanged(address indexed owner, uint16 bps, uint256 nonce);
     event OwnershipChanged(address indexed previousOwner, address indexed nextOwner);
     event Paid(address indexed owner, uint256 amount);
@@ -72,12 +75,38 @@ contract PonsBotCreatorBurnVault {
         return asset == address(0) ? address(this).balance : IERC20FeeVault(asset).balanceOf(address(this));
     }
 
+    /// @notice Permissionless synchronization of an UNUSED layer to live rights.
+    /// The enrollment signer must also match owner to the signing wallet immediately
+    /// before transferring primary control. Creating a layer is not consent to enroll.
+    function syncDormantOwner() external guarded {
+        if (everActivated || exited || !upstream.active() || upstream.controller() == address(this)
+            || upstream.controller() != upstream.beneficiary()) revert InvalidConfiguration();
+        _collect();
+        address current = upstream.controller();
+        if (current == address(0)) revert InvalidConfiguration();
+        if (owner != current) {
+            address previous = owner;
+            owner = current; selfBurnBps = 0; configurationNonce++;
+            emit OwnershipChanged(previous, current);
+        }
+    }
+
     function _collect() private {
+        if (active()) everActivated = true;
+        uint256 beforeBalance = _balance();
+        if (beforeBalance < accounted) revert InvalidConfiguration();
+        // Only our own upstream pull is classified as fee income. Direct transfers
+        // are separately recoverable cash, never inferred fees or automatic burns.
+        uint256 surplus = beforeBalance - accounted;
+        if (surplus != 0) {
+            payableTo[owner] += surplus; accounted = beforeBalance;
+            emit SurplusReceived(owner, surplus);
+        }
         uint256 available = upstream.claimable(address(this), asset);
         if (available != 0) upstream.withdraw(asset, address(this), available);
         uint256 balance = _balance();
-        if (balance < accounted) revert InvalidConfiguration();
-        uint256 received = balance - accounted;
+        uint256 received = balance - beforeBalance;
+        if (received > available) revert InvalidConfiguration();
         if (received == 0) return;
         uint256 reserve = received * selfBurnBps / 10_000;
         burnReserve[owner] += reserve;
@@ -89,6 +118,15 @@ contract PonsBotCreatorBurnVault {
     function collect() external guarded {
         if (!active() && !exited) revert InvalidConfiguration();
         _collect();
+    }
+
+    /// @notice Pull the upstream allocation and deliver the current owner's cash
+    /// in one transaction. A self-buyback is deliberately a separate transaction:
+    /// its quote, economic threshold or revert cannot roll back this payout.
+    function collectAndPay() external guarded {
+        if (!active() && !exited) revert InvalidConfiguration();
+        _collect();
+        if (payableTo[owner] != 0) _withdrawFor(owner);
     }
 
     function setPercentage(uint16 bps) external onlyOwner guarded {
@@ -109,6 +147,10 @@ contract PonsBotCreatorBurnVault {
     }
 
     function withdrawFor(address beneficiary) external guarded {
+        _withdrawFor(beneficiary);
+    }
+
+    function _withdrawFor(address beneficiary) private {
         // Permissionless delivery has a fixed destination, never caller-chosen.
         uint256 amount = payableTo[beneficiary];
         if (amount == 0) revert InvalidConfiguration();
@@ -124,21 +166,23 @@ contract PonsBotCreatorBurnVault {
         emit ReserveReleased(msg.sender, amount);
     }
 
-    function burnDigest(address beneficiary, uint256 amount, uint256 minimumOut, uint256 deadline, bytes32 routeHash)
+    function burnDigest(address beneficiary, uint256 amount, uint256 minimumOut, uint256 issuedAt, uint256 deadline, bytes32 routeHash)
         public view returns (bytes32)
     {
-        return keccak256(abi.encode("PonsBotCreatorBurnVault:1", block.chainid, address(this), address(upstream),
-            token, asset, beneficiary, amount, minimumOut, deadline, executor, routeHash, configurationNonce, executionNonce));
+        bytes32 trade = keccak256(abi.encode(token, asset, beneficiary, amount, minimumOut));
+        bytes32 validity = keccak256(abi.encode(issuedAt, deadline, executor, routeHash, configurationNonce, executionNonce));
+        return keccak256(abi.encode("PonsBotCreatorBurnVault:2", block.chainid, address(this), address(upstream), trade, validity));
     }
 
-    function executeBurn(address beneficiary, uint256 amount, uint256 minimumOut, uint256 deadline,
+    function executeBurn(address beneficiary, uint256 amount, uint256 minimumOut, uint256 issuedAt, uint256 deadline,
         bytes calldata route, bytes calldata signature) external guarded returns (uint256 burned)
     {
         IPonsBotFeeControl control = IPonsBotFeeControl(feeControl);
         if (msg.sender != control.keeper() || !control.processingEnabled()) revert Unauthorized();
         if (!active() || amount == 0 || amount > burnReserve[beneficiary] || minimumOut == 0
-            || deadline < block.timestamp || signature.length != 65) revert InvalidConfiguration();
-        _verify(burnDigest(beneficiary, amount, minimumOut, deadline, keccak256(route)), signature);
+            || issuedAt > block.timestamp || deadline < block.timestamp || deadline < issuedAt
+            || deadline - issuedAt > MAX_QUOTE_LIFETIME || signature.length != 65) revert InvalidConfiguration();
+        _verify(burnDigest(beneficiary, amount, minimumOut, issuedAt, deadline, keccak256(route)), signature);
         executionNonce++; burnReserve[beneficiary] -= amount; accounted -= amount;
         burned = _swap(amount, minimumOut, route);
         lifetimeSelfBurned += burned; lifetimeSelfSpend += amount;

@@ -1,7 +1,52 @@
 # Creator self-buyback layer: implementation checkpoint
 
-Status: inactive contract foundation, NOT production-ready. No deployments, registrations,
-fee-right transfers, public commands or launch pipeline changes have been made.
+Status: dormant executor and factory deployed on Robinhood Chain, NOT production-ready.
+No token layers, fee-right transfers, public commands or launch pipeline changes have been made.
+
+## Current revision: replacement layer v2, LOCAL ONLY
+
+The addresses below are the older dormant foundation, not this revision. V2 changes ONLY
+the new second-layer contracts. No source or deployed bytecode of the running primary
+vault, primary factory, control, adapter, or primary executors is changed.
+
+- Added unused-layer owner synchronization from live primary controller/beneficiary.
+  This cannot select an arbitrary owner and cannot run on an already activated layer.
+- Added replacement of a detached layer, retaining the historical layer and its ledgers.
+  Full primary emergency exit remains irreversible; this is not primary reactivation.
+- Added issued-at authorization and a ten-minute maximum signed quote lifetime.
+- Classified unsolicited transfers as cash surplus, not fee income or automatic burns.
+- Added independent payout/collection/burn timing policy and retry tests. This policy is
+  not yet wired to a live worker; it does not establish an operational timing guarantee.
+- Deployment uses a separate `creator-burn-foundation-v2.json` private journal, exclusive
+  local lock, unique lease instance, persistent uncertain-deployment marker and validated
+  saved envelopes. Deploy the updated Convex lease functions before running this script.
+  Never clear a crashed deployment marker or lock before reconciling its signed envelopes.
+- Validation: 97 Solidity tests, 47 focused TypeScript tests, three deployment safety tests;
+  application and Convex typechecks passed. External protocol contracts use test doubles.
+- Read-only live check at block 56836555 confirmed the requested test primary remains active,
+  wallet-controlled and not assigned a layer in the original deployed registry.
+
+**Enrollment remains blocked by missing integration**, not just an environment variable:
+the production signer, durable worker, controller workflows, history/accounting, and site
+query must be layer-aware before moving fee rights. Do not enable a partial integration.
+
+## September 7 deployment checkpoint
+
+- Executor: `0x64173B93Ddc129D7F85Cc8aC73af20CadCD8C704`
+- Layer factory: `0x2FcC0328306fAC558C3508C892263E4A2D9482dB`
+- Registry binding is confirmed; compiled runtime comparisons passed for both contracts.
+- Private signed-envelope journal: `.deployment-private/creator-burn-foundation.json`.
+- Deployment runner: `scripts/deploy-creator-burn-foundation.mjs` (dry run by default).
+  Execution requires the exact plan confirmation and an existing program for the shared
+  Convex admin deployment lease. It cannot create a layer or enroll a token.
+- At that checkpoint 83 Solidity tests passed, including 11 integration tests using the real primary vault,
+  adapter, control, layer, executor and factories. External Pons curve/escrow/router behavior
+  still uses test doubles; this is not a live execution test or independent audit.
+- Executor accepts only registered active layers, canonical Pons token/pair routes, and
+  a signed expected phase. It supports native/ERC-20 curves and canonical graduated V4 pools,
+  clears allowances and verifies actual dead-address output. No arbitrary router calldata.
+- Backend scheduling, ownership resolution, signing, enrollment, and payout accounting are
+  still missing for this layer. DO NOT transfer production token control into it yet.
 
 ## Implemented
 
@@ -18,13 +63,13 @@ fee-right transfers, public commands or launch pipeline changes have been made.
 - Direct detach, emergency direct-wallet exit, and holder-registry-validated exit.
 - Standalone backend percentage/split/ABI/digest helpers. Rollout flag defaults false.
 
-## Required before deployment or public wiring
+## Required before token enrollment or public wiring
 
-1. Implement and audit the production executor, including curve and graduated routing,
-   native and asset pairs, phase transitions, taxed tokens and rejection of unrelated routes.
+1. Further validate the executor against live Pons curve/graduated routing and taxed tokens.
    The test executor is deliberately a mock and MUST NEVER be deployed for real funds.
-2. Add ERC-20 accounting, reentrancy, forged-signature, replay, registry, and full integration
-   tests against real upstream contract semantics. Current wrapper tests use an upstream mock.
+2. Extend adversarial/reentrancy and taxed-token tests. ERC-20 accounting, bad-signature,
+   replay, registry, and real upstream-contract integration tests now exist; external Pons
+   contracts still need live read-only simulation coverage.
 3. Add versioned Convex layer records: primary program ID, layer address, actual owner,
    owner X ID (if known), policy nonce, beneficiary-ledger entries and separate self-burn runs.
    Never substitute the layer address for the human beneficiary in displayed fee ownership.
@@ -42,8 +87,9 @@ fee-right transfers, public commands or launch pipeline changes have been made.
    Never interpret setting a percentage as a one-off wallet buy or burn.
 8. Holder distributor creation must precede holder exit. Verify distributorOf(token) on-chain.
    The upstream emergency-exit behavior intentionally has no 5% buyback during exit settlement.
-9. Exit does not erase outstanding cash/reserve rights. Retain old layer history. Re-enrollment
-   after exit currently needs a separately specified policy; factory intentionally rejects duplicates.
+9. Exit does not erase outstanding cash/reserve rights. Retain old layer history. The local
+   replacement factory allows a fresh dormant layer after detach, but rejects replacement
+   of an active/dormant unexited layer and cannot reactivate an exited primary vault.
 10. Separate minimum-economic self-buyback threshold, signed envelopes, receipt reconciliation,
     lease locking and delayed retries. Do not recursively process fees generated by a buyback.
 11. Deployment manifest, dry-run/confirmation scripts, pin checks and staged activation.
@@ -52,10 +98,44 @@ fee-right transfers, public commands or launch pipeline changes have been made.
 
 Percentage changes and reassignment first collect already-credited upstream fees. Unswept Pons
 fees have no historical per-owner allocation here and follow the policy in force when credited,
-consistent with the upstream system. Forced ETH/donations are allocated as unaccounted receipt;
-production analytics must distinguish actual upstream fees from donations using receipts/events.
+consistent with the upstream system. In local v2, forced ETH/donations are separately allocated
+as cash surplus. Only a layer-initiated upstream withdrawal is classified as fee income.
+
+### Critical delivery boundary
+
+DO NOT call primary `deliverBeneficiaryAllocation(layer, ...)` for an enrolled v2 layer.
+That direct delivery is treated as cash surplus and would bypass the optional self-burn.
+Instead call `layer.collectAndPay()` after primary processing confirms, reconcile the primary
+withdrawal AND layer Allocation/Paid events. Separate `collect()` and `withdrawFor(owner)`
+remain available for recovery and historical-owner balances. Self-buyback is deliberately
+outside the cash-payout transaction. Receipt helpers distinguish actual cash transfer output,
+allocated reserves, surplus and burned tokens; their deduplication keys still require durable
+insertion by the future worker.
+The existing primary fee worker does not yet implement this branch.
+
+### Intended timing, covered by the local planner tests
+
+- Leave the primary cadence unchanged: ten-minute checks for the first four hours after
+  launch, hourly thereafter, subject to its existing threshold and chain availability.
+- Once primary processing confirms, collect the 95% without waiting another primary slot.
+- Deliver already allocated creator cash first, with no second accumulation threshold.
+- After a receipt confirms, advance immediately. Pending receipts are checked every minute.
+- Burn only after cash obligations are resolved; missing pricing or a failed self-buyback
+  must not delay a successful cash payout. The local planner accumulates a reserve below
+  $1 or below five times estimated burn gas cost; this is not yet a live rule.
+- Burn retries back off independently, capped at fifteen minutes. They do not move the
+  primary sweep schedule and do not recursively sweep fees generated by the self-buyback.
+- Keep reconciling existing transaction receipts after disabling; do not send new ones.
+- Reassignment must preserve and service previous-owner ledger balances, not merely the
+  current owner's balance. A full exit disables further self-burn; owners can release reserves.
 
 `CREATOR_SELF_BUYBACK_ENABLED` is reserved for the new workflow only. Setting it currently
 does nothing because public workflow and signer integration are not connected yet.
 
-No website copy or general help should advertise this capability before activation.
+The token-page presentation is prepared for an optional `creatorSelfBurn` public field
+(`active`, `percentageBps`). The site query must populate it ONLY from a verified active
+layer and continue resolving `creatorFeeRecipient`/`feeRecipientUsername` to its human
+owner, never the layer address. At 100% it replaces the recipient with "Buyback and burn
+$TOKEN"; partial allocations append "(XX% buyback and burn $TOKEN)" to the recipient.
+No live query populates this field yet, so ordinary pages remain unchanged. Do not
+advertise the capability in general help before activation.

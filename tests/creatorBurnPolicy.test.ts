@@ -26,9 +26,10 @@ describe("creator self-buyback policy", () => {
     const a = "0x1111111111111111111111111111111111111111" as Address;
     const b = "0x2222222222222222222222222222222222222222" as Address;
     const q = { chainId: 4663n, layer: a, upstream: a, token: a, asset: b, beneficiary: a,
-      amount: 1n, minimumOut: 1n, deadline: 10n, executor: b, route: "0x" as const, configurationNonce: 0n, executionNonce: 0n };
+      amount: 1n, minimumOut: 1n, issuedAt: 1n, deadline: 10n, executor: b, route: "0x" as const, configurationNonce: 0n, executionNonce: 0n };
     for (const changed of [{ chainId: 1n }, { layer: b }, { beneficiary: b }, { token: b },
-      { configurationNonce: 1n }, { executionNonce: 1n }, { route: "0x12" as const }, { amount: 2n }]) {
+      { configurationNonce: 1n }, { executionNonce: 1n }, { route: "0x12" as const }, { amount: 2n },
+      { issuedAt: 2n }, { deadline: 11n }, { minimumOut: 2n }, { upstream: b }, { asset: a }, { executor: a }]) {
       expect(creatorBurnQuoteDigest({ ...q, ...changed })).not.toBe(creatorBurnQuoteDigest(q));
     }
   });

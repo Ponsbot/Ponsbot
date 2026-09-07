@@ -13,6 +13,7 @@ contract PonsBotCreatorBurnVaultFactory {
     mapping(address => address) public layerOf;
     mapping(address => bool) public isLayer;
     event LayerCreated(address indexed primary, address indexed layer, address indexed owner);
+    event LayerReplaced(address indexed primary, address indexed previousLayer, address indexed newLayer);
     error Unauthorized();
     error InvalidConfiguration();
 
@@ -24,12 +25,21 @@ contract PonsBotCreatorBurnVaultFactory {
 
     function create(address primary) external returns (address layer) {
         if (msg.sender != IPonsBotFeeControl(feeControl).admin()) revert Unauthorized();
-        if (!ICreatorPrimaryRegistry(primaryFactory).isVault(primary) || layerOf[primary] != address(0)
+        address previous = layerOf[primary];
+        if (!ICreatorPrimaryRegistry(primaryFactory).isVault(primary)
             || PonsBotFeeVault(payable(primary)).feeControl() != feeControl) revert InvalidConfiguration();
+        if (previous != address(0) && !PonsBotCreatorBurnVault(payable(previous)).exited()) revert InvalidConfiguration();
         address controller = PonsBotFeeVault(payable(primary)).controller();
         layer = address(new PonsBotCreatorBurnVault(primary, controller, executor, holderRegistry));
         layerOf[primary] = layer; isLayer[layer] = true;
         emit LayerCreated(primary, layer, controller);
+        if (previous != address(0)) emit LayerReplaced(primary, previous, layer);
         // Creating a layer NEVER assigns fee rights. The controller must separately opt in.
+    }
+
+    function syncDormantOwner(address primary) external {
+        address layer = layerOf[primary];
+        if (layer == address(0)) revert InvalidConfiguration();
+        PonsBotCreatorBurnVault(payable(layer)).syncDormantOwner();
     }
 }

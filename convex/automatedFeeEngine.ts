@@ -1060,22 +1060,35 @@ export const deferVaultEnrollment = internalMutation({
 });
 
 export const acquireDeploymentLease = internalMutation({
-  args: { programId: v.id("automatedFeePrograms"), leaseId: v.string() },
+  args: { programId: v.id("automatedFeePrograms"), leaseId: v.string(), externalDeploymentId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const state = await ctx.db.query("automatedFeeEngineState").withIndex("by_key", q => q.eq("key", ENGINE_KEY)).unique();
     if ((state?.adminLeaseUntil ?? 0) > Date.now() && state?.adminLeaseId !== args.leaseId) return false;
+    if (state?.adminExternalDeploymentId && state.adminExternalDeploymentId !== args.externalDeploymentId) return false;
+    if (args.externalDeploymentId && !/^0x[0-9a-f]{64}$/.test(args.externalDeploymentId)) throw new Error("invalid deployment identity");
     for (const status of ["prepared", "manual_review"] as const) {
       const programs = await ctx.db.query("automatedFeePrograms").withIndex("by_status_next_enrollment", q => q.eq("status", status))
         .filter(q => q.and(q.neq(q.field("deploymentTransactionHash"), undefined),
           q.eq(q.field("deploymentSettledAt"), undefined), q.eq(q.field("deploymentConfirmedAt"), undefined))).take(101);
       if (programs.length > 100) return false;
-      if (programs.some(p => p._id !== args.programId && p.deploymentTransactionHash
+      if (programs.some(p => (Boolean(args.externalDeploymentId) || p._id !== args.programId) && p.deploymentTransactionHash
         && !p.deploymentSettledAt && !automatedFeeDeploymentConfirmed(p))) return false;
     }
-    const patch = { adminLeaseId: args.leaseId, adminProgramId: args.programId, adminLeaseUntil: Date.now() + 5 * 60_000, updatedAt: Date.now() };
+    const patch = { adminLeaseId: args.leaseId, adminProgramId: args.programId, adminLeaseUntil: Date.now() + 5 * 60_000,
+      ...(args.externalDeploymentId ? { adminExternalDeploymentId: args.externalDeploymentId } : {}), updatedAt: Date.now() };
     if (state) await ctx.db.patch(state._id, patch);
     else await ctx.db.insert("automatedFeeEngineState", { key: ENGINE_KEY, ...patch });
     return true;
+  },
+});
+
+export const completeExternalDeployment = internalMutation({
+  args: { programId: v.id("automatedFeePrograms"), leaseId: v.string(), externalDeploymentId: v.string() },
+  handler: async (ctx, args) => {
+    const state=await ctx.db.query("automatedFeeEngineState").withIndex("by_key",q=>q.eq("key",ENGINE_KEY)).unique();
+    if(!state || state.adminLeaseId!==args.leaseId || state.adminProgramId!==args.programId
+      || state.adminExternalDeploymentId!==args.externalDeploymentId || (state.adminLeaseUntil??0)<=Date.now()) throw new Error("deployment reconciliation lease mismatch");
+    await ctx.db.patch(state._id,{adminExternalDeploymentId:undefined,updatedAt:Date.now()});
   },
 });
 
