@@ -1,10 +1,28 @@
 # Creator self-buyback layer: implementation checkpoint
 
-Status: local signer/worker/reassignment/display integration built; replacement deployment
-and an end-to-end live canary remain required. NOT approved for enrollment yet.
+Status: signer/worker/reassignment/display integration and replacement foundation deployed;
+dedicated enrollment handoff and an end-to-end live canary remain required. NOT enrolled yet.
 No token layers, fee-right transfers, public commands or launch pipeline changes have been made.
 
-## Current revision: replacement layer v2, LOCAL ONLY
+## Replacement layer v2 deployment checkpoint
+
+- Executor: `0xFcd96f803A507BeF9059bB9AcBAf62fF84654F93`.
+- Factory: `0x330428727c0483a687C225330385c5efB28cD339`.
+- Runtime comparison and bidirectional registry binding verified by deployment runner.
+- All three receipts confirmed; combined gas cost: 0.001589846708484 ETH.
+- Vercel production redeployed at commit `2e0ede3b5872da801974ced31316535ddab4eca0`;
+  Convex updated with `dev --once` against the existing application deployment.
+- Exact factory/executor addresses and runtime hashes configured in Vercel; factory
+  configured in Convex. `CREATOR_SELF_BUYBACK_ENABLED=false` in both and locally.
+- Authenticated Convex-to-production-signer discovery succeeded for the requested token.
+- Requested token `0x77c4907Fca841B69543C005470193261AcbB2B07` remains on its original
+  wallet-controlled primary vault, with no second layer or percentage change.
+- Enrollment cannot simply reuse ordinary reassignment unchanged: its status verifier
+  sees the normalized human owner rather than the new layer address, and pre-enrollment
+  owner credits must use primary delivery rather than the new layer collection path.
+  Implement and test that dedicated handoff before transferring control.
+
+## Current revision: replacement layer v2
 
 The addresses below are the older dormant foundation, not this revision. V2 changes ONLY
 the new second-layer contracts. No source or deployed bytecode of the running primary
