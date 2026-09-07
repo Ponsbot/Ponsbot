@@ -2772,6 +2772,12 @@ export const reserveControllerChange = internalMutation({
       || program.normalizedControllerAddress !== normalizedAddress(args.previousControllerAddress)) {
       throw new Error("automated fee controller rights are unavailable");
     }
+    const creatorEnrollment = await ctx.db.query("creatorBurnRequests")
+      .withIndex("by_program_status", q => q.eq("programId", program._id).eq("status", "pending")).first();
+    if (creatorEnrollment && ![`${creatorEnrollment.requestId}:enroll`, `${creatorEnrollment.requestId}:percentage`]
+      .some(root => args.requestId === root || args.parentRequestId === root)) {
+      throw new Error("A creator-fee configuration is already being finalized for this token.");
+    }
     const controllerBlockers = (await Promise.all([
       ...(["reserved", "prepared", "broadcast", "failed", "manual_review"] as const).map((status) =>
         ctx.db.query("automatedFeeControllerChanges")

@@ -203,7 +203,7 @@ export const save = internalMutation({
     const { id, leaseId, done, manualReview, diagnostic, ...patch } = a;
     await ctx.db.patch(id, {
       ...patch,
-      ...(done ? { status: "confirmed" as const } : {}),
+      ...(done ? { status: "confirmed" as const, diagnostic: undefined, leaseUntil: 0 } : {}),
       ...(manualReview
         ? { status: "manual_review" as const, leaseUntil: 0 }
         : {}),

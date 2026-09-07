@@ -1,8 +1,10 @@
 # Creator self-buyback layer: implementation checkpoint
 
-Status: signer/worker/reassignment/display integration and replacement foundation deployed;
-dedicated enrollment handoff and an end-to-end live canary remain required. NOT enrolled yet.
-No token layers, fee-right transfers, public commands or launch pipeline changes have been made.
+Status: signer/worker/reassignment/display integration and enrollment handoff deployed.
+An owner-authorized live canary completed layer creation, primary control handoff,
+former-owner delivery, and configuration of 50% of the creator's share. Existing
+primary contracts were not changed. Public percentage commands and explicit
+new-launch percentage options are enabled.
 
 ## Replacement layer v2 deployment checkpoint
 
@@ -13,14 +15,12 @@ No token layers, fee-right transfers, public commands or launch pipeline changes
 - Vercel production redeployed at commit `2e0ede3b5872da801974ced31316535ddab4eca0`;
   Convex updated with `dev --once` against the existing application deployment.
 - Exact factory/executor addresses and runtime hashes configured in Vercel; factory
-  configured in Convex. `CREATOR_SELF_BUYBACK_ENABLED=false` in both and locally.
+  configured in Convex. `CREATOR_SELF_BUYBACK_ENABLED=true` in both and locally.
 - Authenticated Convex-to-production-signer discovery succeeded for the requested token.
-- Requested token `0x77c4907Fca841B69543C005470193261AcbB2B07` remains on its original
-  wallet-controlled primary vault, with no second layer or percentage change.
-- Enrollment cannot simply reuse ordinary reassignment unchanged: its status verifier
-  sees the normalized human owner rather than the new layer address, and pre-enrollment
-  owner credits must use primary delivery rather than the new layer collection path.
-  Implement and test that dedicated handoff before transferring control.
+- The dedicated enrollment workflow verifies both the physical layer and normalized
+  human owner. Pre-enrollment credits are delivered through the primary vault;
+  subsequent layer allocations use collection rather than direct delivery.
+- Detailed canary receipts are retained privately, including the owner authorization.
 
 ## Current revision: replacement layer v2
 
@@ -47,8 +47,8 @@ vault, primary factory, control, adapter, or primary executors is changed.
 
 **Enrollment remains blocked pending replacement deployment and canary verification.**
 The old deployed foundation must not be configured as the new layer. The signer requires
-registry bindings, runtime code hashes, and the v2 quote-lifetime interface. This work does
-not add an automatic enrollment path or enroll new launches.
+registry bindings, runtime code hashes, and the v2 quote-lifetime interface. Enrollment
+requires an explicit owner request, including for new launches.
 
 ## Production integration, local implementation
 
@@ -87,6 +87,13 @@ not add an automatic enrollment path or enroll new launches.
   Only `setPercentage(uint16)` is signed; collection uses the previous percentage first.
   This internal command-adapter entry point does not introduce new public X syntax or
   enroll a token. Background controller recovery resumes pending percentage changes.
+
+Public configuration now enters through `creatorBurnEnrollment.request`. It binds the
+immutable X owner, active wallet, token, and percentage to a persisted request, creates
+only a registered layer, and resumes the primary handoff and percentage journals.
+Example: `Reassign 50% of $TICKER fees to buyback and burn`.
+New launches can append `assign 50% of fees to buyback and burn`.
+Ordinary launches without this explicit option retain the existing behavior.
 
 Configuration for BOTH the signer host and Convex worker:
 `CREATOR_SELF_BUYBACK_ENABLED` (default off), `CREATOR_SELF_BUYBACK_FACTORY_ADDRESS`.
@@ -198,8 +205,9 @@ insertion by the worker. The local primary fee worker now implements this branch
 - Reassignment must preserve and service previous-owner ledger balances, not merely the
   current owner's balance. A full exit disables further self-burn; owners can release reserves.
 
-`CREATOR_SELF_BUYBACK_ENABLED` gates the new keeper submissions. Read-only reconciliation
-of stored transactions continues when it is disabled. It does not enable enrollment.
+`CREATOR_SELF_BUYBACK_ENABLED` gates enrollment, percentage changes and new keeper
+submissions. Read-only reconciliation of stored transactions continues when disabled.
+New-launch options also require the existing primary enrollment switch.
 
 The token-page presentation is prepared for an optional `creatorSelfBurn` public field
 (`active`, `percentageBps`). The site query must populate it ONLY from a verified active

@@ -1,3 +1,7 @@
+export function feeSnapshotIncludesReceipt(snapshotBlock: string, receiptBlock: bigint) {
+  return BigInt(snapshotBlock) >= receiptBlock;
+}
+
 export function isUnavailableFeeBlock(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /header not(?: found| available)?\b|unknown block|block (?:not found|not available)|cannot find.*block|missing trie node|historical state.*unavailable/i.test(message);

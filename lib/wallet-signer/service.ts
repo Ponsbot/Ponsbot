@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { retryFeeInspection } from "../fee-inspection-retry";
+import { retryFeeInspection, feeSnapshotIncludesReceipt } from "../fee-inspection-retry";
 import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
 import { ROBINHOOD_CHAIN_ID, type AutomatedFeeBroadcastRequest, type AutomatedFeeClaimableRequest, type AutomatedFeeControllerBroadcastRequest, type AutomatedFeeControllerStatusRequest, type AutomatedFeeControllerSweepRequest, type AutomatedFeeControllerSweepStatusRequest, type AutomatedFeeControllerTransactionRequest, type AutomatedFeeDeliveryTransactionRequest, type AutomatedFeeEnrollmentVerificationRequest, type AutomatedFeeInspectionRequest, type AutomatedFeeKeeperTransactionRequest, type AutomatedFeePairRouteBroadcastRequest, type AutomatedFeePairRouteRequest, type AutomatedFeeQuoteRequest, type AutomatedFeeSweepTransactionRequest, type AutomatedFeeTransactionStatusRequest, type AutomatedFeeVaultDeploymentRequest, type AutomatedFeeVaultDeploymentStatusRequest, type AutomatedFeeVaultPredictionRequest, type BroadcastRequest, type ExecutionRequest, type TransactionStatusRequest } from "./policy";
@@ -1133,6 +1133,10 @@ export async function automatedFeeControllerTransactionStatus(request: Automated
   }
   if (receipt.status !== "success") return { status: "reverted" as const, blockNumber: receipt.blockNumber.toString() };
   const inspection = await inspectAutomatedFeeVault({ chainId: ROBINHOOD_CHAIN_ID, vaultAddress: request.vaultAddress });
+  // A receipt node may lead the read node briefly. An older snapshot cannot
+  // disprove a confirmed configuration transaction; reconcile it on the next poll.
+  if (!feeSnapshotIncludesReceipt(inspection.blockNumber, receipt.blockNumber))
+    return { status: "pending" as const, transactionKnown: true, blockNumber: receipt.blockNumber.toString() };
     const enrollingLayer = request.operation.type === "reassign" && inspection.creatorBurnLayer
       && inspection.creatorBurnLayer.toLowerCase() === request.operation.newController.toLowerCase()
       && request.operation.newController.toLowerCase() === request.operation.newBeneficiary.toLowerCase()
