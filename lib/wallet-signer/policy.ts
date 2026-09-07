@@ -1,4 +1,5 @@
 import { tokenPattern, tokenCharacterCount } from "../token-pattern";
+import { utf8Bytes } from "../launch-metadata-limits";
 import { z } from "zod";
 
 export const ROBINHOOD_CHAIN_ID = 4663;
@@ -59,11 +60,11 @@ const sweepFeesOperation = z.object({
 }).strict();
 const launchOperation = z.object({
   type: z.enum(["pons_v2_launch", "pons_v2_launch_and_buy"]), launchMode: z.literal("pons"),
-  factoryAddress: address, launchAndBuyRouter: address, name: z.string().min(1).refine(value => tokenCharacterCount(value) <= 48),
-  symbol: z.string().regex(tokenPattern(/^[A-Z0-9]{1,16}$/)), imageUri: z.string().max(2_048),
+  factoryAddress: address, launchAndBuyRouter: address, name: z.string().min(1).refine(value => tokenCharacterCount(value) <= 48 && utf8Bytes(value) <= 64),
+  symbol: z.string().regex(tokenPattern(/^[A-Z0-9]{1,16}$/)).refine(value => utf8Bytes(value) <= 16), imageUri: z.string().max(512).refine(value => utf8Bytes(value) <= 512),
   description: z.string().max(280),
   devBuy: z.object({ amount, unit: z.enum(["eth", "usd", "pair"]) }).strict().nullable(),
-  socials: z.object({ website: z.string().max(2_048), twitter: z.string().max(2_048), telegram: z.string().max(2_048) }).strict(),
+  socials: z.object({ website: z.string().refine(value => utf8Bytes(value) <= 256), twitter: z.string().refine(value => utf8Bytes(value) <= 256), telegram: z.string().refine(value => utf8Bytes(value) <= 256) }).strict(),
   feeWalletSource: z.literal("reply_wallet"), launchConfigId: z.string().regex(/^\d+$/),
   creatorFeeRecipient: address,
   pairToken: address, quoterAddress: address, wethAddress: address, method: z.enum(["launchAndBuy", "launchToken"]),

@@ -115,13 +115,26 @@ describe("deduplicated creator fee ledger", () => {
     expect(f.tables.creatorFeeClaims.every(row => row.status === "unsupported")).toBe(true);
   });
   it("does not value an ERC20 called ETH at the native ETH price", async () => {
-    const f = fixture(); await f.legacy(1, { involvedPairTokenAddress: addr(123) }); await f.call("beginBatch");
-    expect(f.tables.creatorFeeClaims[0].status).toBe("unsupported");
+    const f = fixture(); await f.legacy(1, { involvedPairTokenAddress: addr(123) });
+    const work = await f.call("beginBatch"); await f.markTimeAndPrice(work);
+    expect(f.tables.creatorFeeClaims[0].status).toBe("pending");
+    expect(f.stats().totalUsd).toBe(0);
+  });
+  it("values paired claims with historical asset-specific prices once", async () => {
+    const f = fixture(); await f.legacy(1, { claimedDisplay: "5 USDG", involvedPairTokenAddress: addr(123) });
+    const work = await f.call("beginBatch"), row = work.rows[0];
+    await f.call("recordTime", { leaseToken: work.leaseToken, id: row._id, claimedAt: now - hour, blockTime: false });
+    const price = { leaseToken: work.leaseToken, assetAddress: addr(123), bucketAt: feePriceBucket(now - hour), priceUsd: 0.99, source: "historical-test" };
+    await f.call("saveAssetPrice", price);
+    await f.call("saveAssetPrice", { ...price, priceUsd: 123 });
+    await f.call("finishBatch", { leaseToken: work.leaseToken, ids: [row._id] });
+    await f.call("recordLegacyClaim", { requestId: "r1" });
+    expect(f.stats()).toMatchObject({ totalUsd: 4.95, pricedCount: 1, claimCount: 1 });
   });
   it("retains paired-asset units and decimals", async () => {
     const f = fixture(); await f.db.insert("tokenRegistry", { normalizedAddress: addr(1), symbol: "USDG", decimals: 6 });
     const id = await f.vault(1, { pairTokenAddress: addr(1), grossClaimed: "1500000" }); await f.call("recordVaultClaim", { runId: id });
-    expect(f.tables.creatorFeeClaims[0]).toMatchObject({ amount: 1.5, assetSymbol: "USDG", status: "unsupported" });
+    expect(f.tables.creatorFeeClaims[0]).toMatchObject({ amount: 1.5, assetSymbol: "USDG", status: "pending" });
   });
 });
 

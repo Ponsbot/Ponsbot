@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 const css = readFileSync(resolve(process.cwd(), "app/globals.css"), "utf8");
 const marker = "/* Mobile containment:";
-const overrides = postcss.parse(css.slice(css.indexOf(marker)));
+const overrides = postcss.parse(css.slice(css.indexOf(marker), css.indexOf("/* Legal pages and footer */")));
 
 function declarations(selector: string) {
   const result: Record<string, string> = {};

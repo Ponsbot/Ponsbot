@@ -48,6 +48,7 @@ function database() {
   };
   const scheduled: { name: string; args: any }[] = [];
   const invoke = async (ref: any, args: any) => {
+    if (getFunctionName(ref) === "automatedFeeClaimInfo:hasPendingRequestedClaims") return false;
     const [module, name] = getFunctionName(ref).split(":");
     return handler((module === "wallets" ? wallets : module === "liquidity" ? liquidity : module === "xFloodProtection" ? xFloodProtection : module === "xReplies" ? xReplies : module === "automatedFeeQueue" ? feeQueue : engine as any)[name])(ctx, args);
   };

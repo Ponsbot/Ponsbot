@@ -397,24 +397,25 @@ describe("guided help thread ownership", () => {
 });
 
 describe("pacing math", () => {
-  it("fits six, not seven, into a rolling two-minute chunk below 65% usage", () => {
-    const now = Date.now(), attempts = [0, 10, 20, 30, 40, 50].map(delta => ({ at: now + delta }));
-    expect(replyQueueWaitMs(attempts.slice(0, 5), "A", now + 60)).toBe(0);
+  it("fits eight, not nine, into a rolling two-minute chunk below 65% usage", () => {
+    const now = Date.now(), attempts = [0, 10, 20, 30, 40, 50, 60, 70].map(delta => ({ at: now + delta }));
+    expect(replyQueueWaitMs(attempts.slice(0, 7), "A", now + 80)).toBe(0);
     expect(replyQueueWaitMs(attempts, "A", now + 119_999)).toBe(1);
     expect(replyQueueWaitMs(attempts, "A", now + 120_000)).toBe(0);
   });
-  it("uses a one-minute C gap below 65% usage", () => {
+  it("uses a 45-second C gap below 65% usage", () => {
     const now = Date.now(), attempts = [{ at: now + 119_999, priority: "C" as const }];
-    expect(replyQueueWaitMs(attempts, "C", now + 120_000)).toBe(59_999);
+    expect(replyQueueWaitMs(attempts, "C", now + 120_000)).toBe(44_999);
     expect(replyQueueWaitMs(attempts, "A", now + 120_000)).toBe(0);
     expect(replyQueueWaitMs([], "C", 0)).toBe(0);
   });
-  it("returns to three per two minutes and a three-minute C gap at 65% usage", () => {
+  it("uses four per two minutes and a 150-second C gap at 65% usage", () => {
     const now = Date.now();
     const old = Array.from({ length: 192 }, (_, index) => ({ at: now - 60 * 60_000 - index }));
-    const recent = [0, 10, 20].map(delta => ({ at: now - delta, priority: "C" as const }));
-    expect(replyQueueWaitMs([...old, ...recent], "A", now)).toBe(119_980);
-    expect(replyQueueWaitMs([...old, ...recent], "C", now)).toBe(180_000);
+    const recent = [0, 10, 20, 30].map(delta => ({ at: now - delta, priority: "C" as const }));
+    expect(replyQueueWaitMs([...old, ...recent.slice(0, 3)], "A", now)).toBe(0);
+    expect(replyQueueWaitMs([...old, ...recent], "A", now)).toBe(119_970);
+    expect(replyQueueWaitMs([...old, ...recent], "C", now)).toBe(150_000);
   });
   it("holds C at 80% and B/C at 90% while A remains eligible", () => {
     const now = Date.now();
@@ -542,7 +543,7 @@ describe("durable queue", () => {
   });
   it("lets LP pass a throttled older A while preserving LP FIFO and ordinary pacing", async () => {
     const ctx = fixture();
-    for (let i = 0; i < 6; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
+    for (let i = 0; i < 8; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
     await add(ctx, "ordinary", "A"); expect(await take(ctx)).toBeNull();
     const oldWake = state(ctx).wakeToken;
     await add(ctx, "lp1", "A", { kind: "liquidity" }); await add(ctx, "lp2", "A", { kind: "liquidity" });
@@ -580,7 +581,7 @@ describe("durable queue", () => {
   });
   it("still checks cancellation when an LP step overtakes the short-window wait", async () => {
     const ctx = fixture();
-    for (let i = 0; i < 6; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
+    for (let i = 0; i < 8; i++) { await add(ctx, `old${i}`, "A"); await done(ctx, await take(ctx)); }
     await add(ctx, "ordinary", "A"); await add(ctx, "lp", "A", { kind: "liquidity" });
     ctx.rows.xReplyInteractions.find((r: Row) => r.postId === "lp").commandKind = "operator_cancelled";
     expect(await take(ctx)).toBeNull(); expect(row(ctx, "lp").status).toBe("cancelled");

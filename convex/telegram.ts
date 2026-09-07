@@ -510,6 +510,9 @@ export const processUpdate = internalAction({
         return;
       }
       const link = binding.link;
+      let burnedResume = link ? await ctx.runMutation(internal.burnedLookups.resume, {
+        owner: link.ownerXUserId, source: "telegram", text,
+      }) : null;
       const assertBoundLink = async () => {
         const current = await ctx.runQuery(internal.telegram.boundUpdateLink, { updateId: args.updateId, telegramUserId, telegramChatId: chatId });
         if (!current.valid || current.link?._id !== link?._id) throw new Error("Telegram wallet link changed; request cancelled");
@@ -563,6 +566,12 @@ export const processUpdate = internalAction({
         await sendMessage(chatId, cancelled.message || "Cancelled.");
       } else {
         const currentConversation = await ctx.runQuery(internal.telegram.activeConversation, { telegramUserId });
+        if (burnedResume && currentConversation && currentConversation.operation !== "root") {
+          await ctx.runMutation(internal.burnedLookups.resume, {
+            owner: link.ownerXUserId, source: "telegram", text, superseded: true,
+          });
+          burnedResume = null;
+        }
         const selectedGuide = telegramMenuGuideOperation(text, currentConversation?.operation === "root");
         if (selectedGuide) {
           if (selectedGuide === "liquidity" && rawText.toLowerCase() === "guide:liquidity") {
@@ -697,7 +706,6 @@ export const processUpdate = internalAction({
           await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
           return;
         }
-        const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, { owner: link.ownerXUserId, source: "telegram", text });
         if (burnedResume === "expired") {
           await sendMessage(chatId, WORKFLOW_EXPIRED_MESSAGE);
           await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });

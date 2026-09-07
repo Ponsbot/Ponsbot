@@ -3303,6 +3303,8 @@ export function safeFailure(
     return "❌ There aren't enough funds for that amount. Check the balance or try a smaller amount.";
   if (/no claimable creator fees/i.test(message))
     return "ℹ️ There aren't any creator fees available to claim in that asset right now.";
+  if (/CREATOR_FEE_LOOKUP_INCOMPLETE|creator fee valuation unavailable|MANUAL_CREATOR_FEE_VALUATION_UNAVAILABLE/i.test(message))
+    return "⚠️ I couldn't verify all of your creator fees. Please try your claim again shortly.";
   if (/\b0x85b8e2f4\b|MetadataTooLong/i.test(message))
     return "⚠️ The special characters in the name or ticker exceed Pons's onchain byte limit. Shorten the name or ticker, then reply with the launch request again.";
   if (/named paired asset does not match|paired with ETH; specify an ETH or dollar amount/i.test(message))
@@ -3390,7 +3392,7 @@ export function safeFailure(
   return "❌ I couldn't complete that wallet request. Check the details, then reply with the request again!";
 }
 
-export function explicitTickerContractPairs(text: string) {
+export function explicitTickerContractPairs(text: string, command: WalletCommand = parseWalletCommand(text)) {
   const pairs: Array<{ ticker: string; address: string }> = [];
   const seen = new Set<string>();
   const patterns = [
@@ -3406,8 +3408,7 @@ export function explicitTickerContractPairs(text: string) {
   // For single-target trades, prose may separate the ticker from its CA.
   // Exclude transfers/swaps so a recipient or a second asset is never treated
   // as the contract of the ticker being traded.
-  if (!pairs.length && /\b(?:buy|buyback|sell|burn)\b/i.test(text)
-    && !/\b(?:send|transfer|give|pay|move|swap)\b/i.test(text)) {
+  if (!pairs.length && ["buy", "sell", "burn", "buy_and_burn"].includes(command.kind)) {
     const tickers = [...text.matchAll(tokenPattern(/\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi))];
     const contracts = [...text.matchAll(/\b0x[a-fA-F0-9]{6,}\b/g)];
     if (tickers.length === 1 && contracts.length === 1 && contracts[0][0].length === 42)
@@ -3438,7 +3439,7 @@ async function normalizeExplicitTickerContracts(
   command: WalletCommand,
   text: string,
 ) {
-  const pairs = explicitTickerContractPairs(text);
+  const pairs = explicitTickerContractPairs(text, command);
   // Launch pairing has its own Pons-factory approval workflow. An address in
   // launch prose must never be reinterpreted as the launched token identity.
   if (!pairs.length || command.kind === "launch") return command;
@@ -3723,7 +3724,8 @@ export const executeCommand = internalAction({
           if (!identity.matches) throw new Error(`TOKEN_CONTRACT_TICKER_MISMATCH:${command.expectedTicker}`);
         }
         const result = await signerRequest<{ raw: string; decimals: number; symbol?: string; totalSupplyRaw: string; usdValue?: number }>("/v1/tokens/burned", { chainId: ROBINHOOD_CHAIN_ID, token });
-        await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source || "x" });
+        if (args.source === "terminal" || args.source === "telegram")
+          await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source, scope: args.terminalSessionId });
         return { ok: true, message: burnedTokenMessage(token, result) };
       } catch (error) {
         const detail = error instanceof Error ? error.message : "";
@@ -3731,8 +3733,8 @@ export const executeCommand = internalAction({
         const message = mismatch
           ? `⚠️ That contract address's onchain ticker does not match $${command.expectedTicker}. Double-check that you've got the right contract address, then reply with it.`
           : detail === "BURNED_TOKEN_UNRESOLVED" ? BURNED_TOKEN_CA_MESSAGE : safeFailure(error, command.kind);
-        if (mismatch || detail === "BURNED_TOKEN_UNRESOLVED" || /ticker matches|WALLET_TICKER_AMBIGUOUS/.test(detail))
-          await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source || "x", ticker: command.expectedTicker || (safeAddress(command.token) ? undefined : command.token) });
+        if ((args.source === "terminal" || args.source === "telegram") && (mismatch || detail === "BURNED_TOKEN_UNRESOLVED" || /ticker matches|WALLET_TICKER_AMBIGUOUS/.test(detail)))
+          await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source, scope: args.terminalSessionId, ticker: command.expectedTicker || (safeAddress(command.token) ? undefined : command.token) });
         return { ok: false, message };
       }
     }
@@ -6765,6 +6767,10 @@ export const executeTerminalCommand = action({
         sessionId: args.sessionId,
         ownerXUserId: args.ownerXUserId,
       });
+      const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, {
+        owner: args.ownerXUserId, source: "terminal", scope: args.sessionId, text: displayText,
+        superseded: Boolean(guidedContext && guidedContext.operation !== "root"),
+      });
       let gasResumeContext = isResumeReply(displayText)
         ? await ctx.runQuery(internal.wallets.terminalGasResumeContext, {
             sessionId: args.sessionId,
@@ -6862,7 +6868,6 @@ export const executeTerminalCommand = action({
       executionText = gasResumeContext?.sourceText || (guidedContext
         ? guidedHelpCommandText(displayText, guidedContext.operation)
         : displayText);
-      const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, { owner: args.ownerXUserId, source: "terminal", text: displayText });
       if (burnedResume === "expired") {
         await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant", messageType: "result", text: WORKFLOW_EXPIRED_MESSAGE, requestId: args.eventId });
         return { ok: false, message: WORKFLOW_EXPIRED_MESSAGE };

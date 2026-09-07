@@ -14,6 +14,11 @@ describe("separated ticker and contract", () => {
     expect(groundedCanonicalCommand(text)?.kind).not.toBeUndefined();
     expect(explicitTickerContractPairs(text)).toEqual([{ ticker: "WSB", address }]);
   });
+  it.each(["wallet", "launch", "send", "swap"])("does not let incidental %s bypass identity checks", word => {
+    const text = "My " + word + " story for $WSB. @Ponsbotfamily burn 10 " + address;
+    expect(explicitTickerContractPairs(text, { kind: "burn", token: address, amount: "10", unit: "token" }))
+      .toEqual([{ ticker: "WSB", address }]);
+  });
   it("does not associate a recipient with a ticker", () => {
     expect(explicitTickerContractPairs(`send 10 $WSB to ${address}`)).toEqual([]);
     expect(explicitTickerContractPairs(`buy $10 of $WSB and send to ${address}`)).toEqual([]);

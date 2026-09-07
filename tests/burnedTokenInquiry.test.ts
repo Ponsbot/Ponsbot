@@ -67,7 +67,7 @@ describe("burn inquiries", () => {
     }
     expect(mutations.every(n => n === "burnedLookups:save")).toBe(true);
   });
-  it("binds CA continuations to owner and channel, consumes them, and expires them", async () => {
+  it("binds CA continuations, retains read retries, clears superseded work and expires", async () => {
     let row: any;
     const ctx = { db: {
       query: () => ({ withIndex: (_: any, filter: any) => { const expected: any = {}; const q: any = { eq: (k: string, v: any) => { expected[k] = v; return q; } }; filter(q); return { unique: async () => row && Object.entries(expected).every(([k,v]) => row[k] === v) ? row : null }; } }),
@@ -77,7 +77,12 @@ describe("burn inquiries", () => {
     expect(await invoke(resume, ctx, { owner: "b", source: "terminal", text: ca })).toBeNull();
     expect(await invoke(resume, ctx, { owner: "a", source: "telegram", text: ca })).toBeNull();
     expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca })).toBe(`How much $WSB ${ca} has been burned?`);
-    expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca })).toBeNull();
+    expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca })).toContain(ca);
+    expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca, superseded: true })).toBeNull();
+    await invoke(save, ctx, { owner: "a", source: "terminal", ticker: "WSB", scope: "s1" });
+    expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca, scope: "s2" })).toBeNull();
+    await invoke(save, ctx, { owner: "a", source: "terminal", ticker: "WSB" });
+    expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: "buy $5 of ABC" })).toBeNull();
     await invoke(save, ctx, { owner: "a", source: "terminal", ticker: "WSB" }); row.expiresAt = 0;
     expect(await invoke(resume, ctx, { owner: "a", source: "terminal", text: ca })).toBe("expired");
   });

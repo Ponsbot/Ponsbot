@@ -16,6 +16,7 @@ import { indexedNativeV4Pools, type IndexedV4PoolKey } from "../indexed-v4-route
 import { PONS_PAIR_CATALOG } from "../pair-catalog";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../automated-fee-pair-routes";
 import { inspectFeeAccumulation } from "./fee-accumulation";
+import { manualCreatorFeesEligible } from "../manual-creator-fee-policy";
 import { curveSweepIsEmpty } from "./legacy-fee-preflight";
 import type { LiquidityTransaction } from "../liquidity-contracts";
 
@@ -2369,6 +2370,7 @@ export async function feeClaimPlan(
 ) {
   const unique = [...new Set(tokenAddresses.map((token) => token.toLowerCase()))] as Address[];
   const eligible: Address[] = [];
+  const eligibleLaunches: CachedPonsLaunch[] = [];
   const client = rpcClient();
   // Recipient authority is mutable through fee reassignment. Always read it
   // live here; only immutable routing metadata is eligible for caching.
@@ -2386,9 +2388,13 @@ export async function feeClaimPlan(
     );
     for (let index = 0; index < results.length; index += 1) {
       const result = results[index];
-      if (result.status !== "fulfilled" || !result.value) continue;
+      if (result.status !== "fulfilled") throw new Error("CREATOR_FEE_LOOKUP_INCOMPLETE");
+      if (!result.value) continue;
       const launch = result.value;
-      if (launch.creatorFeeRecipient.toLowerCase() === owner.toLowerCase()) eligible.push(batch[index]);
+      if (launch.creatorFeeRecipient.toLowerCase() === owner.toLowerCase()) {
+        eligible.push(batch[index]);
+        eligibleLaunches.push(launch);
+      }
     }
   }
   if (!includeClaimableState) return { tokenAddresses: eligible };
@@ -2405,9 +2411,27 @@ export async function feeClaimPlan(
   } else {
     escrowBalance = await client.readContract({ address: escrow, abi: feeEscrowAbi, functionName: "balanceOf", args: [owner] });
   }
+  // Count the beneficiary's escrow once, plus only their unswept creator share.
+  // Never count a curve's trading reserves or the protocol's fee allocation.
+  const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
+  let claimable = escrowBalance;
+  for (const launch of eligibleLaunches) {
+    const accumulation = await inspectFeeAccumulation({ client, blockNumber, factory, escrow: 0n, launch,
+      quoteNative: async amount => amount }); // Only asset units are used below.
+    claimable += BigInt(accumulation.unsweptCreatorFees);
+  }
+  const pair = specificPairToken ?? zeroAddress;
+  const decimals = pair === zeroAddress ? 18 : (await tokenMetadata(pair)).decimals;
+  const price = claimable === 0n ? 0 : pair === zeroAddress
+    ? await ethUsdPrice(AbortSignal.timeout(5_000))
+    : await tokenUnitPriceUsd(pair, AbortSignal.timeout(5_000));
+  const claimableUsd = price === undefined ? undefined : Number(formatUnits(claimable, decimals)) * price;
+  if (claimable > 0n && (claimableUsd === undefined || !Number.isFinite(claimableUsd)))
+    throw new Error("creator fee valuation unavailable; try again shortly");
   return {
-    tokenAddresses: eligible,
-    hasClaimableFees: escrowBalance > 0n || eligible.length > 0,
+    tokenAddresses: manualCreatorFeesEligible(claimableUsd) ? eligible : [],
+    hasClaimableFees: manualCreatorFeesEligible(claimableUsd),
+    claimableUsd,
     escrowBalance: escrowBalance.toString(),
     ...(specificPairToken ? { pairToken: specificPairToken } : {}),
   };
@@ -2803,12 +2827,20 @@ export async function executeTransaction(request: ExecutionRequest) {
     if (pairToken === zeroAddress) {
       const balance = await client.readContract({ address: escrow, abi: feeEscrowAbi, functionName: "balanceOf", args: [owner] });
       if (balance === 0n) throw new Error("no claimable creator fees are available in ETH");
+      const price = await ethUsdPrice(AbortSignal.timeout(5_000));
+      if (price === undefined || !Number.isFinite(price) || price <= 0) throw new Error("creator fee valuation unavailable; try again shortly");
+      if (!manualCreatorFeesEligible(Number(formatEther(balance)) * price))
+        throw new Error("no claimable creator fees meet the $1 minimum");
       await requireWalletNativeGas(owner);
       const data = encodeFunctionData({ abi: feeEscrowAbi, functionName: "claim" });
       return prepareSigned(request, escrow, data, 0n);
     }
     const balance = await client.readContract({ address: escrow, abi: feeEscrowAbi, functionName: "balanceOfToken", args: [owner, pairToken] });
     if (balance === 0n) throw new Error("no claimable creator fees are available in the paired asset");
+    const [metadata, price] = await Promise.all([tokenMetadata(pairToken), tokenUnitPriceUsd(pairToken, AbortSignal.timeout(5_000))]);
+    if (price === undefined || !Number.isFinite(price) || price <= 0) throw new Error("creator fee valuation unavailable; try again shortly");
+    if (!manualCreatorFeesEligible(Number(formatUnits(balance, metadata.decimals)) * price))
+      throw new Error("no claimable creator fees meet the $1 minimum");
     await requireWalletNativeGas(owner);
     const data = encodeFunctionData({ abi: feeEscrowAbi, functionName: "claimToken", args: [pairToken] });
     return prepareSigned(request, escrow, data, 0n);

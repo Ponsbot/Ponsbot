@@ -6,6 +6,7 @@ import * as queue from "../convex/automatedFeeQueue";
 import * as wallets from "../convex/wallets";
 import { VAULT_CLAIM_REMINDER, vaultClaimResponse } from "../lib/vault-claim-response";
 import { FEE_ACCUMULATION_THRESHOLD_WEI, nextFeeCheck } from "../lib/automated-fee-scheduling";
+vi.mock("../lib/wallet-signer/pricing", () => ({ ethUsdPrice: vi.fn(async () => 2000) }));
 
 const a = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
 const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}`;
@@ -79,7 +80,7 @@ function fixture() {
   const result = (legacyMessage?: string) => handler(claims.requestedClaimResult)(ctx, { requestId: request.requestId, legacyMessage });
   const assess = (amount = gross, extra = {}) => {
     Object.assign(program, { workLeaseId: "work", workState: "running" });
-    return handler(engine.recordFeeAssessment)(ctx, { programId: "p", workLeaseId: "work", valueWei: amount, assetAmount: amount, operatorWait: false, ...extra });
+    return handler(engine.recordFeeAssessment)(ctx, { programId: "p", workLeaseId: "work", valueWei: amount, assetAmount: amount, operatorWait: false, ethUsd: 2000, ...extra });
   };
   const reserve = () => handler(engine.reserveProcessingRun)(ctx, { programId: "p", processThroughBlock: "100", executionNonce: "0", phaseAtReservation: 0, leaseId: "run-lease", now: Date.now() });
   const delivered = async () => {
@@ -93,6 +94,17 @@ function fixture() {
 }
 
 describe("explicit vault claim admission", () => {
+  it.each([["499999999999999", false], ["500000000000000", true], ["500000000000001", true]])("enforces the $1 manual floor at %s wei", async (amount, eligible) => {
+    const f = fixture(); await f.prepare();
+    expect(await f.assess(String(amount))).toBe(eligible);
+    expect(f.rows.automatedFeeRuns).toBeUndefined();
+    if (!eligible) expect(f.rows.automatedFeeClaimRequests[0].status).toBe("no_fees");
+  });
+  it("does not process a manual claim without valuation", async () => {
+    const f = fixture(); await f.prepare();
+    await expect(f.assess(gross, { ethUsd: undefined })).rejects.toThrow("VALUATION_UNAVAILABLE");
+    expect(f.rows.automatedFeeRuns).toBeUndefined();
+  });
   it("queues a future-due vault immediately without altering its fixed schedule", async () => {
     const f = fixture(), due = f.program.nextProcessAt;
     await f.prepare(); await f.prepare();
@@ -241,7 +253,7 @@ describe("complete keeper cycles using mocked signer receipts", () => {
       const path = new URL(String(url)).pathname; paths.push(path);
       if (path.endsWith("/inspect")) return new Response(JSON.stringify({ blockNumber: "100", token: a(20), pairAsset: a(0), controller: a(99), beneficiary: a(99),
         creatorFeeRecipient: a(21), active: true, paused: false, phase: 2, executionNonce: "0", lastCurveSweepBlock: "0",
-        escrowBalance: "10000", availableCreatorFees: "10000", availableCreatorFeesEthWei: "10000", escrowCreatorFeesEthWei: "10000" }));
+        escrowBalance: gross, availableCreatorFees: gross, availableCreatorFeesEthWei: gross, escrowCreatorFeesEthWei: gross }));
       expect(path).toMatch(/\/authorize$/);
       return new Response(JSON.stringify({ error: "automated PONSBOT quote is below minimum output" }), { status: 400 });
     }));

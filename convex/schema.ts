@@ -13,7 +13,7 @@ const intakeFilterGuardState = v.object({
 });
 
 export default defineSchema({
-  burnedLookupContinuations: defineTable({ owner: v.string(), source: v.string(), ticker: v.optional(v.string()), expiresAt: v.number() }).index("by_owner_source", ["owner", "source"]),
+  burnedLookupContinuations: defineTable({ owner: v.string(), source: v.string(), scope: v.optional(v.string()), ticker: v.optional(v.string()), expiresAt: v.number() }).index("by_owner_source", ["owner", "source"]),
   ...liquidityTables,
   ...liquidityWorkflowTables,
   ...xReplyQueueTables,
@@ -986,6 +986,9 @@ export default defineSchema({
   }).index("by_key", ["key"]),
 
   // Immutable five-minute ETH/USD opening prices, shared by every fee claim.
+  historicalAssetFeePrices: defineTable({
+    assetAddress: v.string(), bucketAt: v.number(), priceUsd: v.number(), source: v.string(), fetchedAt: v.number(),
+  }).index("by_asset_bucket", ["assetAddress", "bucketAt"]),
   historicalEthPrices: defineTable({
     bucketAt: v.number(), priceUsd: v.number(), source: v.string(), fetchedAt: v.number(),
   }).index("by_bucket", ["bucketAt"]),

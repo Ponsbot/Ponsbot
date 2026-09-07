@@ -318,11 +318,13 @@ export function advanceGuidedLaunch(
   if (state.phase === "name") {
     const name = safeText(value.replace(/^(?:name|token name)\s*(?:is|=|:)?\s*/i, ""), 48);
     if (!name || /^https?:\/\//i.test(name) || /^@[a-zA-Z0-9_]+$/.test(name)) return next(current, "name", "⚠️ Please provide a valid token name.");
+    if (new TextEncoder().encode(name).length > 64) return next(current, "name", "⚠️ This name exceeds Pons's onchain byte limit. Reply with a shorter name.");
     return next({ ...current, draft: { ...draft, name } }, "ticker");
   }
   if (state.phase === "ticker") {
     const symbol = parseTicker(value.replace(/^(?:ticker|symbol)\s*(?:is|=|:)?\s*/i, ""));
     if (!symbol) return next(current, "ticker", "⚠️ Use a ticker containing 1 to 16 letters or numbers.");
+    if (new TextEncoder().encode(symbol).length > 16) return next(current, "ticker", "⚠️ This ticker exceeds Pons's onchain byte limit. Reply with a shorter ticker.");
     return next({ ...current, draft: { ...draft, symbol } }, draft.imageUrl ? "description" : "artwork");
   }
   if (state.phase === "artwork") {

@@ -10,6 +10,8 @@ import { existingFeeUpgradeState } from "../lib/fee-upgrade-command";
 import { PONSBOT_BURN_TOKEN } from "../lib/burn-stats";
 import { canUseGraduatedEscrow, feeRunHasTransaction, feeSweepPrerequisiteSatisfied, isGraduatedSweepPreflightFailure } from "../lib/automated-fee-sweep-policy";
 import { FEE_ACCUMULATION_THRESHOLD_WEI, feeThresholdReached, nextFeeCheck, feeRetryDelay } from "../lib/automated-fee-scheduling";
+import { manualCreatorFeesEligible } from "../lib/manual-creator-fee-policy";
+import { ethUsdPrice } from "../lib/wallet-signer/pricing";
 import {
   AUTOMATED_FEE_BUYBACK_BPS,
   AUTOMATED_FEE_ENGINE_INTERVAL_MS,
@@ -2041,19 +2043,23 @@ export const resumeUnsignedProcessingPreflight = internalMutation({
 export const recordFeeAssessment = internalMutation({
   args: { programId: v.id("automatedFeePrograms"), workLeaseId: v.string(), runId: v.optional(v.id("automatedFeeRuns")),
     valueWei: v.string(), assetAmount: v.string(), operatorWait: v.boolean(), phase: v.optional(v.number()),
-    escrowAmount: v.optional(v.string()), escrowValueWei: v.optional(v.string()) },
+    escrowAmount: v.optional(v.string()), escrowValueWei: v.optional(v.string()), ethUsd: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const program = await ctx.db.get(args.programId);
     if (!program || program.workLeaseId !== args.workLeaseId || program.status !== "enrolled") throw new Error("fee assessment lease lost");
     if (!/^\d+$/.test(args.valueWei) || !/^\d+$/.test(args.assetAmount)) throw new Error("AUTOMATED_FEE_ASSESSMENT_INVALID");
     const claims = await liveRequestedClaims(ctx, program, args.runId);
     const requested = requestedVaultClaimsEnabled() && claims.length > 0;
+    const manualValueEligible = (wei: string | undefined) => manualCreatorFeesEligible(
+      wei !== undefined && args.ethUsd !== undefined ? Number(wei) / 1e18 * args.ethUsd : undefined);
+    if (requested && (args.ethUsd === undefined || !Number.isFinite(args.ethUsd) || args.ethUsd <= 0))
+      throw new Error("MANUAL_CREATOR_FEE_VALUATION_UNAVAILABLE");
     const escrowReady = args.phase === 2 && /^\d+$/.test(args.escrowAmount ?? "") && BigInt(args.escrowAmount!) >= 10_000n
-      && (requested || feeThresholdReached(args.escrowValueWei));
+      && (requested ? manualValueEligible(args.escrowValueWei) : feeThresholdReached(args.escrowValueWei));
     const operatorWait = args.operatorWait && !escrowReady;
     // Only the off-chain accumulation policy is bypassed. The deployed vault's
     // 10,000-base-unit floor, quote minimums, pause gates and payout checks stay.
-    const now = Date.now(), eligible = (requested ? BigInt(args.assetAmount) >= 10_000n : feeThresholdReached(args.valueWei)) && !operatorWait;
+    const now = Date.now(), eligible = (requested ? BigInt(args.assetAmount) >= 10_000n && manualValueEligible(args.valueWei) : feeThresholdReached(args.valueWei)) && !operatorWait;
     const run = args.runId ? await ctx.db.get(args.runId) : null;
     if (run && (run.programId !== program._id || feeRunHasTransaction(run))) throw new Error("fee assessment cannot discard an existing transaction");
     await ctx.db.patch(program._id, { lastCheckedAt: now, workAttempts: 0,
@@ -2126,6 +2132,8 @@ export const processProgram = internalAction({
           valueWei: inspection.availableCreatorFeesEthWei, assetAmount: inspection.availableCreatorFees,
           operatorWait: inspection.operatorRequired === true,
           phase: inspection.phase, escrowAmount: inspection.escrowBalance, escrowValueWei: inspection.escrowCreatorFeesEthWei,
+          ethUsd: await ctx.runQuery(internal.automatedFeeClaimInfo.hasPendingRequestedClaims, { programId: program._id })
+            ? await ethUsdPrice(AbortSignal.timeout(5_000)).catch(() => undefined) : undefined,
         });
         if (!eligible) return { status: "accumulating", runId: run?._id };
         if (run) run = (await ctx.runQuery(internal.automatedFeeEngine.processingContext, { programId: program._id, runId: run._id })).run;

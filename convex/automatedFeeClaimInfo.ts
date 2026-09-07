@@ -11,6 +11,20 @@ export function requestedVaultClaimsEnabled() {
     && automatedFeeProcessingAllowed(automatedFeeEngineConfiguration(process.env as AutomatedFeeEngineEnvironment));
 }
 
+// A read-only hint to avoid price requests for ordinary automatic assessments.
+// recordFeeAssessment still rechecks full request authorization atomically.
+export const hasPendingRequestedClaims = internalQuery({
+  args: { programId: v.id("automatedFeePrograms") },
+  handler: async (ctx, args) => {
+    if (!requestedVaultClaimsEnabled()) return false;
+    for (const status of ["queued", "running"] as const) {
+      if (await ctx.db.query("automatedFeeClaimRequests").withIndex("by_program_status", q =>
+        q.eq("programId", args.programId).eq("status", status)).first()) return true;
+    }
+    return false;
+  },
+});
+
 async function selectVaults(ctx: QueryCtx | MutationCtx, wallet: Doc<"cryptoWallets">, token?: string) {
   const address = wallet.address.toLowerCase();
   const programs = token

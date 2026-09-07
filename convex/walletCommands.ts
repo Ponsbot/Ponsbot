@@ -1,4 +1,5 @@
 import { tokenPattern, tokenCharacterCount, sliceTokenText } from "../lib/token-pattern";
+import { launchIdentityTooLong, LAUNCH_METADATA_BYTE_MESSAGE } from "../lib/launch-metadata-limits";
 import { parseBurnedTokenInquiry } from "../lib/burned-token-inquiry";
 import { parseFeeUpgradePhrase } from "../lib/fee-upgrade-command";
 import { TOP_FIVE_SLIPPAGE_BPS } from "../lib/top-five-recovery";
@@ -508,6 +509,7 @@ function parseLaunch(text: string): WalletCommand | null {
     : !hasExplicitName && tickerOnlyLaunch ? cleanSymbol(tickerOnlyLaunch) : (extractGroundedLaunchName(text) || "");
   const symbol = sharedNameAndTicker?.symbol || cleanSymbol(symbolMatch?.[1] || name);
   if (!name || !symbol) return { kind: "unknown", reason: "A launch needs both a name and a ticker." };
+  if (launchIdentityTooLong(name, symbol)) return { kind: "unknown", reason: LAUNCH_METADATA_BYTE_MESSAGE };
 
   const description = quotedField(text, "description|desc", 280);
   const websiteRaw = labeledWebsiteValue(text);
@@ -879,6 +881,7 @@ export function validateStructuredWalletCommand(value: unknown): WalletCommand |
     const name = typeof item.name === "string" ? item.name.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().replace(/^["'“”]+|["'“”,;:]+$/g, "").trim().replace(/\s+https?$/i, "").trim() : "";
     const normalizedName = sliceTokenText(cleanLaunchNameEdges(name), 48);
     const symbol = typeof item.symbol === "string" ? cleanSymbol(item.symbol) : "";
+    if (launchIdentityTooLong(name, symbol)) return { kind: "unknown", reason: LAUNCH_METADATA_BYTE_MESSAGE };
     if (!normalizedName || !symbol) return null;
     const optionalText = (key: string, max: number) => typeof item[key] === "string" && item[key] ? stripWrappingQuotes(String(item[key])).slice(0, max) : undefined;
     const website = optionalText("website", 300);

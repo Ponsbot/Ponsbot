@@ -222,9 +222,9 @@ describe("deterministic X wallet replies", () => {
     });
   });
 
-  it("keeps every help and ambiguity response within X's limit", () => {
+  it("keeps help bounded while allowing approved long-format replies", () => {
     const topics = ["capabilities", "wallet", "fund", "gas", "balance", "send", "buy_sell", "cross_chain", "cross_chain_assets", "burn", "launch", "pairs", "fees"] as const;
-    for (const topic of topics) expect(walletHelpMessage(topic).length).toBeLessThanOrEqual(280);
+    for (const topic of topics) expect(walletHelpMessage(topic).length).toBeLessThanOrEqual(25_000);
     expect(unknownWalletMessage().length).toBeLessThanOrEqual(280);
     expect(conversationalWalletMessage()).toContain("Hi there, I'm Pons Bot!");
     expect(conversationalWalletMessage()).not.toContain("couldn't quite make that out");

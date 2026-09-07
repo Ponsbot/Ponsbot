@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { historicalAssetFeePrice } from "../lib/historical-asset-fee-prices";
 import { formatUnits } from "viem";
 import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -7,6 +8,7 @@ import { feePriceBucket, FEE_PRICE_BUCKET_MS, FEE_PRICE_DAY_MS, historicalEthCan
 
 const KEY = "public", HOUR = 60 * 60_000, BATCH = 20;
 const native = (address?: string) => !address || /^0x0{40}$/i.test(address);
+const priceableAsset = (address?: string) => Boolean(address && /^0x[0-9a-f]{40}$/i.test(address) && !native(address));
 type ClaimInput = Pick<Doc<"creatorFeeClaims">, "transactionHash" | "source" | "assetSymbol" | "amount" | "recordedAt">
   & Partial<Pick<Doc<"creatorFeeClaims">, "assetAddress" | "rawAmount" | "blockNumber">>;
 
@@ -20,7 +22,7 @@ async function insertClaim(ctx: MutationCtx, input: ClaimInput) {
   const eth = input.assetSymbol === "ETH" && native(input.assetAddress);
   await ctx.db.insert("creatorFeeClaims", {
     ...input, transactionHash: input.transactionHash.toLowerCase(), key,
-    status: eth ? "pending" : "unsupported", nextAttemptAt: now, updatedAt: now,
+    status: eth || priceableAsset(input.assetAddress) ? "pending" : "unsupported", nextAttemptAt: now, updatedAt: now,
     ...(!eth ? { diagnosticCode: "HISTORICAL_ASSET_PRICE_UNAVAILABLE" } : {}),
   });
   const stats = await ctx.db.query("creatorFeeStats").withIndex("by_key", q => q.eq("key", KEY)).unique();
@@ -94,6 +96,9 @@ export const beginBatch = internalMutation({
       for (const row of page.page) await ingestVault(ctx, row);
       await ctx.db.patch(state._id, { vaultCursor: page.continueCursor, vaultDone: page.isDone });
     }
+    const unsupported = await ctx.db.query("creatorFeeClaims").withIndex("by_status_due", q => q.eq("status", "unsupported").lte("nextAttemptAt", now)).take(BATCH);
+    for (const row of unsupported) await ctx.db.patch(row._id, priceableAsset(row.assetAddress)
+      ? { status: "pending", nextAttemptAt: now } : { nextAttemptAt: now + 24 * HOUR });
     const rows = await ctx.db.query("creatorFeeClaims").withIndex("by_status_due", q => q.eq("status", "pending").lte("nextAttemptAt", now)).take(BATCH);
     return { leaseToken, rows };
   },
@@ -135,6 +140,24 @@ export const savePrices = internalMutation({
   },
 });
 
+export const assetPrice = internalQuery({
+  args: { assetAddress: v.string(), bucketAt: v.number() },
+  handler: (ctx, args) => ctx.db.query("historicalAssetFeePrices").withIndex("by_asset_bucket",
+    q => q.eq("assetAddress", args.assetAddress.toLowerCase()).eq("bucketAt", args.bucketAt)).unique(),
+});
+export const saveAssetPrice = internalMutation({
+  args: { leaseToken: v.string(), assetAddress: v.string(), bucketAt: v.number(), priceUsd: v.number(), source: v.string() },
+  handler: async (ctx, args) => {
+    if (!await validLease(ctx, args.leaseToken) || !priceableAsset(args.assetAddress)
+      || args.bucketAt <= 0 || !Number.isSafeInteger(args.bucketAt) || args.bucketAt % FEE_PRICE_BUCKET_MS
+      || args.bucketAt + FEE_PRICE_BUCKET_MS > Date.now() || !Number.isFinite(args.priceUsd) || args.priceUsd <= 0) return;
+    const assetAddress = args.assetAddress.toLowerCase();
+    if (await ctx.db.query("historicalAssetFeePrices").withIndex("by_asset_bucket",
+      q => q.eq("assetAddress", assetAddress).eq("bucketAt", args.bucketAt)).unique()) return;
+    await ctx.db.insert("historicalAssetFeePrices", { assetAddress, bucketAt: args.bucketAt, priceUsd: args.priceUsd,
+      source: args.source, fetchedAt: Date.now() });
+  },
+});
 export const finishBatch = internalMutation({
   args: { leaseToken: v.string(), ids: v.array(v.id("creatorFeeClaims")), error: v.optional(v.string()), retryAfterMs: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -145,8 +168,11 @@ export const finishBatch = internalMutation({
     for (const id of args.ids.slice(0, BATCH)) {
       const row = await ctx.db.get(id);
       if (!row || row.status !== "pending") continue;
-      const price = row.claimedAt === undefined ? null : await ctx.db.query("historicalEthPrices")
-        .withIndex("by_bucket", q => q.eq("bucketAt", feePriceBucket(row.claimedAt!))).unique();
+      const price = row.claimedAt === undefined ? null : priceableAsset(row.assetAddress)
+        ? await ctx.db.query("historicalAssetFeePrices").withIndex("by_asset_bucket",
+          q => q.eq("assetAddress", row.assetAddress!.toLowerCase()).eq("bucketAt", feePriceBucket(row.claimedAt!))).unique()
+        : row.assetSymbol === "ETH" && native(row.assetAddress) ? await ctx.db.query("historicalEthPrices")
+          .withIndex("by_bucket", q => q.eq("bucketAt", feePriceBucket(row.claimedAt!))).unique() : null;
       const valueUsd = price ? row.amount * price.priceUsd : NaN;
       if (price && Number.isFinite(valueUsd) && valueUsd >= 0) {
         await ctx.db.patch(id, { status: "priced", priceBucketAt: price.bucketAt, priceUsd: price.priceUsd, valueUsd, diagnosticCode: undefined, updatedAt: now });
@@ -176,7 +202,7 @@ export const finishBatch = internalMutation({
   },
 });
 
-/** Historical price fetches use Coinbase; block times use the public RPC.
+/** ETH history uses Coinbase; paired history uses budgeted Gecko candles; block times use public RPC.
  * No Alchemy, CDP signing, transaction submission, or X traffic. */
 export const refresh = internalAction({
   args: {},
@@ -209,7 +235,20 @@ export const refresh = internalAction({
         }
         timed.push({ id: row._id, claimedAt });
       }
-      const buckets = [...new Set(timed.map(row => feePriceBucket(row.claimedAt)))];
+      let assetRequests = 0;
+      for (const row of work.rows) {
+        const time = timed.find(item => item.id === row._id);
+        if (!time || !priceableAsset(row.assetAddress)) continue;
+        const args = { assetAddress: row.assetAddress!.toLowerCase(), bucketAt: feePriceBucket(time.claimedAt) };
+        if (await ctx.runQuery(internal.creatorFeeHistory.assetPrice, args)) continue;
+        if (assetRequests++ >= 2) break;
+        try {
+          const price = await historicalAssetFeePrice(args.assetAddress, args.bucketAt);
+          if (price) await ctx.runMutation(internal.creatorFeeHistory.saveAssetPrice, { ...args, ...price, leaseToken: work.leaseToken });
+        } catch { /* Historical gaps stay pending; ETH processing can continue. */ }
+      }
+      const buckets = [...new Set(timed.filter(item => work.rows.some(row => row._id === item.id && row.assetSymbol === "ETH" && native(row.assetAddress)))
+        .map(row => feePriceBucket(row.claimedAt)))];
       const cached = await ctx.runQuery(internal.creatorFeeHistory.cachedPrices, { buckets });
       const missing = buckets.filter(bucket => bucket + FEE_PRICE_BUCKET_MS <= Date.now() && !cached.some(price => price?.bucketAt === bucket));
       // At most two historical daily requests per batch, at most 288 candles each.

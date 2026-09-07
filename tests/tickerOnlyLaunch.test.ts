@@ -29,8 +29,9 @@ describe("ticker-only launch names", () => {
     expect(parseWalletCommand("launch token Should ticker SHOULD")).toMatchObject({ symbol: "SHOULD" });
   });
   it.each(tickerOnly)("uses the supplied ticker as the name: %s", (post) => {
-    expect(parseWalletCommand(post)).toMatchObject({ kind: "launch", name: "RR", symbol: "RR" });
-    expect(groundedCanonicalCommand(post)).toMatchObject({ kind: "launch", name: "RR", symbol: "RR" });
+    const name = post.includes("rr") ? "rr" : "RR";
+    expect(parseWalletCommand(post)).toMatchObject({ kind: "launch", name, symbol: "RR" });
+    expect(groundedCanonicalCommand(post)).toMatchObject({ kind: "launch", name, symbol: "RR" });
     expect(straightforwardCommandOperation(post)).toBe("launch");
   });
 

@@ -1,11 +1,11 @@
 export type ReplyPriority = "A" | "B" | "C";
 export const REPLY_QUEUE_WINDOW_MS = 2 * 60_000;
-export const REPLY_QUEUE_WINDOW_LIMIT = 3; // Cautious/high mode: floor(1.67 * 2).
-export const REPLY_QUEUE_NORMAL_WINDOW_LIMIT = 6;
+export const REPLY_QUEUE_WINDOW_LIMIT = 4; // Cautious/high mode; provider caps below remain authoritative.
+export const REPLY_QUEUE_NORMAL_WINDOW_LIMIT = 8;
 export const GUIDED_REPLY_WINDOW_LIMIT = 10;
 export const GUIDED_REPLY_NORMAL_WINDOW_LIMIT = 20;
-export const REPLY_QUEUE_C_GAP_MS = 3 * 60_000;
-export const REPLY_QUEUE_NORMAL_C_GAP_MS = 60_000;
+export const REPLY_QUEUE_C_GAP_MS = 150_000;
+export const REPLY_QUEUE_NORMAL_C_GAP_MS = 45_000;
 export const X_POST_WINDOW_15_MINUTES_MS = 15 * 60_000;
 export const X_POST_WINDOW_15_MINUTES_LIMIT = 100;
 export const X_POST_WINDOW_3_HOURS_MS = 3 * 60 * 60_000;

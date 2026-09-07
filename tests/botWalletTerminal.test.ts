@@ -16,11 +16,12 @@ function fixture(session: any = activeSession(), guidedContext: any = null) {
     const name = getFunctionName(ref);
     calls.push({ name, args });
     if (name === "wallets:getXUserAndWallet") return {
-      user: { xUserId: args.xUserId, verified: true },
+      user: { xUserId: args.xUserId, username: "tester", verified: true },
       wallet: { _id: "wallet", ownerXUserId: args.xUserId, address: "0x1111111111111111111111111111111111111111", status: "active" },
     };
     if (name === "wallets:webSessionRecord") return session;
     if (name === "wallets:terminalGuidedHelpContext") return guidedContext;
+    if (name === "burnedLookups:resume") return null;
     if (name === "liquidity:handle") return { handled: false };
     // Stop at the existing idempotency boundary: no quotes, signing or chain calls.
     if (name === "wallets:reserveWalletRequest") return {

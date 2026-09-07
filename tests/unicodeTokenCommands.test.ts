@@ -13,6 +13,11 @@ import { signerOperationSchema } from "../lib/wallet-signer/policy";
 
 const address = "0xb128cAb0842d5725D1eAC657Acd2dDd023c86b07";
 describe("Chinese and Japanese token identifiers", () => {
+  it("rejects identity metadata over the onchain UTF-8 limits", () => {
+    expect(parseWalletCommand("launch 猫猫猫猫猫猫 ticker 猫猫猫猫猫猫")).toMatchObject({ kind: "unknown", reason: expect.stringContaining("byte limit") });
+    expect(validateStructuredWalletCommand({ kind: "launch", name: "猫".repeat(22), symbol: "CAT" })).toMatchObject({ kind: "unknown", reason: expect.stringContaining("byte limit") });
+    expect(parseWalletCommand("launch 猫猫猫猫猫 ticker 猫猫猫猫猫")).toMatchObject({ kind: "launch", symbol: "猫猫猫猫猫" });
+  });
   it.each(["中国龙", "招財貓", "ねこ", "ポンボット", "トークン", "猫PONS2", "𠮷野家"])("supports %s throughout token commands", async token => {
     const canonical = token.toUpperCase();
     for (const [text, result] of [

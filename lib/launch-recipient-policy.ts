@@ -8,8 +8,9 @@ export function grokLaunchFeeRejection(
   authorUsername: string,
   ownerWalletAddress?: string,
 ) {
-  if (authorUsername.replace(/^@/, "").toLowerCase() !== "grok"
-    || command.kind !== "launch" || !command.feeRecipient) return undefined;
+  if (command.kind !== "launch" || !command.feeRecipient) return undefined;
+  if (typeof authorUsername !== "string" || !authorUsername.trim()) throw new Error("launch author identity unavailable");
+  if (authorUsername.replace(/^@/, "").toLowerCase() !== "grok") return undefined;
   const recipient = command.feeRecipient.trim().toLowerCase();
   if (recipient === "@grok") return undefined;
   if (/^0x[a-f0-9]{40}$/.test(recipient)
