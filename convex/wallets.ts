@@ -1,4 +1,5 @@
 import { tokenPattern } from "../lib/token-pattern";
+import { signerRequest as automatedFeeSignerRequest } from "./automatedFeeEngine";
 import { v } from "convex/values";
 import { grokLaunchFeeRejection } from "../lib/launch-recipient-policy";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
@@ -3234,6 +3235,19 @@ function formatBufferedGasEstimate(valueWei: string) {
   return display.replace(/\.?0+$/, "");
 }
 
+export async function verifyCreatorFeeLaunchSetup() {
+  try {
+    // Creator-fee endpoints require the enrollment HMAC as well as the bearer
+    // token. The ordinary wallet signer client does not attach that proof.
+    const readiness = await automatedFeeSignerRequest<{ ready: boolean }>(
+      "/v1/creator-burn/new-launch-preflight", {}, 30_000,
+    );
+    if (readiness.ready !== true) throw new Error("Creator fee preflight incomplete");
+  } catch (error) {
+    throw new Error(`CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED: ${sanitizedDiagnosticDetail(error)}`);
+  }
+}
+
 export function safeFailure(
   error: unknown,
   operationKind?: WalletCommand["kind"],
@@ -3241,7 +3255,7 @@ export function safeFailure(
 ) {
   const message =
     error instanceof Error ? error.message : "wallet request failed";
-  if (message === "CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED")
+  if (message.startsWith("CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED"))
     return "⚠️ I couldn't verify the requested creator-fee setup. No token was launched.";
   if (/Creator-fee configuration did not finish/i.test(message))
     return "⚠️ The creator-fee configuration couldn't be completed.";
@@ -5582,12 +5596,7 @@ export const executeCommand = internalAction({
             && process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true"
             && !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing
             && automatedPairSupported) {
-            try {
-              const readiness = await signerRequest<{ ready: boolean }>("/v1/creator-burn/new-launch-preflight", {}, 30_000);
-              if (readiness.ready !== true) throw new Error("Creator fee preflight incomplete");
-            } catch {
-              throw new Error("CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED");
-            }
+            await verifyCreatorFeeLaunchSetup();
           }
           if (
             process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true" &&
