@@ -3402,6 +3402,16 @@ export function explicitTickerContractPairs(text: string) {
     const key = `${ticker}:${address.toLowerCase()}`;
     if (!seen.has(key)) { seen.add(key); pairs.push({ ticker, address }); }
   }
+  // For single-target trades, prose may separate the ticker from its CA.
+  // Exclude transfers/swaps so a recipient or a second asset is never treated
+  // as the contract of the ticker being traded.
+  if (!pairs.length && /\b(?:buy|buyback|sell|burn)\b/i.test(text)
+    && !/\b(?:send|transfer|give|pay|move|swap)\b/i.test(text)) {
+    const tickers = [...text.matchAll(tokenPattern(/\$([A-Za-z][A-Za-z0-9]{0,31})\b/gi))];
+    const contracts = [...text.matchAll(/\b0x[a-fA-F0-9]{6,}\b/g)];
+    if (tickers.length === 1 && contracts.length === 1 && contracts[0][0].length === 42)
+      pairs.push({ ticker: tickers[0][1].toUpperCase(), address: contracts[0][0] });
+  }
   return pairs;
 }
 

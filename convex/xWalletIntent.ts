@@ -152,11 +152,10 @@ function hasConflictingTradeIdentifiers(text: string) {
   const contracts = [...text.matchAll(/\b0x[a-fA-F0-9]{6,}\b/gi)];
   const explicitTicker = explicitTickers.length > 0;
   const contractLike = contracts.length > 0;
-  // Accept the common copied-link form "$TICKER 0x..." when it supplies one
-  // ticker and one complete address. Other mixed identifiers remain rejected.
+  // One ticker and one complete contract can identify the same token even
+  // when commentary separates them. Execution verifies their on-chain match.
   const oneRedundantIdentifier = explicitTickers.length === 1 && contracts.length === 1
-    && contracts[0][0].length === 42
-    && tokenPattern(/\$(?!\d)[A-Z][A-Z0-9]{0,31}\s+0x[a-fA-F0-9]{40}\b/i).test(text);
+    && contracts[0][0].length === 42;
   if (oneRedundantIdentifier) return false;
   return explicitTicker && contractLike && /\b(?:buy|sell|burn)\b/i.test(text);
 }
