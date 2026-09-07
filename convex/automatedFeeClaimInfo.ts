@@ -88,7 +88,8 @@ export const prepareRequestedClaims = internalMutation({
       const pairKnown = native || (pair && /^[A-Za-z0-9_]{1,32}$/.test(pair.symbol)
         && Number.isInteger(pair.decimals) && pair.decimals >= 0 && pair.decimals <= 255);
       // As with legacy claim-all, non-ETH pairs are requested individually.
-      const unavailable = p.status !== "enrolled" || !pairKnown || (!args.tokenAddress && !native);
+      const unavailable = p.status !== "enrolled" || Boolean(p.configurationChangeRequestId)
+        || !pairKnown || (!args.tokenAddress && !native);
       const active = (await Promise.all((["reserved", "submitted", "uncertain", "deferred"] as const).map(status => ctx.db.query("automatedFeeRuns")
         .withIndex("by_program_status", q => q.eq("programId", p._id).eq("status", status)).first()))).find(Boolean);
       const join = !unavailable && active?.beneficiaryAddress.toLowerCase() === wallet.address.toLowerCase() ? active : null;

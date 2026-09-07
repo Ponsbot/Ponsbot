@@ -210,6 +210,28 @@ describe("economic fee queue", () => {
     expect(await handler(feeQueue.dispatch)(ctx, {})).toEqual({ dispatched: 0 });
     expect(await handler(feeQueue.beginWork)(ctx, { programId: "p", workLeaseId: "new", dispatched: false })).toBeNull();
   });
+  it("does not start a fresh sweep while a creator-fee configuration owns the program", async () => {
+    const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0];
+    Object.assign(p, {
+      configurationChangeRequestId: "creator-change",
+      workState: "idle",
+      nextProcessAt: Date.now() - 1,
+    });
+    expect(await handler(feeQueue.dispatch)(ctx, {})).toEqual({ dispatched: 0 });
+    expect(p).toMatchObject({
+      configurationChangeRequestId: "creator-change",
+      workState: "idle",
+      nextProcessAt: undefined,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects a stale direct worker callback while configuration is pending", async () => {
+    const ctx = fixture();
+    ctx.rows.automatedFeePrograms[0].configurationChangeRequestId = "creator-change";
+    expect(await handler(engine.processProgram)(ctx, { programId: "p" }))
+      .toEqual({ status: "configuration_change_pending" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it("does not reinspect queued tokens while another keeper transaction is pending", async () => {
     const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0], now = Date.now();
     Object.assign(p, { workState: "waiting", workDueAt: now - 1 });
@@ -606,6 +628,10 @@ describe("controller workflow identity and strict handoff", () => {
   it("permits only bound children and retains cross-request exclusion", async () => {
     const ctx = fixture();
     const original = await handler(engine.reserveControllerChange)(ctx, root);
+    expect(ctx.rows.automatedFeePrograms[0]).toMatchObject({
+      configurationChangeRequestId: "root",
+      nextProcessAt: undefined,
+    });
     expect((await handler(engine.reserveControllerChange)(ctx, root))._id).toBe(original._id);
     const child = { requestId: "root:controller-sweep", parentRequestId: "root", programId: "p", operation: "reassign",
       previousControllerAddress: a(1), newControllerAddress: a(2), newBeneficiaryAddress: a(2) };

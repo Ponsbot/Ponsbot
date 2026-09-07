@@ -1374,6 +1374,7 @@ export const duePrograms = internalQuery({
   handler: async (ctx, { now }) => ctx.db
     .query("automatedFeePrograms")
     .withIndex("by_status_next_process", (q) => q.eq("status", "enrolled").lte("nextProcessAt", now))
+    .filter((q) => q.eq(q.field("configurationChangeRequestId"), undefined))
     .take(AUTOMATED_FEE_MAX_PROGRAMS_PER_RUN),
 });
 
@@ -2121,6 +2122,7 @@ export const processProgram = internalAction({
     const program = initial.program;
     if (!program || program.status !== "enrolled") return { status: "program_unavailable" };
     let run = initial.run;
+    if (program.configurationChangeRequestId && !run) return { status: "configuration_change_pending" };
     // A scheduled retry can outlive another worker completing this run.
     // Do not turn that stale callback into an endless lease-retry loop.
     if (run?.status === "confirmed") return { status: "already_complete", runId: run._id };
@@ -2765,12 +2767,29 @@ export const reserveControllerChange = internalMutation({
         && (existing.pairTokenAddress ?? "").toLowerCase() === (args.pairTokenAddress ?? "").toLowerCase()
         && (existing.previousBeneficiaryAddress ?? "").toLowerCase() === (args.previousBeneficiaryAddress ?? "").toLowerCase();
       if (!sameIdentity) throw new Error("automated fee controller request identity conflict");
+      if (existing.workflowRoot && !existing.workflowCompletedAt) {
+        const program = await ctx.db.get(existing.programId);
+        if (program && (!program.configurationChangeRequestId
+          || program.configurationChangeRequestId === existing.requestId)) {
+          await ctx.db.patch(program._id, {
+            configurationChangeRequestId: existing.requestId,
+            nextProcessAt: undefined,
+            updatedAt: Date.now(),
+          });
+        }
+      }
       return existing;
     }
     const program = await ctx.db.get(args.programId);
     if (!program || (program.status !== "enrolled" && !(args.operation === "holders" && program.status === "paused"))
       || program.normalizedControllerAddress !== normalizedAddress(args.previousControllerAddress)) {
       throw new Error("automated fee controller rights are unavailable");
+    }
+    const workflowRootRequestId = args.parentRequestId ?? args.requestId;
+    if (program.configurationChangeRequestId
+      && program.configurationChangeRequestId !== workflowRootRequestId
+      && !args.requestId.startsWith(`${program.configurationChangeRequestId}:`)) {
+      throw new Error("another automated fee controller change is still being finalized");
     }
     const creatorEnrollment = await ctx.db.query("creatorBurnRequests")
       .withIndex("by_program_status", q => q.eq("programId", program._id).eq("status", "pending")).first();
@@ -2815,6 +2834,16 @@ export const reserveControllerChange = internalMutation({
       workflowRoot: !args.parentRequestId && Boolean(args.ownerXUserId && args.walletRef && args.vaultAddress),
       status: "reserved", createdAt: now, updatedAt: now,
     });
+    if (!args.parentRequestId && args.ownerXUserId && args.walletRef && args.vaultAddress) {
+      // Reservation and scheduler barrier are committed atomically. Once this
+      // returns, the ordinary fee worker cannot take a fresh cycle ahead of the
+      // reassignment workflow.
+      await ctx.db.patch(program._id, {
+        configurationChangeRequestId: args.requestId,
+        nextProcessAt: undefined,
+        updatedAt: now,
+      });
+    }
     return (await ctx.db.get(id))!;
   },
 });
@@ -2901,6 +2930,14 @@ export const markControllerChangeStatus = internalMutation({
       const hash = args.transactionHash ?? change.transactionHash;
       if (!program || !hash) throw new Error("automated fee completed controller outcome is missing");
       await finalizeFeeWalletOutcome(ctx, program, change.requestId, change.operation === "holders" ? "holders" : "reassign", hash);
+      if (program.configurationChangeRequestId === change.requestId) {
+        const remainsProcessable = args.status === "confirmed" && change.operation === "reassign";
+        await ctx.db.patch(program._id, {
+          configurationChangeRequestId: undefined,
+          nextProcessAt: remainsProcessable ? Date.now() : undefined,
+          updatedAt: Date.now(),
+        });
+      }
     }
   },
 });

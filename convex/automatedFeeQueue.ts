@@ -40,6 +40,10 @@ async function keeperBusy(ctx: MutationCtx, runId: Id<"automatedFeeRuns"> | unde
 async function claim(ctx: MutationCtx, p: Doc<"automatedFeePrograms">, leaseId: string, now: number) {
   if (p.status !== "enrolled" || (p.workState === "running" && (p.workLeaseUntil ?? 0) > now)) return null;
   const run = await activeFeeRun(ctx, p._id);
+  // Configuration changes may coexist only with a fee cycle that was already
+  // durable when the change was accepted. Never start a fresh sweep while the
+  // intended recipient/percentage is being finalized.
+  if (p.configurationChangeRequestId && !run) return null;
   if (!run && p.workRunId) {
     // A crash after finalization but before finishWork must not start another
     // economic cycle outside this token's scheduled slot.
@@ -90,7 +94,7 @@ export const dispatch = internalMutation({
     for (const launch of recentLaunches) {
       if (!launch.normalizedTokenAddress) continue;
       const p = await ctx.db.query("automatedFeePrograms").withIndex("by_token", q => q.eq("normalizedTokenAddress", launch.normalizedTokenAddress!)).unique();
-      if (!p || p.privateTest || p.status !== "enrolled") continue;
+      if (!p || p.privateTest || p.status !== "enrolled" || p.configurationChangeRequestId) continue;
       if (p.launchCreatedAt !== launch.createdAt) await ctx.db.patch(p._id, { launchCreatedAt: launch.createdAt });
       if (p.workState === "running" || p.workState === "waiting" || p.workRunId || await activeFeeRun(ctx, p._id)) continue;
       const nextProcessAt = recentLaunchFeeDue({ ...p, launchCreatedAt: launch.createdAt }, now);
@@ -165,6 +169,18 @@ export const dispatch = internalMutation({
       if (!claimed) {
         // Rotate blocked entries so >20 waiting tokens cannot starve their receipt owner.
         const current = await ctx.db.get(p._id);
+        if (current?.configurationChangeRequestId && !await activeFeeRun(ctx, p._id)) {
+          await ctx.db.patch(p._id, {
+            workState: "idle",
+            workDueAt: undefined,
+            workRunId: undefined,
+            workLeaseId: undefined,
+            workLeaseUntil: undefined,
+            nextProcessAt: undefined,
+            updatedAt: now,
+          });
+          continue;
+        }
         if (current?.workState === "idle" && previousWorkRunId && !current.workRunId) continue;
         if (p.status === "enrolled") await ctx.db.patch(p._id, { workState: "waiting", workDueAt: now + 60_000 });
         else await ctx.db.patch(p._id, { workState: "idle", workDueAt: undefined });

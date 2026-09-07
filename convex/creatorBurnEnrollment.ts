@@ -74,6 +74,8 @@ export async function queueCreatorBurnRequest(
     throw new Error(
       "A creator-fee change is already processing for this token.",
     );
+  if (p.configurationChangeRequestId && p.configurationChangeRequestId !== a.requestId)
+    throw new Error("A creator-fee change is already processing for this token.");
   const id = await ctx.db.insert("creatorBurnRequests", {
     requestId: a.requestId,
     programId: p._id,
@@ -85,6 +87,14 @@ export async function queueCreatorBurnRequest(
     nextAttemptAt: Date.now(),
     attempts: 0,
     createdAt: Date.now(),
+  });
+  // Freeze ordinary fee cycles before the creator layer can be deployed or
+  // assigned. This closes the interval in which the primary worker could
+  // sweep fees using the previous routing configuration.
+  await ctx.db.patch(p._id, {
+    configurationChangeRequestId: a.requestId,
+    nextProcessAt: undefined,
+    updatedAt: Date.now(),
   });
   await ctx.scheduler.runAfter(0, internal.creatorBurnEnrollment.run, { id });
   return id;
@@ -142,6 +152,40 @@ export const due = internalQuery({
         q.eq("status", "pending").lte("nextAttemptAt", Date.now()),
       )
       .take(10),
+});
+
+// Deployment/recovery bridge for requests that were accepted before the
+// durable scheduling barrier existed. This is intentionally internal: an
+// unauthenticated caller must never be able to freeze a fee program.
+export const reconcileConfigurationLocks = internalMutation({
+  args: { requestId: v.string(), tokenAddress: v.string() },
+  handler: async (ctx, args) => {
+    const request = await ctx.db
+      .query("creatorBurnRequests")
+      .withIndex("by_request", (q) => q.eq("requestId", args.requestId))
+      .unique();
+    if (!request || request.status !== "pending")
+      throw new Error("pending creator-fee request not found");
+    const program = await ctx.db.get(request.programId);
+    if (!program || program.status !== "enrolled"
+      || program.normalizedTokenAddress !== args.tokenAddress.toLowerCase())
+      throw new Error("creator-fee program identity mismatch");
+    if (program.configurationChangeRequestId
+      && program.configurationChangeRequestId !== request.requestId
+      && !program.configurationChangeRequestId.startsWith(`${request.requestId}:`))
+      throw new Error("another creator-fee change owns this program");
+    const lockRequestId = program.configurationChangeRequestId ?? request.requestId;
+    const changed = program.configurationChangeRequestId === undefined
+      || program.nextProcessAt !== undefined;
+    if (changed) {
+      await ctx.db.patch(program._id, {
+        configurationChangeRequestId: lockRequestId,
+        nextProcessAt: undefined,
+        updatedAt: Date.now(),
+      });
+    }
+    return { requestId: request.requestId, lockRequestId, tokenAddress: program.tokenAddress, locked: true, changed };
+  },
 });
 export const status = internalQuery({
   args: { requestId: v.string() },
@@ -246,6 +290,15 @@ export const save = internalMutation({
         .unique();
       const p = await ctx.db.get(r.programId),
         launch = p?.launchId ? await ctx.db.get(p.launchId) : null;
+      if (done && p?.configurationChangeRequestId
+        && (p.configurationChangeRequestId === r.requestId
+          || p.configurationChangeRequestId.startsWith(`${r.requestId}:`))) {
+        await ctx.db.patch(p._id, {
+          configurationChangeRequestId: undefined,
+          nextProcessAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
       if (wr && manualReview) {
         const message =
           "⚠️ The creator-fee configuration couldn't be completed.";

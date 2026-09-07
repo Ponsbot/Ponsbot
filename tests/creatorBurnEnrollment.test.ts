@@ -58,6 +58,7 @@ function setup() {
         unique: async () => result()[0] ?? null,
         first: async () => result()[0] ?? null,
         collect: async () => result(),
+        take: async (count: number) => result().slice(0, count),
       };
       return q;
     },
@@ -140,6 +141,36 @@ describe("creator burn enrollment authorization and persistence", () => {
         requestId: "sibling",
       }),
     ).rejects.toThrow("already processing");
+  });
+  it("freezes ordinary fee processing before creator configuration starts", async () => {
+    vi.stubEnv("CREATOR_SELF_BUYBACK_ENABLED", "true");
+    const { ctx, rows } = setup();
+    rows.automatedFeePrograms[0].nextProcessAt = 123;
+    await enrollment.queueCreatorBurnRequest(ctx as any, args);
+    expect(rows.automatedFeePrograms[0]).toMatchObject({
+      configurationChangeRequestId: args.requestId,
+      nextProcessAt: undefined,
+    });
+  });
+  it("repairs scheduling locks for requests accepted before the barrier existed", async () => {
+    const { ctx, rows } = setup();
+    rows.automatedFeePrograms[0].nextProcessAt = 123;
+    rows.creatorBurnRequests.push({
+      _id: "r",
+      ...args,
+      programId: "p",
+      status: "pending",
+      nextAttemptAt: 1,
+    });
+    const result = await (enrollment.reconcileConfigurationLocks as any)._handler(ctx, {
+      requestId: args.requestId,
+      tokenAddress: args.tokenAddress,
+    });
+    expect(result).toMatchObject({ requestId: args.requestId, tokenAddress: args.tokenAddress, locked: true, changed: true });
+    expect(rows.automatedFeePrograms[0]).toMatchObject({
+      configurationChangeRequestId: args.requestId,
+      nextProcessAt: undefined,
+    });
   });
   it("reuses saved deployment envelope without another signature", async () => {
     vi.stubEnv("CREATOR_SELF_BUYBACK_ENABLED", "true");

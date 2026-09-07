@@ -353,6 +353,11 @@ export default defineSchema({
     workRunId: v.optional(v.id("automatedFeeRuns")),
     workAttempts: v.optional(v.number()),
     nextProcessAt: v.optional(v.number()),
+    // A controller/creator-layer change owns the program while it is being
+    // finalized. Leaving nextProcessAt unset is the scheduling barrier; this
+    // identity makes that barrier durable and prevents unrelated work from
+    // accidentally releasing it.
+    configurationChangeRequestId: v.optional(v.string()),
     lastProcessAt: v.optional(v.number()),
     lastProcessedBlock: v.optional(v.string()),
     lastControllerChangeTransactionHash: v.optional(v.string()),
