@@ -3120,6 +3120,7 @@ type Mention = {
 type Media = { media_key: string; type: string; url?: string };
 
 const PASSIVE_CHAIN_OPERATIONS = new Set([
+  "show_burned",
   "create_wallet",
   "show_wallet",
   "show_balance",

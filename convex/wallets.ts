@@ -55,7 +55,7 @@ import { confirmedAllEthDisplay } from "../lib/native-send-display";
 import { isResumeReply } from "../lib/x-direct-post-policy";
 import { existingFeeUpgradeState, feeUpgradeAlreadyMessage, feeUpgradeSuccessMessage, FEE_UPGRADE_RESPONSES } from "../lib/fee-upgrade-command";
 import { recordVerifiedFeeOutcome } from "./automatedFeeOutcomes";
-import { requestedVaultClaimsEnabled } from "./automatedFeeClaimInfo";
+import { requestedVaultClaimsEnabled, settleRequestedClaimRows } from "./automatedFeeClaimInfo";
 import { automatedFeeDeploymentConfirmed } from "../lib/automated-fee-policy";
 import {
   GENERAL_GUIDED_HELP_MESSAGE,
@@ -962,6 +962,10 @@ export const updateWalletRequest = internalMutation({
         patch.diagnosticDetail = undefined;
       }
       await ctx.db.patch(request._id, patch);
+      if (request.kind === "claim_fees" && request.vaultClaimPreparedAt
+        && ["confirmed", "failed", "rejected", "skipped"].includes(args.status)) {
+        await settleRequestedClaimRows(ctx, request.requestId);
+      }
     }
   },
 });

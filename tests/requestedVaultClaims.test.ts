@@ -5,6 +5,7 @@ import * as engine from "../convex/automatedFeeEngine";
 import * as queue from "../convex/automatedFeeQueue";
 import * as wallets from "../convex/wallets";
 import { VAULT_CLAIM_REMINDER, vaultClaimResponse } from "../lib/vault-claim-response";
+import { xWeightedLength } from "../convex/xText";
 import { FEE_ACCUMULATION_THRESHOLD_WEI, nextFeeCheck } from "../lib/automated-fee-scheduling";
 vi.mock("../lib/wallet-signer/pricing", () => ({ ethUsdPrice: vi.fn(async () => 2000) }));
 
@@ -189,6 +190,38 @@ describe("threshold override and existing safety checks", () => {
 });
 
 describe("confirmed net claim responses", () => {
+  it("marks overlapping requests as the same payout without another execution", async () => {
+    const f = fixture(); await f.prepare(); await f.reserve();
+    const second = { ...f.request, _id: "second", requestId: "x:second:claim_fees", vaultClaimPreparedAt: undefined };
+    f.rows.walletRequests.push(second);
+    await handler(claims.prepareRequestedClaims)(f.ctx, { requestId: second.requestId });
+    await f.delivered();
+    const result = await handler(claims.requestedClaimResult)(f.ctx, { requestId: second.requestId });
+    expect(result.message).toContain("This is not an additional payout or burn");
+    expect(result.message).not.toContain("✅ Claimed");
+    expect(f.rows.automatedFeeRuns).toHaveLength(1);
+  });
+  it("settles terminal requests and excludes stale confirmed runs from pending checks", async () => {
+    const f = fixture(); await f.prepare(); await f.delivered();
+    expect(await handler(claims.hasPendingRequestedClaims)(f.ctx, { programId: "p" })).toBe(false);
+    await handler(wallets.updateWalletRequest)(f.ctx, { requestId: f.request.requestId, status: "confirmed" });
+    expect(f.rows.automatedFeeClaimRequests[0].status).toBe("completed");
+    expect((await f.result()).paid).toBe(true);
+    const before = f.scheduled?.length;
+    await handler(claims.reconcileCompletedRequests)(f.ctx, { requestIds: [f.request.requestId] });
+    expect(f.scheduled?.length).toBe(before);
+  });
+  it("shows paying tokens first and every payout link, separately from empty tokens", () => {
+    const text = vaultClaimResponse([
+      { tokenSymbol: "EMPTY", assetSymbol: "ETH", assetDecimals: 18, amount: "0", state: "no_fees" },
+      { tokenSymbol: "MOCK", assetSymbol: "ETH", assetDecimals: 18, amount: net, state: "paid", transactionHash: h(1) },
+      { tokenSymbol: "QUIVER", assetSymbol: "ETH", assetDecimals: 18, amount: net, state: "paid", transactionHash: h(2) },
+    ], true);
+    expect(text.startsWith("✅ Claimed")).toBe(true);
+    expect(text).toContain("from $MOCK, $QUIVER");
+    expect(text).toContain(h(1)); expect(text).toContain(h(2));
+    expect(text).toContain("\n\nℹ️ No fees");
+  });
   it("waits for delivery, then reports net amount and the exact V2 reminder", async () => {
     const f = fixture(); await f.prepare(); await f.reserve();
     Object.assign(f.rows.automatedFeeRuns[0], { beneficiaryAllocated: net, grossClaimed: gross, processingBlockNumber: "102" });
@@ -235,8 +268,9 @@ describe("confirmed net claim responses", () => {
     const outcomes = Array.from({ length: 100 }, (_, i) => ({ tokenSymbol: `TOKEN${i}`, assetSymbol: "ETH", assetDecimals: 18,
       amount: net, state: "paid" as const, transactionHash: h(i + 1) }));
     const text = vaultClaimResponse([...outcomes, { tokenSymbol: "PAIRED", assetSymbol: "MSFT", assetDecimals: 18, amount: "5000000000000000000", state: "paid" }], true);
-    expect(text).toContain("0.19 ETH"); expect(text).toContain("5 MSFT"); expect(text).toContain("and other launches");
-    expect(text).toContain(VAULT_CLAIM_REMINDER); expect(text.length).toBeLessThan(1000);
+    expect(text).toContain("0.19 ETH"); expect(text).toContain("5 MSFT"); expect(text).toContain("$TOKEN99");
+    for (let i = 1; i <= 100; i++) expect(text).toContain(`/tx/${h(i)}`);
+    expect(text).toContain(VAULT_CLAIM_REMINDER); expect(xWeightedLength(text)).toBeLessThan(8000);
   });
   it("seals completed explicit claims against retrying the same post", async () => {
     const f = fixture(); await f.prepare(); f.request.status = "failed";

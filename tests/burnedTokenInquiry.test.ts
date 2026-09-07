@@ -5,10 +5,21 @@ import { parseWalletCommand, isValueMovingCommand, isTerminalCommand } from "../
 import { parseXWalletIntent } from "../convex/xWalletIntent";
 import { executeCommand } from "../convex/wallets";
 import { save, resume } from "../convex/burnedLookups";
+import { shouldHandlePassiveChainText } from "../convex/xReplies";
+import { straightforwardCommandOperation } from "../convex/xWalletIntent";
 const ca = "0xdba76f1cf96dbef90e5e1083b70d15ce6e87b76a";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("burn inquiries", () => {
+  it("admits the actual STARTUP reply including inherited participant mentions", async () => {
+    const text = "@StartupRH_ @ponsbotfamily how much $STARTUP 0xcc3cc9ce3a657472f3c10749ab8ebd3885b4b19e has been burned?";
+    const command = { kind: "show_burned", token: "0xcc3cc9ce3a657472f3c10749ab8ebd3885b4b19e", expectedTicker: "STARTUP" };
+    expect(parseBurnedTokenInquiry(text)).toEqual(command);
+    expect(straightforwardCommandOperation(text)).toBe("show_burned");
+    expect(shouldHandlePassiveChainText(text)).toBe(true);
+    expect(await parseXWalletIntent(text, false)).toEqual({ kind: "command", command });
+    expect(shouldHandlePassiveChainText("@StartupRH_ @ponsbotfamily so many burns lately")).toBe(false);
+  });
   it("shows whole tokens, supply percentage and current-MCap value without a footer", () => {
     expect(burnedTokenMessage(ca, { raw: "100055", decimals: 2, totalSupplyRaw: "1000000", symbol: "WSB", usdValue: 2.5 }))
       .toBe("🔥 $WSB (0xdba7...b76a)\nBurned: 1,001 WSB (10.0%) ($2.50 at current MCap)");

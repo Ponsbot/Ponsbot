@@ -593,6 +593,7 @@ function boundedLaunchCommandSegment(text: string) {
 
 export function straightforwardCommandOperation(text: string): WalletOperation | null {
   if (hasPromptInjection(text)) return null;
+  if (parseWalletCommand(text).kind === "show_burned") return "show_burned";
   if (parseFeeUpgradePhrase(text)?.kind === "upgrade_fees") return "upgrade_fees";
   if (hasNonExecutableFraming(text)) return null;
   const embeddedLaunchSegment = boundedLaunchCommandSegment(text);

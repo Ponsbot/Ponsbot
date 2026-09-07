@@ -18,8 +18,13 @@ export const hasPendingRequestedClaims = internalQuery({
   handler: async (ctx, args) => {
     if (!requestedVaultClaimsEnabled()) return false;
     for (const status of ["queued", "running"] as const) {
-      if (await ctx.db.query("automatedFeeClaimRequests").withIndex("by_program_status", q =>
-        q.eq("programId", args.programId).eq("status", status)).first()) return true;
+      const rows = await ctx.db.query("automatedFeeClaimRequests").withIndex("by_program_status", q =>
+        q.eq("programId", args.programId).eq("status", status)).collect();
+      for (const row of rows) {
+        const request = await ctx.db.query("walletRequests").withIndex("by_request_id", q => q.eq("requestId", row.requestId)).unique();
+        const run = row.runId ? await ctx.db.get(row.runId) : null;
+        if (request?.status === "simulating" && (!run || !["confirmed", "reverted", "manual_review"].includes(run.status))) return true;
+      }
     }
     return false;
   },
@@ -91,6 +96,7 @@ export const prepareRequestedClaims = internalMutation({
         requestId: request.requestId, programId: p._id, walletId: wallet._id, beneficiaryAddress: wallet.address.toLowerCase(),
         tokenSymbol: symbol, assetSymbol: native ? "ETH" : pair?.symbol ?? "paired asset", assetDecimals: native ? 18 : pair?.decimals ?? 0,
         status: unavailable ? "unavailable" : join ? "running" : "queued", runId: join?._id,
+        sharedCycle: Boolean(join),
         reason: !args.tokenAddress && !native ? "claim_pair_individually" : unavailable ? "processing_unavailable" : undefined,
         createdAt: now, updatedAt: now,
       });
@@ -127,10 +133,41 @@ export async function liveRequestedClaims(ctx: MutationCtx, p: Doc<"automatedFee
 }
 
 export async function attachRequestedClaims(ctx: MutationCtx, p: Doc<"automatedFeePrograms">, runId: Id<"automatedFeeRuns">) {
-  for (const r of await liveRequestedClaims(ctx, p, runId)) {
-    await ctx.db.patch(r._id, { status: "running", runId, updatedAt: Date.now() });
+  const rows = (await liveRequestedClaims(ctx, p, runId)).sort((a, b) => a.createdAt - b.createdAt || a._id.localeCompare(b._id));
+  let attached = rows.some(r => r.runId === runId);
+  for (const r of rows) {
+    await ctx.db.patch(r._id, { status: "running", runId,
+      sharedCycle: r.runId === runId ? r.sharedCycle : attached, updatedAt: Date.now() });
+    attached = true;
   }
 }
+
+/** Finalize tracking only; this never schedules or executes a fee cycle. */
+export async function settleRequestedClaimRows(ctx: MutationCtx, requestId: string) {
+  const rows = await ctx.db.query("automatedFeeClaimRequests").withIndex("by_request", q => q.eq("requestId", requestId)).collect();
+  for (const row of rows) {
+    if (row.status !== "queued" && row.status !== "running") continue;
+    const run = row.runId ? await ctx.db.get(row.runId) : null;
+    const confirmed = run?.status === "confirmed" && run.programId === row.programId
+      && run.beneficiaryAddress.toLowerCase() === row.beneficiaryAddress;
+    await ctx.db.patch(row._id, { status: confirmed ? "completed" : "unavailable", updatedAt: Date.now() });
+  }
+}
+
+export const reconcileCompletedRequests = internalMutation({
+  args: { requestIds: v.array(v.string()) },
+  handler: async (ctx, { requestIds }) => {
+    if (requestIds.length > 100) throw new Error("at most 100 requests per reconciliation");
+    let reconciled = 0;
+    for (const requestId of new Set(requestIds)) {
+      const request = await ctx.db.query("walletRequests").withIndex("by_request_id", q => q.eq("requestId", requestId)).unique();
+      if (request?.kind !== "claim_fees" || !["confirmed", "failed", "rejected", "skipped"].includes(request.status)) continue;
+      await settleRequestedClaimRows(ctx, requestId);
+      reconciled++;
+    }
+    return { reconciled };
+  },
+});
 
 export const requestedClaimResult = internalQuery({
   args: { requestId: v.string(), legacyMessage: v.optional(v.string()), ethUsd: v.optional(v.number()) },
@@ -156,7 +193,7 @@ export const requestedClaimResult = internalQuery({
         || (!run && Date.now() - r.createdAt > 15 * 60_000) || !requestedVaultClaimsEnabled()) state = "unavailable";
       if (r.reason === "claim_pair_individually") { individualPairs = true; continue; }
       outcomes.push({ tokenSymbol: r.tokenSymbol, assetSymbol: r.assetSymbol, assetDecimals: r.assetDecimals,
-        assetAddress: p?.normalizedPairTokenAddress, state, amount, ponsbotBurned, transactionHash });
+        assetAddress: p?.normalizedPairTokenAddress, state, amount, ponsbotBurned, transactionHash, sharedCycle: r.sharedCycle });
     }
     const pending = outcomes.some(o => o.state === "pending");
     const noFees = outcomes.length > 0 && outcomes.every(o => o.state === "no_fees");

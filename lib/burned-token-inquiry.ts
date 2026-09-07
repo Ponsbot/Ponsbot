@@ -1,4 +1,5 @@
 import { tokenPattern } from "./token-pattern";
+import { directPostCommandText } from "./x-direct-post-policy";
 export function burnedTokenMessage(token: string, result: { raw: string; decimals: number; symbol?: string; totalSupplyRaw: string; usdValue?: number }) {
   const raw = BigInt(result.raw);
   const supply = BigInt(result.totalSupplyRaw);
@@ -13,7 +14,7 @@ export function burnedTokenMessage(token: string, result: { raw: string; decimal
 }
 export const BURNED_TOKEN_CA_MESSAGE = "⚠️ I couldn't identify that token in the index or your wallet. Reply with its contract address to check how much has been burned.";
 export function parseBurnedTokenInquiry(text: string) {
-  const clean = text.replace(/@ponsbotfamily\b/gi, " ").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim()
+  const clean = directPostCommandText(text).replace(/@ponsbotfamily\b/gi, " ").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim()
     .replace(/^(?:hey|hi|hello)[,!\s]+/i, "")
     .replace(/^(?:(?:please|(?:can|could|would) you|I'd like to know|I want to know)\s+)+/i, "")
     .replace(/^(?:tell|show) me\s+(?=how\b|what\b)/i, "")
