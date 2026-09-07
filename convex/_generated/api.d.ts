@@ -9,10 +9,10 @@
  */
 
 import type * as automatedFeeClaimInfo from "../automatedFeeClaimInfo.js";
-import type * as burnedLookups from "../burnedLookups.js";
 import type * as automatedFeeEngine from "../automatedFeeEngine.js";
 import type * as automatedFeeOutcomes from "../automatedFeeOutcomes.js";
 import type * as automatedFeeQueue from "../automatedFeeQueue.js";
+import type * as burnedLookups from "../burnedLookups.js";
 import type * as creatorFeeHistory from "../creatorFeeHistory.js";
 import type * as crons from "../crons.js";
 import type * as freeLaunches from "../freeLaunches.js";
@@ -53,11 +53,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  burnedLookups: typeof burnedLookups;
   automatedFeeClaimInfo: typeof automatedFeeClaimInfo;
   automatedFeeEngine: typeof automatedFeeEngine;
   automatedFeeOutcomes: typeof automatedFeeOutcomes;
   automatedFeeQueue: typeof automatedFeeQueue;
+  burnedLookups: typeof burnedLookups;
   creatorFeeHistory: typeof creatorFeeHistory;
   crons: typeof crons;
   freeLaunches: typeof freeLaunches;

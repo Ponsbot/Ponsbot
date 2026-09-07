@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
-import { parseBurnedTokenInquiry, BURNED_TOKEN_CA_MESSAGE } from "../lib/burned-token-inquiry";
+import { parseBurnedTokenInquiry, BURNED_TOKEN_CA_MESSAGE, burnedTokenMessage } from "../lib/burned-token-inquiry";
 import { parseWalletCommand, isValueMovingCommand, isTerminalCommand } from "../convex/walletCommands";
 import { parseXWalletIntent } from "../convex/xWalletIntent";
 import { executeCommand } from "../convex/wallets";
@@ -9,6 +9,12 @@ const ca = "0xdba76f1cf96dbef90e5e1083b70d15ce6e87b76a";
 const invoke = (f: any, ctx: any, args: any) => f._handler(ctx, args);
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("burn inquiries", () => {
+  it("shows whole tokens, supply percentage and current-MCap value without a footer", () => {
+    expect(burnedTokenMessage(ca, { raw: "100055", decimals: 2, totalSupplyRaw: "1000000", symbol: "WSB", usdValue: 2.5 }))
+      .toBe("🔥 $WSB (0xdba7...b76a)\nBurned: 1,001 WSB (10.0%) ($2.50 at current MCap)");
+    expect(burnedTokenMessage(ca, { raw: "0", decimals: 18, totalSupplyRaw: "0", symbol: "WSB" }))
+      .toContain("Burned: 0 WSB (N/A)");
+  });
   it.each([
     "How much $WSB is burned?", "how many WSB tokens have been burnt so far?",
     "Hey, @Ponsbotfamily could you tell me how much $WSB has been burned, please?",
@@ -34,7 +40,7 @@ describe("burn inquiries", () => {
   });
   it.each(["found", "missing", "ambiguous", "mismatch"])("handles token resolution: %s", async mode => {
     vi.stubEnv("WALLET_SIGNER_URL", "https://signer.example"); vi.stubEnv("WALLET_SIGNER_TOKEN", "test");
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ display: "1,000 WSB ($2.50)", symbol: "WSB" })));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ raw: "100000", decimals: 2, totalSupplyRaw: "1000000", usdValue: 2.5, symbol: "WSB" })));
     vi.stubGlobal("fetch", fetchMock);
     const mutations: string[] = [];
     const ctx = {
@@ -54,7 +60,7 @@ describe("burn inquiries", () => {
     const text = `How much ${mode === "mismatch" ? `$WSB ${ca}` : "$WSB"} has been burned?`;
     const result = await invoke(executeCommand, ctx, { xUserId: "owner", sourcePostId: "p", text });
     if (mode === "found") {
-      expect(result.ok).toBe(true); expect(result.message).toContain("$WSB (0xdba7...b76a)"); expect(result.message).toContain("1,000 WSB ($2.50)");
+      expect(result.ok).toBe(true); expect(result.message).toContain("$WSB (0xdba7...b76a)"); expect(result.message).toContain("1,000 WSB (10.0%) ($2.50 at current MCap)");
     } else {
       expect(result.ok).toBe(false); expect(fetchMock).not.toHaveBeenCalled();
       expect(result.message).toContain(mode === "missing" ? BURNED_TOKEN_CA_MESSAGE : mode === "ambiguous" ? "More than one" : "does not match");

@@ -1435,7 +1435,7 @@ export async function freeLaunchDevBuyEligibility(input: {
   };
 }
 
-export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string; raw?: string; decimals?: number; symbol?: string }> {
+export async function walletBalance(address: `0x${string}`, token?: string, knownTokens: Address[] = []): Promise<{ display: string; raw?: string; decimals?: number; symbol?: string; usdValue?: number }> {
   const client = rpcClient();
   if (!token || /^eth$/i.test(token)) {
     const [ethRaw, ethPrice] = await Promise.all([
@@ -1479,7 +1479,17 @@ export async function walletBalance(address: `0x${string}`, token?: string, know
   const amount = formatUnits(balance, metadata.decimals);
   let unitUsd = /^USDG$/i.test(metadata.symbol) ? 1 : market.get(tokenAddress.toLowerCase())?.priceUsd;
   if (unitUsd === undefined) unitUsd = await tokenUnitPriceUsd(tokenAddress, AbortSignal.timeout(5_000)).catch(() => undefined);
-  return { display: balanceWithUsd(`${trimDecimal(amount)} ${metadata.symbol}`, unitUsd === undefined ? undefined : Number(amount) * unitUsd), raw: balance.toString(), decimals: metadata.decimals, symbol: metadata.symbol };
+  const usdValue = unitUsd === undefined ? undefined : Number(amount) * unitUsd;
+  return { display: balanceWithUsd(`${trimDecimal(amount)} ${metadata.symbol}`, usdValue), raw: balance.toString(), decimals: metadata.decimals, symbol: metadata.symbol, usdValue };
+}
+
+export async function burnedTokenBalance(token: string) {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(token)) throw new Error("token lookup was not resolved by the registry");
+  const [balance, totalSupply] = await Promise.all([
+    walletBalance("0x000000000000000000000000000000000000dEaD", token),
+    rpcClient().readContract({ address: token as Address, abi: tokenAbi, functionName: "totalSupply" }),
+  ]);
+  return { ...balance, totalSupplyRaw: totalSupply.toString() };
 }
 
 export async function spendableEthBalance(address: Address, reservedGasUnits: number, requestedEth?: string) {

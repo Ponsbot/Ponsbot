@@ -7,6 +7,7 @@ import { automatedFeeClaimableRequestSchema, automatedFeeEnrollmentVerificationR
 import { automatedFeeControllerStatusRequestSchema } from "@/lib/wallet-signer/policy";
 import { automatedFeeControllerSweepRequestSchema, automatedFeeControllerSweepStatusRequestSchema } from "@/lib/wallet-signer/policy";
 import { assertAutomatedFeeDeliveryAccess } from "@/lib/wallet-signer/service";
+import { burnedTokenBalance } from "@/lib/wallet-signer/service";
 import { assertAutomatedFeeControllerAccess, assertAutomatedFeeEnrollmentAccess, assertAutomatedFeeExecutionAccess, automatedFeeTransactionStatus, authorizeAutomatedFeeQuote, authorizeSigner, broadcastAutomatedFeeControllerTransaction, broadcastAutomatedFeeDeliveryTransaction, broadcastAutomatedFeePairRoute, broadcastAutomatedFeeSweepTransaction, broadcastAutomatedFeeTransaction, broadcastTransaction, executeTransaction, feeClaimPlan, freeLaunchDevBuyEligibility, freeLaunchFundingEstimate, freeLaunchSponsorshipStatus, freeLaunchSponsorWallet, holderDistributorInfo, ponsPairInfo, prepareAutomatedFeeControllerTransaction, prepareAutomatedFeeDeliveryTransaction, prepareAutomatedFeePairRoute, prepareAutomatedFeeSweepTransaction, prepareAutomatedFeeTransaction, prepareLaunchAddresses, provisionWallet, sponsorFreeLaunch, spendableEthBalance, tokenContractMetadata, tokenValueAtBlock, transactionStatus, usdTokenAmount, walletBalance } from "@/lib/wallet-signer/service";
 import { prepareAutomatedFeeVaultDeployment } from "@/lib/wallet-signer/service";
 import { broadcastAutomatedFeeAdminTransaction } from "@/lib/wallet-signer/service";
@@ -264,7 +265,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     }
     if (path === "v1/tokens/burned") {
       const input = tokenMetadataRequestSchema.parse(body);
-      return NextResponse.json(await walletBalance("0x000000000000000000000000000000000000dEaD", input.token), { headers: { "cache-control": "no-store" } });
+      return NextResponse.json(await burnedTokenBalance(input.token), { headers: { "cache-control": "no-store" } });
     }
     if (path === "v1/wallets/spendable-eth") {
       const input = spendableEthRequestSchema.parse(body);

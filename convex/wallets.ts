@@ -48,7 +48,7 @@ import {
 import { isTokenIndexExcluded } from "../lib/token-index-exclusions";
 import { parseExplorerHoldings } from "../lib/wallet-holdings";
 import { assertBuyTarget, NON_INDEXED_BUY_TARGET_MESSAGE } from "../lib/buy-target-policy";
-import { BURNED_TOKEN_CA_MESSAGE } from "../lib/burned-token-inquiry";
+import { BURNED_TOKEN_CA_MESSAGE, burnedTokenMessage } from "../lib/burned-token-inquiry";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 import { nativeTokenOperationError } from "../lib/native-token-operation";
 import { confirmedAllEthDisplay } from "../lib/native-send-display";
@@ -3722,9 +3722,9 @@ export const executeCommand = internalAction({
           const identity = await ctx.runAction(internal.wallets.verifyTokenTickerContract, { ticker: command.expectedTicker, tokenAddress: token });
           if (!identity.matches) throw new Error(`TOKEN_CONTRACT_TICKER_MISMATCH:${command.expectedTicker}`);
         }
-        const result = await signerRequest<{ display: string; symbol?: string }>("/v1/tokens/burned", { chainId: ROBINHOOD_CHAIN_ID, token });
+        const result = await signerRequest<{ raw: string; decimals: number; symbol?: string; totalSupplyRaw: string; usdValue?: number }>("/v1/tokens/burned", { chainId: ROBINHOOD_CHAIN_ID, token });
         await ctx.runMutation(internal.burnedLookups.save, { owner: args.xUserId, source: args.source || "x" });
-        return { ok: true, message: `🔥 $${result.symbol || "TOKEN"} (${token.slice(0, 6)}...${token.slice(-4)})\nBurned: ${result.display}\nHeld at the dead address. ${result.display.includes("$") ? "Dollar value is estimated at the current token price." : "Current dollar value is unavailable."}` };
+        return { ok: true, message: burnedTokenMessage(token, result) };
       } catch (error) {
         const detail = error instanceof Error ? error.message : "";
         const mismatch = detail.startsWith("TOKEN_CONTRACT_TICKER_MISMATCH:");

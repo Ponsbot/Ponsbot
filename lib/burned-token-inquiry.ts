@@ -1,4 +1,16 @@
 import { tokenPattern } from "./token-pattern";
+export function burnedTokenMessage(token: string, result: { raw: string; decimals: number; symbol?: string; totalSupplyRaw: string; usdValue?: number }) {
+  const raw = BigInt(result.raw);
+  const supply = BigInt(result.totalSupplyRaw);
+  const unit = 10n ** BigInt(result.decimals);
+  const amount = ((raw + unit / 2n) / unit).toLocaleString("en-US");
+  const tenths = supply > 0n ? (raw * 1000n + supply / 2n) / supply : undefined;
+  const percent = tenths === undefined ? "N/A" : `${tenths / 10n}.${tenths % 10n}%`;
+  const value = result.usdValue !== undefined && Number.isFinite(result.usdValue)
+    ? `$${result.usdValue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} at current MCap`
+    : "USD value unavailable";
+  return `🔥 $${result.symbol || "TOKEN"} (${token.slice(0, 6)}...${token.slice(-4)})\nBurned: ${amount} ${result.symbol || "TOKEN"} (${percent}) (${value})`;
+}
 export const BURNED_TOKEN_CA_MESSAGE = "⚠️ I couldn't identify that token in the index or your wallet. Reply with its contract address to check how much has been burned.";
 export function parseBurnedTokenInquiry(text: string) {
   const clean = text.replace(/@ponsbotfamily\b/gi, " ").replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim()
