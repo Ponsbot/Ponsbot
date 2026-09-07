@@ -126,7 +126,10 @@ describe("zero native ETH gate", () => {
   });
   it.each([
     ["transaction execution", () => executeTransaction({ expectedFrom: address, operation: { type: "eth_transfer" } } as any)],
-    ["vault controller preparation", () => prepareAutomatedFeeControllerTransaction({ expectedAddress: address } as any)],
+    ["vault controller preparation", () => prepareAutomatedFeeControllerTransaction({
+      expectedAddress: address,
+      operation: { type: "reassign", newController: recipient, newBeneficiary: recipient },
+    } as any)],
     ["spendable ETH estimation", () => spendableEthBalance(address, 21_000)],
   ] as const)("retains the specialized zero-balance gate for %s", async (_name, run) => {
     await expect(run()).rejects.toThrow("zero native ETH");

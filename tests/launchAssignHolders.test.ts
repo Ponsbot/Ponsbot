@@ -19,7 +19,7 @@ describe("assign fees to holders at launch", () => {
     expect(launchFeeOptionsFromText("launch Cat $CAT assign fees to holdersXYZ")).toEqual({});
   });
   it("still rejects simultaneous wallet and holder assignments", () => {
-    expect(() => launchFeeOptionsFromText("assign fees to @alice assign fees to holders")).toThrow("not both");
+    expect(() => launchFeeOptionsFromText("assign fees to @alice assign fees to holders")).toThrow("Choose only one fee setting");
   });
   it("grounds AI extraction in the same phrase", () => {
     expect(normalizeLaunchFeeOptions({ kind: "launch", launchMode: "pons", name: "Cat", symbol: "CAT" },

@@ -52,7 +52,11 @@ describe("public burn data", () => {
       automatedFeePrograms: { ...program, status: enrolled ? "enrolled" : "exited" },
       cryptoWallets: { xUsername: "recipient" },
     };
-    const db = { get: async () => null, query: (table: string) => ({ withIndex: () => ({ unique: async () => rows[table] ?? null }) }) };
+    const db = { get: async () => null, query: (table: string) => ({ withIndex: () => ({
+      unique: async () => rows[table] ?? null,
+      collect: async () => [],
+      order: () => ({ first: async () => null }),
+    }) }) };
     const result = await handler(getLaunch)({ db }, { tokenAddress: token.toUpperCase() });
     expect(result.automatedFeeBuybackEnabled).toBe(enrolled);
     expect(result.creatorFeeRecipient).toBe(enrolled ? "0xbeneficiary" : "0xoriginal");

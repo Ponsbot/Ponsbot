@@ -9,6 +9,7 @@ import { createPublicClient, http, parseAbi, getAddress, getContractAddress, enc
   keccak256, stringToHex, serializeTransaction, parseSignature, recoverTransactionAddress } from "viem";
 
 const executing = process.argv.includes("--execute");
+const newLaunchStack = process.argv.includes("--new-launch");
 const confirm = process.argv[process.argv.indexOf("--confirm") + 1];
 const programId = process.argv[process.argv.indexOf("--lease-program") + 1];
 const envAddress = (key, fallback = "") => {
@@ -35,9 +36,12 @@ for (const [name,address] of Object.entries({control,primaryFactory,pons,router,
   dependencies[name]={address,codeHash:keccak256(code)};
 }
 const artifact = async name => JSON.parse(await readFile(resolve("contracts/out",name+".sol",name+".json"),"utf8"));
-const ex=await artifact("PonsBotCreatorBurnExecutor"), fac=await artifact("PonsBotCreatorBurnVaultFactory");
+const ex=await artifact("PonsBotCreatorBurnExecutor"), fac=await artifact(newLaunchStack
+  ? "PonsBotCreatorBurnVaultFactoryV2" : "PonsBotCreatorBurnVaultFactory");
 // Keep the original deployed generation's immutable journal intact.
-const path=resolve(".deployment-private/creator-burn-foundation-v2.json");
+const path=resolve(newLaunchStack
+  ? ".deployment-private/creator-burn-new-launch-v2.json"
+  : ".deployment-private/creator-burn-foundation-v2.json");
 await mkdir(resolve(".deployment-private"),{recursive:true});
 // Acquire before reading the journal; do not silently steal a crashed process's lock.
 const unlock=executing?await lockDeployment(path):undefined;
@@ -53,7 +57,7 @@ const steps=[
   {name:"factory",nonce:nonce+1,address:factory,data:encodeDeployData({abi:fac.abi,bytecode:fac.bytecode.object,args:[primaryFactory,control,executor,holders]})},
   {name:"bind",nonce:nonce+2,to:executor,data:encodeFunctionData({abi:ex.abi,functionName:"bindRegistry",args:[factory]})},
 ];
-const identity={chainId:4663,admin,initialNonce:nonce,dependencies,steps:steps.map(s=>({...s,data:keccak256(s.data)}))};
+const identity={chainId:4663,stack:newLaunchStack?"deterministic_new_launch_v2":"legacy_upgrade_v2",admin,initialNonce:nonce,dependencies,steps:steps.map(s=>({...s,data:keccak256(s.data)}))};
 const confirmationToken=keccak256(stringToHex(JSON.stringify(identity)));
 if(state && state.confirmationToken!==confirmationToken) throw new Error("Saved deployment differs from current artifacts/configuration. Do not overwrite it.");
 const balance=await client.getBalance({address:admin});
@@ -100,7 +104,7 @@ try {
       if(!tx.maxFeePerGas||gas*tx.maxFeePerGas>3_000_000_000_000_000n)throw new Error("Deployment exceeds 0.003 ETH per-step ceiling");
       if(await client.getBalance({address:admin})<gas*tx.maxFeePerGas)throw new Error("Admin underfunded");
       const digest=keccak256(serializeTransaction(tx));
-      const {signature}=await cdp.evm.signHash({address:admin,hash:digest,idempotencyKey:"creator-foundation:"+digest});
+      const {signature}=await cdp.evm.signHash({address:admin,hash:digest,idempotencyKey:(newLaunchStack?"creator-new-launch:":"creator-foundation:")+digest});
       const signed=serializeTransaction(tx,parseSignature(signature));
       if(getAddress(await recoverTransactionAddress({serializedTransaction:signed}))!==admin)throw new Error("Signature signer mismatch");
       record={name:step.name,hash:keccak256(signed),signed};state.steps[i]=record;await save();
@@ -123,6 +127,6 @@ try {
   if(getAddress(await read(executor,"registry"))!==getAddress(factory)||getAddress(await read(factory,"executor"))!==getAddress(executor))throw new Error("Registry binding mismatch");
   state.status="deployed_dormant";await save();
   lease("automatedFeeEngine:completeExternalDeployment");
-  console.log(JSON.stringify({status:state.status,mutationSent:true,executor,factory,tokenEnrollmentPerformed:false},null,2));
+  console.log(JSON.stringify({status:state.status,stack:identity.stack,mutationSent:true,executor,factory,tokenEnrollmentPerformed:false},null,2));
 } finally {if(deploymentLeaseHeld)lease("automatedFeeEngine:releaseDeploymentLease");}
 } finally {await unlock?.();}

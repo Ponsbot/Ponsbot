@@ -29,6 +29,10 @@ New-Item -ItemType Directory -Force -Path $output | Out-Null
   (Join-Path $projectRoot "contracts\src\PonsBotBuybackAdapter.sol") `
   (Join-Path $projectRoot "contracts\src\PonsBotNativeBuybackExecutor.sol") `
   (Join-Path $projectRoot "contracts\src\PonsBotPairedBuybackExecutor.sol") `
+  (Join-Path $projectRoot "contracts\src\PonsBotCreatorBurnVault.sol") `
+  (Join-Path $projectRoot "contracts\src\PonsBotCreatorBurnVaultV2.sol") `
+  (Join-Path $projectRoot "contracts\src\PonsBotCreatorBurnVaultFactoryV2.sol") `
+  (Join-Path $projectRoot "contracts\src\PonsBotCreatorBurnExecutor.sol") `
   -o $output --overwrite
 if ($LASTEXITCODE -ne 0) { throw "Solidity compilation failed." }
 

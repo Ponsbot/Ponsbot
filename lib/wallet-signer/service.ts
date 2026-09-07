@@ -584,6 +584,18 @@ export async function automatedFeeInfrastructureStatus() {
   ] as const) {
     if (!process.env[name]?.trim()) missingConfiguration.push(name);
   }
+  if (process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true") {
+    for (const name of [
+      "CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_ADDRESS",
+      "CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_ADDRESS",
+      "CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_CODE_HASH",
+      "CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_CODE_HASH",
+    ] as const) if (!process.env[name]?.trim()) missingConfiguration.push(name);
+    for (const name of ["CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_ADDRESS", "CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_ADDRESS"] as const) {
+      const value = process.env[name]?.trim();
+      if (value && !/^0x[a-fA-F0-9]{40}$/.test(value)) invalidConfiguration.push(name);
+    }
+  }
   if (missingConfiguration.length || invalidConfiguration.length) {
     return {
       chainId: await client.getChainId(),

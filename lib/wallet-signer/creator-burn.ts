@@ -91,7 +91,21 @@ export async function inspectCreatorBurn(
   candidate?: Address,
   block?: bigint,
 ) {
-  if (!process.env.CREATOR_SELF_BUYBACK_FACTORY_ADDRESS?.trim()) {
+  const registryConfigurations = [
+    {
+      factoryName: "CREATOR_SELF_BUYBACK_FACTORY_ADDRESS",
+      executorName: "CREATOR_SELF_BUYBACK_EXECUTOR_ADDRESS",
+      factoryHashName: "CREATOR_SELF_BUYBACK_FACTORY_CODE_HASH",
+      executorHashName: "CREATOR_SELF_BUYBACK_EXECUTOR_CODE_HASH",
+    },
+    {
+      factoryName: "CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_ADDRESS",
+      executorName: "CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_ADDRESS",
+      factoryHashName: "CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_CODE_HASH",
+      executorHashName: "CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_CODE_HASH",
+    },
+  ].filter((entry) => process.env[entry.factoryName]?.trim());
+  if (!registryConfigurations.length) {
     if (candidate) throw new Error("CREATOR_BURN_NOT_CONFIGURED");
     return null;
   }
@@ -99,22 +113,32 @@ export async function inspectCreatorBurn(
   if ((await client.getChainId()) !== 4663)
     throw new Error("CREATOR_BURN_WRONG_CHAIN");
   const blockNumber = block ?? (await client.getBlockNumber({ cacheTime: 0 }));
-  const factory = configured("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS");
-  const latest = await client.readContract({
-    address: factory,
-    abi: registryAbi,
-    functionName: "layerOf",
-    args: [vault],
-    blockNumber,
-  });
+  let selected: (typeof registryConfigurations)[number] | undefined;
+  let factory: Address | undefined;
+  let latest: Address = zeroAddress;
+  for (const entry of registryConfigurations) {
+    const possibleFactory = configured(entry.factoryName);
+    const possibleLayer = await client.readContract({ address: possibleFactory, abi: registryAbi,
+      functionName: "layerOf", args: [vault], blockNumber });
+    const matches = candidate
+      ? await client.readContract({ address: possibleFactory, abi: registryAbi,
+          functionName: "isLayer", args: [candidate], blockNumber })
+      : !eq(possibleLayer, zeroAddress);
+    if (!matches) continue;
+    if (selected) throw new Error("CREATOR_BURN_AMBIGUOUS_REGISTRY");
+    selected = entry; factory = possibleFactory; latest = possibleLayer;
+  }
   // Unenrolled primary vaults need no new executor configuration or code reads.
-  if (!candidate && eq(latest, zeroAddress)) return null;
-  const executor = configured("CREATOR_SELF_BUYBACK_EXECUTOR_ADDRESS");
+  if (!selected || !factory) {
+    if (candidate) throw new Error("CREATOR_BURN_UNKNOWN_LAYER");
+    return null;
+  }
+  const executor = configured(selected.executorName);
   const control = configured("AUTOMATED_FEE_CONTROL_ADDRESS"),
     primaryFactory = configured("AUTOMATED_FEE_VAULT_FACTORY_ADDRESS");
   for (const [a, key] of [
-    [factory, "CREATOR_SELF_BUYBACK_FACTORY_CODE_HASH"],
-    [executor, "CREATOR_SELF_BUYBACK_EXECUTOR_CODE_HASH"],
+    [factory, selected.factoryHashName],
+    [executor, selected.executorHashName],
   ] as const) {
     const code = await client.getCode({ address: a, blockNumber });
     const expected = process.env[key]?.toLowerCase();

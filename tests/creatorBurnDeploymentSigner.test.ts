@@ -6,7 +6,8 @@ import {
   parseTransaction,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { deployCreatorLayer, creatorLayerLaunchPreflight } from "../lib/wallet-signer/creator-burn-enrollment";
+import { creatorLayerLaunchPreflight, creatorNewLaunchPreflight, deployCreatorLayer,
+  deployCreatorNewLaunchLayer, predictCreatorNewLaunchLayer } from "../lib/wallet-signer/creator-burn-enrollment";
 const m = vi.hoisted(() => ({
   client: {
     getChainId: vi.fn(),
@@ -53,23 +54,29 @@ beforeEach(() => {
     CREATOR_SELF_BUYBACK_EXECUTOR_CODE_HASH: keccak256("0x1234"),
     AUTOMATED_FEE_VAULT_FACTORY_ADDRESS: a(5),
     AUTOMATED_FEE_CONTROL_ADDRESS: a(6),
+    CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_ADDRESS: a(7),
+    CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_ADDRESS: a(8),
+    CREATOR_SELF_BUYBACK_NEW_LAUNCH_FACTORY_CODE_HASH: keccak256("0x1234"),
+    CREATOR_SELF_BUYBACK_NEW_LAUNCH_EXECUTOR_CODE_HASH: keccak256("0x1234"),
   }))
     vi.stubEnv(k, v);
   m.client.getChainId.mockResolvedValue(4663);
   m.client.getCode.mockResolvedValue("0x1234");
   m.role.mockResolvedValue(admin);
   m.client.readContract.mockImplementation(
-    async ({ functionName }) =>
+    async ({ address, functionName }) =>
       ({
         primaryFactory: a(5),
         feeControl: a(6),
-        executor: a(2),
-        registry: a(1),
+        admin: admin.address,
+        executor: address === a(7) ? a(8) : a(2),
+        registry: address === a(8) ? a(7) : a(1),
         isVault: true,
         controller: a(4),
         beneficiary: a(4),
         active: true,
         layerOf: a(0),
+        predictLayerAddress: a(9),
       })[functionName as "active"],
   );
   m.client.estimateGas.mockResolvedValue(100000n);
@@ -96,6 +103,13 @@ describe("creator layer deployment signer", () => {
     await expect(creatorLayerLaunchPreflight()).rejects.toThrow("PIN_MISMATCH");
     m.client.getBalance.mockResolvedValueOnce(0n);
     await expect(creatorLayerLaunchPreflight()).rejects.toThrow("UNFUNDED");
+  });
+  it("blocks deterministic launch enrollment if the configured signer is not the live admin", async () => {
+    m.client.readContract.mockImplementation(async ({ address, functionName }) => ({
+      primaryFactory: a(5), feeControl: a(6), admin: a(99),
+      executor: address === a(7) ? a(8) : a(2), registry: address === a(8) ? a(7) : a(1),
+    })[functionName as "admin"]);
+    await expect(creatorNewLaunchPreflight()).rejects.toThrow("CREATOR_BURN_ADMIN_MISMATCH");
   });
   it("only prepares an exact factory call and never broadcasts preparation", async () => {
     const r = await deployCreatorLayer(req);
@@ -163,5 +177,45 @@ describe("creator layer deployment signer", () => {
         signedTransaction: r.signedTransaction,
       }),
     ).rejects.toThrow("envelope mismatch");
+  });
+  it("predicts and prepares the deterministic new-launch layer with owner, bps, and salt bound", async () => {
+    const salt = `0x${"22".repeat(32)}` as `0x${string}`;
+    expect(await predictCreatorNewLaunchLayer({ vaultAddress: a(3), owner: a(4), selfBurnBps: 5000, salt }))
+      .toEqual({ layerAddress: a(9) });
+    m.client.readContract.mockImplementation(async ({ address, functionName }) => ({
+      primaryFactory: a(5),
+      feeControl: a(6),
+      admin: admin.address,
+      executor: address === a(7) ? a(8) : a(2),
+      registry: address === a(8) ? a(7) : a(1),
+      isVault: true,
+      controller: a(9),
+      beneficiary: a(9),
+      active: true,
+      layerOf: a(0),
+      predictLayerAddress: a(9),
+    })[functionName as "active"]);
+    const r = await deployCreatorNewLaunchLayer({ vaultAddress: a(3), owner: a(4), selfBurnBps: 5000,
+      salt, expectedLayer: a(9), idempotencyKey: "new-launch-layer" });
+    expect(r.status).toBe("prepared");
+    const tx = parseTransaction(r.signedTransaction!);
+    expect(tx.to?.toLowerCase()).toBe(a(7));
+    expect(tx.data).toBe(encodeFunctionData({ abi: parseAbi([
+      "function create(address,address,uint16,bytes32) returns(address)",
+    ]), functionName: "create", args: [a(3), a(4), 5000, salt] }));
+  });
+  it("prepares an authenticated prebound obligation after initiation is disabled", async () => {
+    const salt = `0x${"33".repeat(32)}` as `0x${string}`;
+    vi.stubEnv("CREATOR_SELF_BUYBACK_ENABLED", "false");
+    m.client.readContract.mockImplementation(async ({ functionName }) => ({
+      predictLayerAddress: a(9), controller: a(9), beneficiary: a(9),
+    })[functionName as "controller"]);
+    await expect(deployCreatorNewLaunchLayer({ vaultAddress: a(3), owner: a(4), selfBurnBps: 0,
+      salt, expectedLayer: a(9), idempotencyKey: "disabled-recovery" })).resolves.toMatchObject({ status: "prepared" });
+  });
+  it("checks the deployed new-launch registry without mutating it", async () => {
+    expect(await creatorNewLaunchPreflight()).toEqual({ ready: true });
+    expect(m.cdp.evm.signTransaction).not.toHaveBeenCalled();
+    expect(m.client.sendRawTransaction).not.toHaveBeenCalled();
   });
 });

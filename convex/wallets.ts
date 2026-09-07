@@ -5565,7 +5565,8 @@ export const executeCommand = internalAction({
           wallet.address,
         );
         if (command.kind === "launch") {
-          let automatedVault: { vaultAddress: string; deploymentSalt: string; controllerAddress: string } | undefined;
+          let automatedVault: { vaultAddress: string; deploymentSalt: string; controllerAddress: string;
+            creatorLayerAddress: string; creatorLayerSalt: string; executionBps: number } | undefined;
           workflowStage = "launch_address_preparation";
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
             requestId,
@@ -5577,9 +5578,12 @@ export const executeCommand = internalAction({
           const automatedPairSupported = /^0x0{40}$/i.test(enrollmentPairToken)
             || AUTOMATED_FEE_PAIR_ROUTES.some((route) => route.pairAsset.toLowerCase() === enrollmentPairToken.toLowerCase());
           if(command.selfBurnBps!==undefined&&!automatedPairSupported)throw new Error("Self-buyback and burn is not available for this launch pairing yet. No launch was started.");
-          if (command.selfBurnBps !== undefined) {
+          if (process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true"
+            && process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true"
+            && !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing
+            && automatedPairSupported) {
             try {
-              const readiness = await signerRequest<{ ready: boolean }>("/v1/creator-burn/launch-preflight", {}, 30_000);
+              const readiness = await signerRequest<{ ready: boolean }>("/v1/creator-burn/new-launch-preflight", {}, 30_000);
               if (readiness.ready !== true) throw new Error("Creator fee preflight incomplete");
             } catch {
               throw new Error("CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED");
@@ -5597,7 +5601,7 @@ export const executeCommand = internalAction({
               throw new Error("automated fee launch enrollment inputs are invalid");
             }
             const prediction = await ctx.runAction(internal.automatedFeeEngine.predictNewLaunchVault, {
-              requestId, ponsFactoryAddress,
+              requestId, ponsFactoryAddress, ownerAddress: controllerAddress, selfBurnBps: command.selfBurnBps ?? 0,
             });
             automatedVault = { ...prediction, controllerAddress };
             operation = { ...operation, creatorFeeRecipient: prediction.vaultAddress };
@@ -5619,6 +5623,10 @@ export const executeCommand = internalAction({
               requestId, predictedTokenAddress, predictedVaultAddress: automatedVault.vaultAddress,
               controllerAddress: automatedVault.controllerAddress, beneficiaryAddress: automatedVault.controllerAddress,
               pairTokenAddress, distributionMode: "wallet", deploymentSalt: automatedVault.deploymentSalt,
+              predictedCreatorLayerAddress: automatedVault.creatorLayerAddress,
+              creatorBurnOwnerAddress: automatedVault.controllerAddress,
+              creatorBurnBps: automatedVault.executionBps,
+              creatorBurnLayerSalt: automatedVault.creatorLayerSalt,
             });
           }
           await applyAutomaticFreeLaunchSponsorship(

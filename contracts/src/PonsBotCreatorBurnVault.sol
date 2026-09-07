@@ -56,8 +56,14 @@ contract PonsBotCreatorBurnVault {
         if (primary.code.length == 0 || executor_.code.length == 0 || holderRegistry_.code.length == 0
             || owner_ == address(0) || owner_ == address(this)) revert InvalidConfiguration();
         upstream = PonsBotFeeVault(payable(primary));
-        if (!upstream.active() || upstream.controller() != owner_ || upstream.beneficiary() != owner_)
-            revert Unauthorized();
+        address upstreamController = upstream.controller();
+        // Legacy upgrades construct the layer while the human owner still
+        // controls the primary. New launches pre-bind the primary to the
+        // deterministic layer address before this constructor runs. Supporting
+        // both states removes the post-launch controller-transfer window while
+        // leaving every already-deployed layer unchanged.
+        if (!upstream.active() || upstream.controller() != upstream.beneficiary()
+            || (upstreamController != owner_ && upstreamController != address(this))) revert Unauthorized();
         token = upstream.token(); asset = upstream.pairAsset(); feeControl = upstream.feeControl();
         if (token == asset) revert InvalidConfiguration();
         owner = owner_; executor = executor_; executorCodeHash = executor_.codehash; holderRegistry = holderRegistry_;

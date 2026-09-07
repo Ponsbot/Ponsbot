@@ -625,6 +625,19 @@ describe("upgrade incident: continuation, cancellation and fresh-post recovery",
 });
 
 describe("controller workflow identity and strict handoff", () => {
+  it("hands a completed creator-layer enrollment lock to its percentage sibling only", async () => {
+    const ctx = fixture();
+    ctx.rows.automatedFeePrograms[0].configurationChangeRequestId = "burn:enroll";
+    ctx.rows.creatorBurnRequests = [{ _id: "burn", requestId: "burn", programId: "p", status: "pending" }];
+    ctx.rows.automatedFeeControllerChanges = [{ _id: "enroll", requestId: "burn:enroll", programId: "p",
+      status: "confirmed", workflowCompletedAt: 10, enrollmentLayer: a(30) }];
+    const percentage = { ...root, requestId: "burn:percentage", selfBurnBps: 5000,
+      previousControllerAddress: a(1), newControllerAddress: a(1), newBeneficiaryAddress: a(1) };
+    await handler(engine.reserveControllerChange)(ctx, percentage);
+    expect(ctx.rows.automatedFeePrograms[0].configurationChangeRequestId).toBe("burn:percentage");
+    await expect(handler(engine.reserveControllerChange)(ctx, { ...percentage, requestId: "other:percentage" }))
+      .rejects.toThrow("another automated fee controller");
+  });
   it("permits only bound children and retains cross-request exclusion", async () => {
     const ctx = fixture();
     const original = await handler(engine.reserveControllerChange)(ctx, root);
@@ -689,11 +702,15 @@ describe("durable enrollment and shared-wallet serialization", () => {
   it("binds a matching confirmed launch after expiry, idempotently", async () => {
     const ctx = fixture(); ctx.rows.automatedFeePrograms = [];
     ctx.rows.automatedFeeEnrollmentReservations = [{ _id: "r", ...root, requestId: "launch", status: "expired", expiresAt: 1,
-      normalizedPredictedTokenAddress: a(20), normalizedPredictedVaultAddress: a(21), deploymentSalt: h(1), distributionMode: "wallet" }];
+      normalizedPredictedTokenAddress: a(20), normalizedPredictedVaultAddress: a(21), deploymentSalt: h(1), distributionMode: "wallet",
+      predictedCreatorLayerAddress: a(30), normalizedPredictedCreatorLayerAddress: a(30),
+      creatorBurnOwnerAddress: a(1), normalizedCreatorBurnOwnerAddress: a(1), creatorBurnBps: 5000, creatorBurnLayerSalt: h(2) }];
     const args = { reservationId: "r", launchId: "l", actualTokenAddress: a(20), actualVaultAddress: a(21) };
     const id = await handler(engine.bindPrelaunchEnrollment)(ctx,args);
     expect(await handler(engine.bindPrelaunchEnrollment)(ctx,args)).toBe(id);
     expect(ctx.rows.automatedFeePrograms).toHaveLength(1);
+    expect(ctx.rows.automatedFeePrograms[0]).toMatchObject({ programVersion: 2, creatorBurnLayerAddress: a(30),
+      creatorBurnOwnerAddress: a(1), creatorBurnBps: 5000, creatorBurnLayerSalt: h(2) });
     await expect(handler(engine.bindPrelaunchEnrollment)(ctx,{ ...args, actualTokenAddress: a(99) })).rejects.toThrow("binding mismatch");
   });
   it("does not expire a reservation with a persisted transaction or live launch request", async () => {
@@ -715,6 +732,17 @@ describe("durable enrollment and shared-wallet serialization", () => {
       deploymentTransactionHash: h(1), ...(confirmed ? { deploymentConfirmedAt: 2 } : {}) }];
     await handler(engine.recoverPreparedEnrollments)(ctx,{});
     expect(ctx.scheduled[0].name).toBe(confirmed ? "automatedFeeEngine:recoverUpgradeAssignment" : "automatedFeeEngine:deployPreparedEnrollment");
+  });
+  it("recovers a confirmed V2 primary through its deterministic creator layer", async () => {
+    const ctx = database();
+    ctx.rows.automatedFeePrograms = [{ _id: "p", status: "prepared", programVersion: 2,
+      enrollmentSource: "new_launch", nextEnrollmentAttemptAt: 1,
+      deploymentTransactionHash: h(1), deploymentConfirmedAt: 2 }];
+    await handler(engine.recoverPreparedEnrollments)(ctx, {});
+    expect(ctx.scheduled[0]).toEqual({
+      name: "automatedFeeEngine:deployPreparedNewLaunchLayer",
+      args: { programId: "p" },
+    });
   });
   it("serializes admin signing and retains nonce ownership after action lease release", async () => {
     const ctx = database(); ctx.rows.automatedFeePrograms = [{ _id: "p", status: "prepared" }, { _id: "p2", status: "prepared" }];

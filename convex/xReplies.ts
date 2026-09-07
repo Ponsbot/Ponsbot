@@ -2487,17 +2487,15 @@ export const retryInteraction = internalAction({
           return;
         }
         if (result.ok && intent.command.kind === "launch" && intent.command.selfBurnBps !== undefined) {
-          const configuration = await ctx.runQuery(internal.creatorBurnEnrollment.status, {
-            requestId: `x:${postId}:launch:self-burn`,
-          });
-          const configurationReply = creatorBurnLaunchReply(configuration, Date.now() - current.interaction.createdAt);
-          if (configurationReply === null) {
-            await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, {
-              postId, safeError: AUTOMATED_FEE_WORKFLOW_CONTINUATION,
-            });
-            return;
-          }
-          result.message += `\n${configurationReply}`;
+          // New launches bind the primary vault to the deterministic creator
+          // layer before the launch transaction is signed. A successful launch
+          // therefore already commits the requested rate by address and salt;
+          // do not wait for the legacy post-launch enrollment request that V2
+          // intentionally no longer creates.
+          result.message += `\n${creatorBurnLaunchReply({
+            status: "confirmed",
+            bps: intent.command.selfBurnBps,
+          }, 0)}`;
         }
         if (result.pending || result.deferred) {
           const acceptedConfiguration = intent.command.kind === "reassign_fees" && intent.command.selfBurnBps !== undefined

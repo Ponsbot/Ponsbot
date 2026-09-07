@@ -9,6 +9,7 @@ import { queueCreatorBurnRequest } from "./creatorBurnEnrollment";
 import { attachRequestedClaims, liveRequestedClaims, requestedVaultClaimsEnabled } from "./automatedFeeClaimInfo";
 import { existingFeeUpgradeState } from "../lib/fee-upgrade-command";
 import { PONSBOT_BURN_TOKEN } from "../lib/burn-stats";
+import { creatorBurnExecutionBps } from "../lib/creator-burn-percentage";
 import { canUseGraduatedEscrow, feeRunHasTransaction, feeSweepPrerequisiteSatisfied, isGraduatedSweepPreflightFailure } from "../lib/automated-fee-sweep-policy";
 import { FEE_ACCUMULATION_THRESHOLD_WEI, feeThresholdReached, nextFeeCheck, feeRetryDelay } from "../lib/automated-fee-scheduling";
 import { manualCreatorFeesEligible } from "../lib/manual-creator-fee-policy";
@@ -335,10 +336,17 @@ export const reservePrelaunchEnrollment = internalMutation({
     pairTokenAddress: v.string(),
     distributionMode: v.union(v.literal("wallet"), v.literal("holders")),
     deploymentSalt: v.string(),
+    predictedCreatorLayerAddress: v.string(),
+    creatorBurnOwnerAddress: v.string(),
+    creatorBurnBps: v.number(),
+    creatorBurnLayerSalt: v.string(),
   },
   handler: async (ctx, args) => {
     if (!automatedFeeDistributionEligible(args.distributionMode)) {
       throw new Error("holder fee sharing is exempt from automated buyback and burn");
+    }
+    if (!Number.isInteger(args.creatorBurnBps) || args.creatorBurnBps < 0 || args.creatorBurnBps > 10_000) {
+      throw new Error("creator burn percentage is invalid");
     }
     if (!configuration().capabilities.newLaunchEnrollment || !PRODUCTION_EXECUTION_IMPLEMENTATION_READY) {
       throw new Error("automated fee enrollment is not enabled");
@@ -356,7 +364,11 @@ export const reservePrelaunchEnrollment = internalMutation({
         || existingRequest.normalizedBeneficiaryAddress !== normalizedAddress(args.beneficiaryAddress)
         || existingRequest.normalizedPairTokenAddress !== normalizedAddress(args.pairTokenAddress)
         || existingRequest.distributionMode !== args.distributionMode
-        || existingRequest.deploymentSalt !== validatedSalt(args.deploymentSalt)) {
+        || existingRequest.deploymentSalt !== validatedSalt(args.deploymentSalt)
+        || existingRequest.normalizedPredictedCreatorLayerAddress !== normalizedAddress(args.predictedCreatorLayerAddress)
+        || existingRequest.normalizedCreatorBurnOwnerAddress !== normalizedAddress(args.creatorBurnOwnerAddress)
+        || existingRequest.creatorBurnBps !== args.creatorBurnBps
+        || existingRequest.creatorBurnLayerSalt !== validatedSalt(args.creatorBurnLayerSalt)) {
         throw new Error("automated fee reservation identity conflict");
       }
       if (existingRequest.status === "reserved" || existingRequest.status === "bound") return existingRequest._id;
@@ -390,6 +402,12 @@ export const reservePrelaunchEnrollment = internalMutation({
         beneficiaryAddress: args.beneficiaryAddress, normalizedBeneficiaryAddress: normalizedAddress(args.beneficiaryAddress),
         pairTokenAddress: args.pairTokenAddress, normalizedPairTokenAddress: normalizedAddress(args.pairTokenAddress),
         distributionMode: args.distributionMode, deploymentSalt: validatedSalt(args.deploymentSalt),
+        predictedCreatorLayerAddress: args.predictedCreatorLayerAddress,
+        normalizedPredictedCreatorLayerAddress: normalizedAddress(args.predictedCreatorLayerAddress),
+        creatorBurnOwnerAddress: args.creatorBurnOwnerAddress,
+        normalizedCreatorBurnOwnerAddress: normalizedAddress(args.creatorBurnOwnerAddress),
+        creatorBurnBps: args.creatorBurnBps,
+        creatorBurnLayerSalt: validatedSalt(args.creatorBurnLayerSalt),
         status: "reserved", boundProgramId: undefined, expiresAt: now + AUTOMATED_FEE_ENROLLMENT_RESERVATION_MS, updatedAt: now,
       });
       return reusableReservation._id;
@@ -408,6 +426,12 @@ export const reservePrelaunchEnrollment = internalMutation({
       normalizedPairTokenAddress: normalizedAddress(args.pairTokenAddress),
       distributionMode: args.distributionMode,
       deploymentSalt: validatedSalt(args.deploymentSalt),
+      predictedCreatorLayerAddress: args.predictedCreatorLayerAddress,
+      normalizedPredictedCreatorLayerAddress: normalizedAddress(args.predictedCreatorLayerAddress),
+      creatorBurnOwnerAddress: args.creatorBurnOwnerAddress,
+      normalizedCreatorBurnOwnerAddress: normalizedAddress(args.creatorBurnOwnerAddress),
+      creatorBurnBps: args.creatorBurnBps,
+      creatorBurnLayerSalt: validatedSalt(args.creatorBurnLayerSalt),
       status: "reserved",
       expiresAt: now + AUTOMATED_FEE_ENROLLMENT_RESERVATION_MS,
       createdAt: now,
@@ -467,7 +491,11 @@ export const bindPrelaunchEnrollment = internalMutation({
       distributionMode: reservation.distributionMode,
       enrollmentSource: "new_launch",
       enrollmentRequestId: reservation.requestId,
-      programVersion: 1,
+      programVersion: 2,
+      creatorBurnLayerAddress: reservation.predictedCreatorLayerAddress,
+      creatorBurnBps: reservation.creatorBurnBps,
+      creatorBurnOwnerAddress: reservation.creatorBurnOwnerAddress,
+      creatorBurnLayerSalt: reservation.creatorBurnLayerSalt,
       buybackBps: AUTOMATED_FEE_BUYBACK_BPS,
       status: "prepared",
       deploymentSalt: reservation.deploymentSalt,
@@ -498,9 +526,9 @@ export const cancelPrelaunchEnrollment = internalMutation({
 
 export const predictNewLaunchVault = internalAction({
   args: {
-    requestId: v.string(), ponsFactoryAddress: v.string(),
+    requestId: v.string(), ponsFactoryAddress: v.string(), ownerAddress: v.string(), selfBurnBps: v.number(),
   },
-  handler: async (ctx, args): Promise<{ vaultAddress: string; deploymentSalt: string }> => {
+  handler: async (ctx, args): Promise<{ vaultAddress: string; deploymentSalt: string; creatorLayerAddress: string; creatorLayerSalt: string; executionBps: number }> => {
     const config = configuration();
     if (!config.capabilities.newLaunchEnrollment || !PRODUCTION_EXECUTION_IMPLEMENTATION_READY) {
       throw new Error("automated fee new-launch enrollment is not enabled");
@@ -509,13 +537,22 @@ export const predictNewLaunchVault = internalAction({
       `ponsbot:automated-fee-vault:${args.requestId}`,
     ));
     const deploymentSalt = `0x${Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+    const layerDigest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(
+      `ponsbot:creator-fee-layer-v2:${args.requestId}`,
+    ));
+    const creatorLayerSalt = `0x${Array.from(new Uint8Array(layerDigest)).map((value) => value.toString(16).padStart(2, "0")).join("")}`;
     const vaultFactoryAddress = process.env.AUTOMATED_FEE_VAULT_FACTORY_ADDRESS?.trim();
     if (!vaultFactoryAddress) throw new Error("automated fee vault factory is not configured");
     const prediction = await signerRequest<{ vaultAddress: string }>("/v1/automated-fees/predict-vault", {
       chainId: ROBINHOOD_CHAIN_ID, tokenAddress: "0x0000000000000000000000000000000000000000", vaultFactoryAddress,
       ponsFactoryAddress: args.ponsFactoryAddress, salt: deploymentSalt, enrollmentSource: "new_launch",
     });
-    return { vaultAddress: prediction.vaultAddress, deploymentSalt };
+    const executionBps = creatorBurnExecutionBps("0x0000000000000000000000000000000000000000", args.selfBurnBps);
+    const layerPrediction = await signerRequest<{ layerAddress: string }>("/v1/creator-burn/predict-new-launch-layer", {
+      vaultAddress: prediction.vaultAddress, owner: args.ownerAddress, selfBurnBps: executionBps, salt: creatorLayerSalt,
+    });
+    return { vaultAddress: prediction.vaultAddress, deploymentSalt, creatorLayerAddress: layerPrediction.layerAddress,
+      creatorLayerSalt, executionBps };
   },
 });
 
@@ -695,7 +732,10 @@ export const finalizeVerifiedEnrollment = internalMutation({
       await finalizeFeeWalletOutcome(ctx, { ...program, status: "enrolled", enrollmentTransactionHash: args.enrollmentTransactionHash },
         program.enrollmentRequestId ?? "", "upgrade", args.enrollmentTransactionHash);
     }
-    if(program.enrollmentSource==="new_launch"&&program.enrollmentRequestId){
+    if (program.programVersion === 2 && program.creatorBurnLayerAddress) {
+      await ctx.scheduler.runAfter(0, internal.creatorBurnEngine.sync, { programId: program._id });
+      await ctx.scheduler.runAfter(1_000, internal.creatorBurnEngine.wake, { programId: program._id });
+    } else if(program.enrollmentSource==="new_launch"&&program.enrollmentRequestId){
       const wr=await ctx.db.query("walletRequests").withIndex("by_request_id",q=>q.eq("requestId",program.enrollmentRequestId!)).unique();
       const command=wr?JSON.parse(wr.normalizedJson):null;
       if(command?.kind==="launch"&&command.selfBurnBps!==undefined){
@@ -1142,6 +1182,112 @@ export const markVaultDeploymentConfirmed = internalMutation({
   },
 });
 
+export const persistPreparedCreatorLayerDeployment = internalMutation({
+  args: { programId: v.id("automatedFeePrograms"), transactionHash: v.string(), signedTransaction: v.string(),
+    transactionNonce: v.number(), preparedAt: v.number() },
+  handler: async (ctx, args) => {
+    const program = await ctx.db.get(args.programId);
+    if (!program || program.status !== "prepared" || program.programVersion !== 2 || !program.creatorBurnLayerAddress)
+      throw new Error("new-launch creator layer is not prepared");
+    if ((program.creatorBurnLayerDeploymentTransactionHash && program.creatorBurnLayerDeploymentTransactionHash !== args.transactionHash)
+      || (program.creatorBurnLayerDeploymentSignedTransaction && program.creatorBurnLayerDeploymentSignedTransaction !== args.signedTransaction))
+      throw new Error("immutable creator layer deployment conflict");
+    await ctx.db.patch(program._id, {
+      creatorBurnLayerDeploymentTransactionHash: args.transactionHash,
+      creatorBurnLayerDeploymentSignedTransaction: args.signedTransaction,
+      creatorBurnLayerDeploymentTransactionNonce: args.transactionNonce,
+      updatedAt: args.preparedAt,
+    });
+  },
+});
+
+export const markCreatorLayerBroadcast = internalMutation({
+  args: { programId: v.id("automatedFeePrograms"), broadcastAt: v.number() },
+  handler: async (ctx, args) => {
+    const program = await ctx.db.get(args.programId);
+    if (!program?.creatorBurnLayerDeploymentTransactionHash) throw new Error("creator layer transaction is missing");
+    await ctx.db.patch(program._id, { creatorBurnLayerDeploymentBroadcastAt: args.broadcastAt, updatedAt: Date.now() });
+  },
+});
+
+export const markCreatorLayerConfirmed = internalMutation({
+  args: { programId: v.id("automatedFeePrograms") },
+  handler: async (ctx, { programId }) => {
+    const program = await ctx.db.get(programId);
+    if (!program?.creatorBurnLayerDeploymentTransactionHash || program.programVersion !== 2)
+      throw new Error("creator layer confirmation mismatch");
+    await ctx.db.patch(programId, { creatorBurnLayerDeploymentConfirmedAt: Date.now(), updatedAt: Date.now() });
+  },
+});
+
+export const deployPreparedNewLaunchLayer = internalAction({
+  args: { programId: v.id("automatedFeePrograms") },
+  handler: async (ctx, { programId }): Promise<void> => {
+    const leaseId = crypto.randomUUID();
+    if (!(await ctx.runMutation(internal.automatedFeeEngine.acquireDeploymentLease, { programId, leaseId }))) {
+      // Another primary/layer callback may still own the shared admin nonce.
+      // Persisted state remains authoritative; retry this exact program instead
+      // of relying solely on the periodic recovery scan.
+      await ctx.scheduler.runAfter(5_000, internal.automatedFeeEngine.deployPreparedNewLaunchLayer, { programId });
+      return;
+    }
+    try {
+    const program = await ctx.runQuery(internal.automatedFeeEngine.enrollmentProgramStatus, { programId });
+    if (!program || program.status !== "prepared" || program.programVersion !== 2
+      || !program.deploymentConfirmedAt || !program.creatorBurnLayerAddress || !program.creatorBurnOwnerAddress
+      || program.creatorBurnBps === undefined || !program.creatorBurnLayerSalt || !program.deploymentTransactionHash) return;
+    const request = {
+      vaultAddress: program.vaultAddress, owner: program.creatorBurnOwnerAddress, selfBurnBps: program.creatorBurnBps,
+      salt: program.creatorBurnLayerSalt, expectedLayer: program.creatorBurnLayerAddress,
+      idempotencyKey: `creator-new-layer:${program.enrollmentRequestId ?? program._id}`,
+    };
+    try {
+      let signed = program.creatorBurnLayerDeploymentSignedTransaction;
+      if (!signed) {
+        const prepared = await signerRequest<{ status: string; signedTransaction: string; transactionHash: string; nonce: number }>(
+          "/v1/creator-burn/deploy-new-launch-layer", request, 60_000);
+        if (!prepared.signedTransaction || !prepared.transactionHash || prepared.nonce === undefined)
+          throw new Error("creator layer signer did not return a durable envelope");
+        signed = prepared.signedTransaction;
+        await ctx.runMutation(internal.automatedFeeEngine.persistPreparedCreatorLayerDeployment, {
+          programId, transactionHash: prepared.transactionHash, signedTransaction: signed,
+          transactionNonce: prepared.nonce, preparedAt: Date.now(),
+        });
+      }
+      const status = await signerRequest<{ status: "pending" | "confirmed" | "reverted"; transactionHash: string }>(
+        "/v1/creator-burn/deploy-new-launch-layer", { ...request, signedTransaction: signed }, 60_000);
+      if (!program.creatorBurnLayerDeploymentBroadcastAt)
+        await ctx.runMutation(internal.automatedFeeEngine.markCreatorLayerBroadcast, { programId, broadcastAt: Date.now() });
+      if (status.status === "confirmed") {
+        await ctx.runMutation(internal.automatedFeeEngine.markCreatorLayerConfirmed, { programId });
+        const context = await ctx.runQuery(internal.automatedFeeEngine.enrollmentContext, { programId });
+        if (!context.launch?.transactionHash) throw new Error("new launch transaction is missing");
+        await ctx.runAction(internal.automatedFeeEngine.confirmEnrollment, {
+          programId, deploymentTransactionHash: program.deploymentTransactionHash,
+          enrollmentTransactionHash: context.launch.transactionHash,
+        });
+      } else if (status.status === "reverted") {
+        await ctx.runMutation(internal.automatedFeeEngine.deferVaultEnrollment, {
+          programId, nextAttemptAt: Date.now() + 60_000, diagnosticCode: "CREATOR_LAYER_DEPLOYMENT_REVERTED",
+          diagnosticDetail: "The deterministic creator layer deployment reverted.", manualReview: true,
+        });
+      } else {
+        await ctx.runMutation(internal.automatedFeeEngine.deferVaultEnrollment, {
+          programId, nextAttemptAt: Date.now() + 30_000, diagnosticCode: "CREATOR_LAYER_DEPLOYMENT_PENDING",
+        });
+      }
+    } catch (error) {
+      await ctx.runMutation(internal.automatedFeeEngine.deferVaultEnrollment, {
+        programId, nextAttemptAt: Date.now() + 60_000, diagnosticCode: "CREATOR_LAYER_DEPLOYMENT_FAILED",
+        diagnosticDetail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    } finally {
+      await ctx.runMutation(internal.automatedFeeEngine.releaseDeploymentLease, { programId, leaseId });
+    }
+  },
+});
+
 export const deployPreparedEnrollment = internalAction({
   args: { programId: v.id("automatedFeePrograms") },
   handler: async (ctx, { programId }) => {
@@ -1182,7 +1328,8 @@ export const deployPreparedEnrollment = internalAction({
           vaultFactoryAddress, salt: program.deploymentSalt, token: program.tokenAddress,
           curve: launch.poolAddress, pairAsset: program.pairTokenAddress, ponsFactory: ponsFactoryAddress,
           feeEscrow: prediction.feeEscrow, ponsbot: process.env.PONSBOT_TOKEN_ADDRESS?.trim() || PONSBOT_BURN_TOKEN,
-          controller: program.controllerAddress, beneficiary: program.beneficiaryAddress,
+          controller: program.programVersion === 2 ? program.creatorBurnLayerAddress : program.controllerAddress,
+          beneficiary: program.programVersion === 2 ? program.creatorBurnLayerAddress : program.beneficiaryAddress,
           feeControl: process.env.AUTOMATED_FEE_CONTROL_ADDRESS, distributionMode: "wallet",
           enrollmentSource: program.enrollmentSource,
         }, 60_000);
@@ -1213,6 +1360,8 @@ export const deployPreparedEnrollment = internalAction({
           await ctx.runMutation(internal.automatedFeeEngine.markUpgradeVaultDeployed, {
             programId, deploymentTransactionHash: transactionHash,
           });
+        } else if (program.programVersion === 2) {
+          await ctx.scheduler.runAfter(1_000, internal.automatedFeeEngine.deployPreparedNewLaunchLayer, { programId });
         } else {
           await ctx.runAction(internal.automatedFeeEngine.confirmEnrollment, {
             programId, deploymentTransactionHash: transactionHash, enrollmentTransactionHash: launch.transactionHash,
@@ -1259,6 +1408,12 @@ export const recoverPreparedEnrollments = internalAction({
             : internal.automatedFeeEngine.recoverUpgradeAssignment,
           { programId: program._id },
         );
+      } else if (program.enrollmentSource === "new_launch" && program.programVersion === 2
+        && program.deploymentTransactionHash && automatedFeeDeploymentConfirmed(program)) {
+        // Once the primary exists, recovery must reconcile the deterministic
+        // creator layer directly. Re-entering primary deployment is safe but
+        // needlessly delays the second half of the atomic-address workflow.
+        await ctx.scheduler.runAfter(0, internal.automatedFeeEngine.deployPreparedNewLaunchLayer, { programId: program._id });
       } else {
         await ctx.scheduler.runAfter(0, internal.automatedFeeEngine.deployPreparedEnrollment, { programId: program._id });
       }

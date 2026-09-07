@@ -22,6 +22,7 @@
     "automated-fees:verify-pons": "node --use-system-ca --env-file-if-exists=.env.local scripts/verify-pons-fee-infrastructure.mjs",
     "automated-fees:plan-deployment": "node --use-system-ca --env-file-if-exists=.env.local scripts/plan-automated-fee-deployment.mjs",
     "automated-fees:deploy-core": "node --use-system-ca --env-file-if-exists=.env.local scripts/deploy-automated-fee-core.mjs",
+    "automated-fees:deploy-new-launch-layer": "node --use-system-ca --env-file-if-exists=.env.local scripts/deploy-creator-burn-foundation.mjs --new-launch",
     "automated-fees:prepare-test-launch": "node --use-system-ca --env-file-if-exists=.env.local scripts/prepare-automated-fee-test-launch.mjs",
     "automated-fees:prepare-upgrade-test": "node --use-system-ca --env-file-if-exists=.env.local scripts/prepare-automated-fee-test-launch.mjs --upgrade-test",
     "automated-fees:execute-test-launch": "node --use-system-ca --env-file-if-exists=.env.local scripts/execute-automated-fee-test-launch.mjs",
