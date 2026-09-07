@@ -431,10 +431,26 @@ export const getLaunch = query({
             q.eq("normalizedTokenAddress", normalized),
           )
           .unique();
-    const assignedFeeRecipient =
-      automatedFeeProgram && automatedFeeProgram.status !== "exited"
-        ? automatedFeeProgram.beneficiaryAddress
-        : launch.creatorFeeRecipient;
+    const pendingControllerChanges = automatedFeeProgram ? (await Promise.all(
+      (["reserved", "prepared", "broadcast", "failed"] as const).map(status =>
+        ctx.db.query("automatedFeeControllerChanges").withIndex("by_program_status", q =>
+          q.eq("programId", automatedFeeProgram._id).eq("status", status)).collect())))
+      .flat().filter(change => change.workflowRoot && !change.workflowCompletedAt && change.selfBurnBps === undefined && !change.enrollmentLayer)
+      .sort((a, b) => b.updatedAt - a.updatedAt) : [];
+    const pendingControllerChange = pendingControllerChanges[0];
+    const pendingHolderSharing = pendingControllerChange?.operation === "holders";
+    const assignedFeeRecipient = pendingControllerChange?.operation === "reassign" && pendingControllerChange.newBeneficiaryAddress
+      ? pendingControllerChange.newBeneficiaryAddress
+      : automatedFeeProgram && automatedFeeProgram.status !== "exited"
+          ? automatedFeeProgram.beneficiaryAddress
+          : launch.creatorFeeRecipient;
+    const pendingCreatorBurn = automatedFeeProgram
+      ? await ctx.db.query("creatorBurnRequests").withIndex("by_program_status", q =>
+          q.eq("programId", automatedFeeProgram._id).eq("status", "pending")).order("desc").first()
+      : null;
+    const displayedCreatorBurnBps = pendingControllerChange ? 0
+      : pendingCreatorBurn ? pendingCreatorBurn.executionBps ?? pendingCreatorBurn.bps
+        : automatedFeeProgram?.creatorBurnBps;
     const normalizedAssignedFeeRecipient = assignedFeeRecipient?.toLowerCase();
     const feeWallet = normalizedAssignedFeeRecipient
       ? await ctx.db
@@ -471,9 +487,10 @@ export const getLaunch = query({
       market?.graduationUpdatedAt,
       ),
       creatorFeeRecipient: assignedFeeRecipient,
-      ...(automatedFeeProgram?.creatorBurnLayerAddress && automatedFeeProgram.status==="enrolled" && automatedFeeProgram.creatorBurnVerifiedAt
-        ? {creatorSelfBurn:{active:true,percentageBps:automatedFeeProgram.creatorBurnBps??0}} : {}),
-      automatedFeeBuybackEnabled: hasPublicFeeBuyback(automatedFeeProgram, launch.holderFeeSharing),
+      ...(pendingHolderSharing ? {holderFeeSharing:true} : {}),
+      ...((automatedFeeProgram?.creatorBurnLayerAddress && automatedFeeProgram.status==="enrolled" && automatedFeeProgram.creatorBurnVerifiedAt) || pendingCreatorBurn
+        ? {creatorSelfBurn:{active:true,percentageBps:displayedCreatorBurnBps??0}} : {}),
+      automatedFeeBuybackEnabled: hasPublicFeeBuyback(automatedFeeProgram, launch.holderFeeSharing || pendingHolderSharing),
     };
   },
 });

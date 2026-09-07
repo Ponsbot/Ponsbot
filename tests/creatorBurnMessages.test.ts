@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { creatorBurnConfiguredMessage, creatorBurnLaunchReply } from "../lib/creator-burn-messages";
 describe("creator configuration publication", () => {
-  it.each([null, { status: "pending", bps: 5000 }])("does not announce configuration before confirmation: %s", state => {
-    expect(creatorBurnLaunchReply(state, 1000)).toBeNull();
-    expect(creatorBurnLaunchReply(state, 30 * 60_000)).toContain("not confirmed");
+  it("waits for a durable request, then acknowledges a pending launch configuration", () => {
+    expect(creatorBurnLaunchReply(null, 1000)).toBeNull();
+    expect(creatorBurnLaunchReply({ status: "pending", bps: 5000 }, 1000)).toContain("starting with the next Pons fee sweep");
   });
   it("reports an unsuccessful configuration without denying the launch", () => {
     expect(creatorBurnLaunchReply({ status: "manual_review", bps: 5000 }, 100)).toContain("The token launched");

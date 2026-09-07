@@ -32,7 +32,7 @@ import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-inta
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
 import { liquidityAdmissionExempt } from "./liquidity";
 import { AUTOMATED_FEE_WORKFLOW_CONTINUATION, isAutomatedFeeWorkflowContinuation } from "../lib/automated-fee-workflow";
-import { creatorBurnLaunchReply } from "../lib/creator-burn-messages";
+import { creatorBurnLaunchReply, creatorBurnSweepAcceptedMessage } from "../lib/creator-burn-messages";
 import {
   decodePersistedXWalletIntent,
   explicitInformationalTopic,
@@ -2500,6 +2500,32 @@ export const retryInteraction = internalAction({
           result.message += `\n${configurationReply}`;
         }
         if (result.pending || result.deferred) {
+          const acceptedConfiguration = intent.command.kind === "reassign_fees" && intent.command.selfBurnBps !== undefined
+            ? await ctx.runQuery(internal.creatorBurnEnrollment.status, { requestId: `x:${postId}:reassign_fees` }) : null;
+          const acceptedMessage = intent.command.kind === "reassign_fees" && acceptedConfiguration
+            ? creatorBurnSweepAcceptedMessage(intent.command.token, acceptedConfiguration) : null;
+          const pendingController = !acceptedMessage && intent.command.kind === "reassign_fees"
+            ? await ctx.runQuery(internal.automatedFeeEngine.controllerChangeByRequestId, { requestId: `x:${postId}:reassign_fees` }) : null;
+          const tokenLabel = intent.command.kind === "reassign_fees"
+            ? (/^0x[\da-f]{40}$/i.test(intent.command.token)
+                ? `${intent.command.token.slice(0, 6)}...${intent.command.token.slice(-4)}`
+                : `$${intent.command.token.replace(/^\$+/, "")}`) : "token";
+          const destination = intent.command.kind === "reassign_fees" && intent.command.recipient !== "holders" && intent.command.recipient !== "self"
+            ? (/^0x[\da-f]{40}$/i.test(intent.command.recipient)
+                ? `${intent.command.recipient.slice(0, 6)}...${intent.command.recipient.slice(-4)}`
+                : `@${intent.command.recipient.replace(/^@+/, "")}`) : null;
+          const controllerAcceptedMessage = pendingController?.workflowRoot && !pendingController.workflowCompletedAt
+            && pendingController.status !== "manual_review"
+            ? pendingController.operation === "holders"
+              ? `✅ Success! Reassigned future creator fees for ${tokenLabel} to holders starting with the next Pons fee sweep.`
+              : destination ? `✅ Success! Reassigned fees for ${tokenLabel} to ${destination} starting with the next Pons fee sweep.` : null
+            : null;
+          if (acceptedMessage || controllerAcceptedMessage) {
+            // Publication acknowledges the saved next-sweep configuration. The
+            // independent enrollment worker continues without a later X reply.
+            result.message = acceptedMessage || controllerAcceptedMessage!;
+            result.ok = true;
+          } else {
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, {
             postId,
             safeError: intent.command.kind === "upgrade_fees" || intent.command.kind === "reassign_fees"
@@ -2507,6 +2533,7 @@ export const retryInteraction = internalAction({
               : intent.command.kind === "claim_fees" ? "claim workflow continuation required" : "wallet confirmation is pending",
           });
           return;
+          }
         }
         reply = result.message;
         ok = result.ok;

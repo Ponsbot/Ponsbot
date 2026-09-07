@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { creatorBurnExecutionBps } from "../lib/creator-burn-percentage";
 import { creatorBurnSplit } from "../lib/creator-burn-policy";
-import { creatorBurnConfiguredMessage } from "../lib/creator-burn-messages";
+import { creatorBurnConfiguredMessage, creatorBurnSweepAcceptedMessage } from "../lib/creator-burn-messages";
 import { creatorFeeBurnDisplay } from "../lib/creator-fee-display";
 const token = "0xB1E9b822b81bbbdab375F7f4D86e44fA04d12b07";
 describe("canonical PONSBOT half-total exception", () => {
@@ -21,5 +21,10 @@ describe("canonical PONSBOT half-total exception", () => {
     expect(creatorFeeBurnDisplay("PONSBOT", {active:true, percentageBps:4737}).suffix).toContain("47.37%");
     expect(creatorFeeBurnDisplay("PONSBOT", {active:true, percentageBps:0}, false, token).suffix).toBeNull();
     expect(creatorBurnConfiguredMessage("PONSBOT", 5000, token)).toContain("your creator-fee share");
+  });
+  it("publishes the standard response only for the saved PONSBOT next-sweep state", () => {
+    const accepted = {status:"pending",diagnostic:"Waiting for Pons to credit creator fees to escrow",executionBps:4737,tokenAddress:token};
+    expect(creatorBurnSweepAcceptedMessage("PONSBOT", {...accepted,bps:5000})).toBe("✅ 50% of total creator fees from $PONSBOT buy back and burn $PONSBOT starting with the next Pons fee sweep.");
+    expect(creatorBurnSweepAcceptedMessage("PONSBOT", {...accepted,bps:5000,status:"manual_review"})).toBeNull();
   });
 });

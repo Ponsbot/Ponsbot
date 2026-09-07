@@ -155,6 +155,8 @@ export const status = internalQuery({
           id: r._id,
           status: r.status,
           bps: r.bps,
+          executionBps: r.executionBps ?? r.bps,
+          tokenAddress: (await ctx.db.get(r.programId))?.tokenAddress,
           attempts: r.attempts,
           layerAddress: r.layerAddress,
           transactionHash: r.transactionHash,
