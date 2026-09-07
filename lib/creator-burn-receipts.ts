@@ -6,7 +6,8 @@ const equal = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const native = "0x0000000000000000000000000000000000000000";
 type ReceiptLog = { address: Address; topics: [Hex, ...Hex[]] | []; data: Hex; logIndex: number | null };
 export type CreatorBurnLedgerEvent = {
-  key: string; owner: Address; kind: "allocation" | "surplus" | "payout" | "burn";
+  key: string; owner: Address; kind: "allocation" | "surplus" | "payout" | "burn" | "reserve_release";
+  reserveReleased?: bigint;
   received: bigint; cashAllocated: bigint; reserveAllocated: bigint;
   cashDebited: bigint; cashReceived: bigint; reserveSpent: bigint; tokensBurned: bigint;
 };
@@ -30,7 +31,7 @@ export function creatorBurnReceiptEvents(input: {
     try { event = decodeEventLog({ abi: creatorBurnVaultAbi, topics: log.topics, data: log.data, strict: true }); }
     catch { throw new Error("CREATOR_BURN_UNRECOGNIZED_LAYER_EVENT"); }
     if (event.eventName !== "Allocation" && event.eventName !== "SurplusReceived"
-      && event.eventName !== "Paid" && event.eventName !== "SelfBurned") continue;
+      && event.eventName !== "Paid" && event.eventName !== "SelfBurned" && event.eventName !== "ReserveReleased") continue;
     if (log.logIndex === null || log.logIndex < 0 || !Number.isInteger(log.logIndex)) throw new Error("CREATOR_BURN_RECEIPT_LOG_INDEX");
     const key = `${input.chainId}:${input.layer.toLowerCase()}:${input.transactionHash.toLowerCase()}:${log.logIndex}`;
     if (keys.has(key)) throw new Error("CREATOR_BURN_DUPLICATE_RECEIPT_LOG");
@@ -44,6 +45,8 @@ export function creatorBurnReceiptEvents(input: {
       Object.assign(row, { kind: "surplus", cashAllocated: event.args.amount });
     } else if (event.eventName === "SelfBurned") {
       Object.assign(row, { kind: "burn", reserveSpent: event.args.spent, tokensBurned: event.args.burned });
+    } else if (event.eventName === "ReserveReleased") {
+      Object.assign(row, { kind: "reserve_release", reserveReleased: event.args.amount });
     } else if (event.eventName === "Paid") {
       let delivered = event.args.amount;
       if (!equal(input.asset, native)) {

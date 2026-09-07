@@ -1,0 +1,19 @@
+import { describe, it, expect } from "vitest";
+import { creatorBurnConfiguredMessage, creatorBurnLaunchReply } from "../lib/creator-burn-messages";
+describe("creator configuration publication", () => {
+  it.each([null, { status: "pending", bps: 5000 }])("does not announce configuration before confirmation: %s", state => {
+    expect(creatorBurnLaunchReply(state, 1000)).toBeNull();
+    expect(creatorBurnLaunchReply(state, 30 * 60_000)).toContain("not confirmed");
+  });
+  it("reports an unsuccessful configuration without denying the launch", () => {
+    expect(creatorBurnLaunchReply({ status: "manual_review", bps: 5000 }, 100)).toContain("The token launched");
+  });
+  it("announces only the confirmed allocation", () => {
+    expect(creatorBurnLaunchReply({ status: "confirmed", bps: 2500 }, 100)).toContain("25%");
+  });
+  it("uses an off message at zero", () => {
+    expect(creatorBurnConfiguredMessage("TEST", 0)).toContain("is off");
+    expect(creatorBurnConfiguredMessage("TEST", 0)).not.toContain("0%");
+    expect(creatorBurnConfiguredMessage("TEST", 5000)).not.toMatch(/https|allocation/);
+  });
+});

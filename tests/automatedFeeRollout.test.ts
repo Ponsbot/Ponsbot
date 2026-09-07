@@ -738,6 +738,58 @@ describe("durable enrollment and shared-wallet serialization", () => {
 });
 
 describe("complete public controller path with a strict mock signer", () => {
+  it.each(["reassign", "holders"] as const)("returns the old owner's remainder and resumes %s without double refunds", async operation => {
+    const ctx = fixture(); vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS", a(31));
+    ctx.rows.automatedFeePrograms[0].creatorBurnLayerAddress = a(30);
+    ctx.rows.creatorBurnLayers = [{ _id: "layer", programId: "p", layerAddress: a(30), ownerAddress: a(1), bps: 5000, active: true, nextCheckAt: 0, failures: 0, burnRetryAt: 0, hasPending: false }];
+    const signed: any[] = []; let pendingRefund = true;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname, body = JSON.parse(String(init.body)); let result: any = {};
+      if (path.endsWith("prepare-controller")) {
+        automatedFeeControllerTransactionRequestSchema.parse(body); signed.push(body.operation);
+        if (body.operation.type.startsWith("creator_")) expect(body.operation.beneficiary).toBe(a(1));
+        result = { transactionHash: h(10 + signed.length), signedTransaction: "0x1234", nonce: signed.length };
+      } else if (path.endsWith("broadcast-controller")) result = { status: "broadcast" };
+      else if (path.endsWith("controller-status")) result = { status: body.operation.type === "creator_refund" && pendingRefund ? "pending" : "confirmed", blockNumber: "100" };
+      else if (path.endsWith("creator-burn/status")) result = { status: "confirmed", blockNumber: "100", events: [] };
+      else if (path.endsWith("creator-burn/inspect")) result = { reserve: "100", cash: "150" };
+      else if (path.endsWith("discover")) result = { layer: { layer: a(30), owner: a(operation === "reassign" ? 2 : 1), active: operation === "reassign", exited: operation === "holders", bps: 0 } };
+      else throw new Error(path);
+      return new Response(JSON.stringify(result));
+    }));
+    const args = { requestId: "refund", programId: "p", ownerXUserId: "123", walletRef: a(1), expectedAddress: a(1), operation, recipient: a(2) };
+    await expect(handler(engine.executeVerifiedControllerChange)(ctx, args)).rejects.toThrow("continuation required");
+    expect(ctx.rows.automatedFeePrograms[0].controllerAddress).toBe(a(1));
+    pendingRefund = false;
+    await handler(engine.executeVerifiedControllerChange)(ctx, args);
+    await handler(engine.executeVerifiedControllerChange)(ctx, args);
+    expect(signed.map(s => s.type)).toEqual([operation === "holders" ? "exit" : "reassign", "creator_refund", "creator_payout"]);
+  });
+  it("journals same-owner reassignment as zero percent and reuses it on retry", async () => {
+    const ctx = fixture(); vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS", a(31));
+    ctx.rows.automatedFeePrograms[0].creatorBurnLayerAddress = a(30);
+    ctx.rows.creatorBurnLayers = [{ _id: "layer", programId: "p", layerAddress: a(30), ownerAddress: a(1), bps: 5000, active: true, nextCheckAt: 0, failures: 0, burnRetryAt: 0, hasPending: false }];
+    let signs = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
+      const path = new URL(url).pathname, body = JSON.parse(String(init.body)); let result: any = {};
+      if (path.endsWith("prepare-controller")) {
+        expect(body.operation).toEqual({ type: "percentage", bps: 0 });
+        automatedFeeControllerTransactionRequestSchema.parse(body); signs++;
+        result = { transactionHash: h(7), signedTransaction: "0x1234", nonce: 0 };
+      } else if (path.endsWith("broadcast-controller")) result = { status: "broadcast" };
+      else if (path.endsWith("controller-status")) result = { status: "confirmed", blockNumber: "100" };
+      else if (path.endsWith("creator-burn/status")) result = { status: "confirmed", blockNumber: "100", events: [] };
+      else if (path.endsWith("creator-burn/inspect")) result = { reserve: "0", cash: "0" };
+      else if (path.endsWith("discover")) result = { layer: { layer: a(30), owner: a(1), active: true, exited: false, bps: 0 } };
+      else throw new Error(path);
+      return new Response(JSON.stringify(result));
+    }));
+    const args = { requestId: "same", programId: "p", ownerXUserId: "123", walletRef: a(1), expectedAddress: a(1), operation: "reassign", recipient: a(1) };
+    await handler(engine.executeVerifiedControllerChange)(ctx, args);
+    await handler(engine.executeVerifiedControllerChange)(ctx, args);
+    expect(signs).toBe(1);
+    expect(ctx.rows.automatedFeeControllerChanges.find((r: any) => r.requestId === "same").selfBurnBps).toBe(0);
+  });
   it("enrollment keeps the human owner after the signer normalizes an active layer",async()=>{
     const ctx=fixture();vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS",a(31));let active=false,signs=0;
     vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
@@ -768,6 +820,7 @@ describe("complete public controller path with a strict mock signer", () => {
       else if(path.endsWith("broadcast-controller"))result={status:"broadcast"};
       else if(path.endsWith("controller-status"))result={status:"confirmed",blockNumber:"100"};
       else if(path.endsWith("creator-burn/status"))result=final?{status:"confirmed",blockNumber:"100",events:[]}:{status:"pending"};
+      else if(path.endsWith("creator-burn/inspect"))result={reserve:"0",cash:"0"};
       else if(path.endsWith("discover"))result={layer:{layer:a(30),owner:a(operation==="holders"?1:2),active:operation!=="holders",exited:operation==="holders",bps:0}};
       else throw new Error(path);return new Response(JSON.stringify(result));
     }));

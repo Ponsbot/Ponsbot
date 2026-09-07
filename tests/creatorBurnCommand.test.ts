@@ -6,6 +6,12 @@ import {
 import { launchCreatorBurnOption } from "../lib/creator-burn-command";
 import { parseXWalletIntent } from "../convex/xWalletIntent";
 describe("creator self-burn commands", () => {
+  it.each([
+    "launch Test $TEST assign 50% of fees to buyback and burn share with holders",
+    "assign 50% of TEST fees to buyback and burn and share with holders",
+  ])("explains conflicting fee settings: %s", text => {
+    expect(parseWalletCommand(text)).toMatchObject({ kind: "unknown", reason: expect.stringContaining("Choose only one fee setting") });
+  });
   it("routes an X percentage command as configuration rather than a wallet purchase", async () => {
     expect(
       await parseXWalletIntent(

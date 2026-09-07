@@ -42,6 +42,31 @@ const abi = parseAbi([
   "function registry() view returns(address)",
 ]);
 const eq = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
+/** Read-only preflight before creating a token. This cannot make separate
+ * deployment/configuration transactions atomic with the Pons launch. */
+export async function creatorLayerLaunchPreflight() {
+  if (process.env.CREATOR_SELF_BUYBACK_ENABLED !== "true") throw new Error("CREATOR_BURN_DISABLED");
+  const { client, role } = creatorBurnSignerContext();
+  if (await client.getChainId() !== 4663) throw new Error("Wrong chain");
+  const factory = address.parse(process.env.CREATOR_SELF_BUYBACK_FACTORY_ADDRESS) as Address;
+  const executor = address.parse(process.env.CREATOR_SELF_BUYBACK_EXECUTOR_ADDRESS) as Address;
+  for (const [target, hash] of [[factory, process.env.CREATOR_SELF_BUYBACK_FACTORY_CODE_HASH], [executor, process.env.CREATOR_SELF_BUYBACK_EXECUTOR_CODE_HASH]] as const) {
+    const code = await client.getCode({ address: target });
+    if (!code || keccak256(code) !== hash) throw new Error("CREATOR_BURN_CODE_PIN_MISMATCH");
+  }
+  for (const [target, functionName, expected] of [
+    [factory, "primaryFactory", process.env.AUTOMATED_FEE_VAULT_FACTORY_ADDRESS],
+    [factory, "feeControl", process.env.AUTOMATED_FEE_CONTROL_ADDRESS],
+    [factory, "executor", executor], [executor, "registry", factory],
+  ] as const) {
+    if (!expected || !eq(await client.readContract({ address: target, abi, functionName }), expected)) throw new Error("CREATOR_BURN_REGISTRY_MISMATCH");
+  }
+  for (const name of ["ADMIN", "KEEPER"] as const) {
+    const account = await role(`AUTOMATED_FEE_${name}_CDP_ACCOUNT_NAME`, `AUTOMATED_FEE_${name}_ADDRESS`);
+    if (await client.getBalance({ address: account.address }) === 0n) throw new Error("CREATOR_BURN_SERVICE_UNFUNDED");
+  }
+  return { ready: true };
+}
 export async function deployCreatorLayer(input: unknown) {
   const r = layerDeploymentRequest.parse(input);
   const enabled = process.env.CREATOR_SELF_BUYBACK_ENABLED === "true";

@@ -303,6 +303,8 @@ const automatedFeeExecutionAuthorizationSchema = z.object({
   quoteSignature: z.string().regex(/^0x(?:[a-fA-F0-9]{130})?$/),
 }).strict();
 const automatedFeeControllerOperationSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("creator_refund"), layer: address, beneficiary: address, amount: z.string().regex(/^[1-9]\d*$/) }).strict(),
+  z.object({ type: z.literal("creator_payout"), layer: address, beneficiary: address }).strict(),
   z.object({type:z.literal("percentage"),bps:z.number().int().min(0).max(10000)}).strict(),
   z.object({ type: z.literal("pause") }).strict(),
   z.object({ type: z.literal("exit"), recipient: address }).strict(),
@@ -328,6 +330,8 @@ export const automatedFeeControllerStatusRequestSchema = z.object({
   transactionNonce: z.number().int().nonnegative().optional(),
   broadcastAt: z.number().int().positive().optional(),
   operation: z.discriminatedUnion("type", [
+    z.object({ type: z.literal("creator_refund"), layer: address, beneficiary: address, amount: z.string().regex(/^[1-9]\d*$/) }).strict(),
+    z.object({ type: z.literal("creator_payout"), layer: address, beneficiary: address }).strict(),
     z.object({type:z.literal("percentage"),bps:z.number().int().min(0).max(10000)}).strict(),
     z.object({ type: z.literal("reassign"), newController: address, newBeneficiary: address }).strict(),
     z.object({ type: z.literal("exit"), recipient: address }).strict(),

@@ -281,9 +281,9 @@ export function launchFeeOptionsFromText(text: string) {
   const operative = textOutsideQuotedContent(text);
   const assigned = operative.match(/\bassign fees to\s+(@[a-zA-Z0-9_]{1,15}|0x[a-fA-F0-9]{40})\b/i)?.[1];
   const holderFeeSharing = /\b(?:holder\s+fee\s+sharing|share\s+with\s+holders|assign\s+fees\s+to\s+holders)\b/i.test(operative);
-  if (assigned && holderFeeSharing) throw new Error("Choose either an assigned fee recipient or holder fee sharing, not both.");
+  if (assigned && holderFeeSharing) throw new Error("⚠️ Choose only one fee setting: assign fees to a wallet or user, share with holders, or buyback and burn a percentage.");
   const selfBurnBps=launchCreatorBurnOption(operative).bps;
-  if(selfBurnBps!==undefined&&(assigned||holderFeeSharing))throw new Error("Choose self-buyback and burn or a different fee recipient, not both in one launch.");
+  if(selfBurnBps!==undefined&&(assigned||holderFeeSharing))throw new Error("⚠️ Choose only one fee setting: assign fees to a wallet or user, share with holders, or buyback and burn a percentage.");
   return { ...(assigned ? { feeRecipient: assigned } : {}), ...(holderFeeSharing ? { holderFeeSharing: true } : {}),...(selfBurnBps!==undefined?{selfBurnBps}:{}) };
 }
 

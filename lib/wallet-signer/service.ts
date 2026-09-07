@@ -991,7 +991,7 @@ export async function broadcastAutomatedFeePairRoute(request: AutomatedFeePairRo
 }
 
 function automatedFeeControllerCalldata(operation: AutomatedFeeControllerTransactionRequest["operation"]) {
-  if(operation.type==="percentage")throw new Error("CREATOR_BURN_ACTIVE_LAYER_REQUIRED");
+  if(operation.type==="percentage" || operation.type === "creator_refund" || operation.type === "creator_payout")throw new Error("CREATOR_BURN_ACTIVE_LAYER_REQUIRED");
   if (operation.type === "pause") {
     return encodeFunctionData({ abi: automatedFeeVaultAbi, functionName: "pause" });
   }
@@ -1017,6 +1017,14 @@ function automatedFeeControllerCalldata(operation: AutomatedFeeControllerTransac
 }
 
 async function creatorLayerControllerCall(vault: Address, operation: AutomatedFeeControllerTransactionRequest["operation"], candidate?: Address) {
+    if (operation.type === "creator_refund" || operation.type === "creator_payout") {
+      if (candidate && candidate.toLowerCase() !== operation.layer.toLowerCase()) throw new Error("CREATOR_BURN_REFUND_LAYER_MISMATCH");
+      const layer = await inspectCreatorBurn(vault, operation.layer as Address);
+      if (!layer) throw new Error("CREATOR_BURN_LAYER_MISSING");
+      return { layer, to: layer.layer, data: operation.type === "creator_refund"
+        ? encodeFunctionData({ abi: creatorBurnVaultAbi, functionName: "releaseReserve", args: [BigInt(operation.amount)] })
+        : encodeFunctionData({ abi: creatorBurnVaultAbi, functionName: "withdrawFor", args: [operation.beneficiary as Address] }) };
+    }
     const layer = await inspectCreatorBurn(vault, candidate);
     // A persisted enrollment envelope targets the PRIMARY vault, even after
     // its first broadcast activates the layer. Never reinterpret it as reassign(layer).
@@ -1051,7 +1059,12 @@ export async function prepareAutomatedFeeControllerTransaction(request: Automate
   const client = rpcClient();
   const vault = request.vaultAddress as Address;
   const layerCall = await creatorLayerControllerCall(vault,request.operation);
-  if (request.operation.type === "withdraw") {
+  if (request.operation.type === "creator_refund" || request.operation.type === "creator_payout") {
+    if (request.operation.beneficiary.toLowerCase() !== request.expectedAddress.toLowerCase())
+      throw new Error("Creator-fee remainder must return to the signing wallet");
+    // Historical owners can recover only their own allocation, never a new owner's.
+    // The contract independently keys releaseReserve by msg.sender.
+  } else if (request.operation.type === "withdraw") {
     if (request.operation.recipient.toLowerCase() !== request.expectedAddress.toLowerCase()) {
       throw new Error("automated fee withdrawal recipient must be the Pons Bot wallet");
     }
@@ -1089,6 +1102,9 @@ export async function broadcastAutomatedFeeControllerTransaction(request: Automa
   if (request.walletRef.toLowerCase() !== request.expectedAddress.toLowerCase()
     || expected.address.toLowerCase() !== request.expectedAddress.toLowerCase()) throw new Error("automated fee controller wallet mismatch");
   const signed = request.signedTransaction as Hex;
+  if ((request.operation.type === "creator_refund" || request.operation.type === "creator_payout")
+    && request.operation.beneficiary.toLowerCase() !== request.expectedAddress.toLowerCase())
+    throw new Error("Creator-fee remainder must return to the signing wallet");
   const parsed = parseTransaction(signed);
   const sender = await recoverTransactionAddress({ serializedTransaction: signed as Parameters<typeof recoverTransactionAddress>[0]["serializedTransaction"] });
   const layerCall = await creatorLayerControllerCall(request.vaultAddress as Address,request.operation,
@@ -1132,6 +1148,25 @@ export async function automatedFeeControllerTransactionStatus(request: Automated
     throw error;
   }
   if (receipt.status !== "success") return { status: "reverted" as const, blockNumber: receipt.blockNumber.toString() };
+  if (request.operation.type === "creator_refund" || request.operation.type === "creator_payout") {
+    const op = request.operation;
+    if (op.beneficiary.toLowerCase() !== request.expectedAddress.toLowerCase()
+      || receipt.from.toLowerCase() !== request.expectedAddress.toLowerCase()
+      || receipt.to?.toLowerCase() !== op.layer.toLowerCase()) throw new Error("CREATOR_BURN_REFUND_RECEIPT_MISMATCH");
+    const layer = await inspectCreatorBurn(request.vaultAddress as Address, op.layer as Address);
+    if (!layer || !feeSnapshotIncludesReceipt(layer.blockNumber.toString(), receipt.blockNumber)) return { status: "pending" as const };
+    const matched = receipt.logs.some(log => {
+      if (log.address.toLowerCase() !== op.layer.toLowerCase()) return false;
+      try {
+        const event = decodeEventLog({ abi: creatorBurnVaultAbi, data: log.data, topics: log.topics });
+        return op.type === "creator_refund"
+          ? event.eventName === "ReserveReleased" && event.args.owner.toLowerCase() === op.beneficiary.toLowerCase() && event.args.amount === BigInt(op.amount)
+          : event.eventName === "Paid" && event.args.owner.toLowerCase() === op.beneficiary.toLowerCase() && event.args.amount > 0n;
+      } catch { return false; }
+    });
+    if (!matched) throw new Error("CREATOR_BURN_REFUND_EVENT_MISSING");
+    return { status: "confirmed" as const, blockNumber: receipt.blockNumber.toString() };
+  }
   const inspection = await inspectAutomatedFeeVault({ chainId: ROBINHOOD_CHAIN_ID, vaultAddress: request.vaultAddress });
   // A receipt node may lead the read node briefly. An older snapshot cannot
   // disprove a confirmed configuration transaction; reconcile it on the next poll.

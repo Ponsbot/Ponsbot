@@ -32,6 +32,7 @@ import { advanceXIntakeSpikeGuard, xAutoIntakeGuardEnabled } from "../lib/x-inta
 import { isLiquidityMessage, isOrdinaryWalletCommand, liquidityOwnerAllowed } from "../lib/liquidity-workflow";
 import { liquidityAdmissionExempt } from "./liquidity";
 import { AUTOMATED_FEE_WORKFLOW_CONTINUATION, isAutomatedFeeWorkflowContinuation } from "../lib/automated-fee-workflow";
+import { creatorBurnLaunchReply } from "../lib/creator-burn-messages";
 import {
   decodePersistedXWalletIntent,
   explicitInformationalTopic,
@@ -2484,6 +2485,19 @@ export const retryInteraction = internalAction({
             safeError: "Grok external launch fee assignment silently rejected",
           });
           return;
+        }
+        if (result.ok && intent.command.kind === "launch" && intent.command.selfBurnBps !== undefined) {
+          const configuration = await ctx.runQuery(internal.creatorBurnEnrollment.status, {
+            requestId: `x:${postId}:launch:self-burn`,
+          });
+          const configurationReply = creatorBurnLaunchReply(configuration, Date.now() - current.interaction.createdAt);
+          if (configurationReply === null) {
+            await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, {
+              postId, safeError: AUTOMATED_FEE_WORKFLOW_CONTINUATION,
+            });
+            return;
+          }
+          result.message += `\n${configurationReply}`;
         }
         if (result.pending || result.deferred) {
           await ctx.runMutation(internal.xReplies.scheduleInteractionRetry, {

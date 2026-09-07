@@ -6,7 +6,7 @@ import {
   parseTransaction,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { deployCreatorLayer } from "../lib/wallet-signer/creator-burn-enrollment";
+import { deployCreatorLayer, creatorLayerLaunchPreflight } from "../lib/wallet-signer/creator-burn-enrollment";
 const m = vi.hoisted(() => ({
   client: {
     getChainId: vi.fn(),
@@ -86,6 +86,17 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 describe("creator layer deployment signer", () => {
+  it("checks readiness before launch without signing or broadcasting", async () => {
+    expect(await creatorLayerLaunchPreflight()).toEqual({ ready: true });
+    expect(m.cdp.evm.signTransaction).not.toHaveBeenCalled();
+    expect(m.client.sendRawTransaction).not.toHaveBeenCalled();
+  });
+  it("blocks a new launch for mismatched code or an empty service wallet", async () => {
+    m.client.getCode.mockResolvedValueOnce("0xabcd");
+    await expect(creatorLayerLaunchPreflight()).rejects.toThrow("PIN_MISMATCH");
+    m.client.getBalance.mockResolvedValueOnce(0n);
+    await expect(creatorLayerLaunchPreflight()).rejects.toThrow("UNFUNDED");
+  });
   it("only prepares an exact factory call and never broadcasts preparation", async () => {
     const r = await deployCreatorLayer(req);
     expect(r.status).toBe("prepared");

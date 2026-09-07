@@ -37,7 +37,7 @@ export default async function LaunchPage({ params }: Props) {
     <div className="detail-link-row"><div className="detail-socials">{launch.website ? <SocialIconLink href={launch.website} label="Website" icon="web" /> : null}{launch.twitter ? <SocialIconLink href={launch.twitter} label="X" icon="x" /> : null}{launch.telegram ? <SocialIconLink href={launch.telegram} label="Telegram" icon="telegram" /> : null}</div>
     <div className="detail-actions"><Link className="button button-primary" href={`/terminal?action=buy&token=${launch.tokenAddress}`}>Buy</Link><Link className="button button-quiet" href={`/terminal?action=sell&token=${launch.tokenAddress}`}>Sell</Link><a className="button button-dark" href={`https://www.ponsfamily.com/launchpad/${launch.tokenAddress}`} target="_blank" rel="noreferrer">View Token on Pons ↗</a></div></div></div>;
   const feeRecipientUsername = launch.feeRecipientUsername?.replace(/^@/, "");
-  const creatorBurnDisplay = creatorFeeBurnDisplay(launch.symbol, launch.creatorSelfBurn, launch.holderFeeSharing);
+  const creatorBurnDisplay = creatorFeeBurnDisplay(launch.symbol, launch.creatorSelfBurn, launch.holderFeeSharing, launch.tokenAddress);
   const feeRecipient = launch.holderFeeSharing ? "Holders"
     : creatorBurnDisplay.fullAllocation || <>
       {feeRecipientUsername ? <a href={`https://x.com/${feeRecipientUsername}`} target="_blank" rel="noreferrer">@{feeRecipientUsername}</a>

@@ -2737,7 +2737,7 @@ export const reserveControllerChange = internalMutation({
       const step = args.requestId.slice(args.parentRequestId.length + 1);
       if (!parent || !parent.workflowRoot || parent.parentRequestId || parent.workflowCompletedAt
         || args.requestId !== `${args.parentRequestId}:${step}`
-        || !["controller-sweep", "pause", "exit", "former-beneficiary-delivery"].includes(step)
+        || !["controller-sweep", "pause", "exit", "former-beneficiary-delivery", "creator_refund", "creator_payout"].includes(step)
         || parent.programId !== args.programId || parent.operation !== args.operation
         || parent.previousControllerAddress.toLowerCase() !== args.previousControllerAddress.toLowerCase()
         || (parent.newControllerAddress ?? "").toLowerCase() !== (args.newControllerAddress ?? "").toLowerCase()
@@ -2950,6 +2950,14 @@ export const executeVerifiedControllerChange = internalAction({
     if (!program || (!saved && program.status !== "enrolled" && !(args.operation === "holders" && program.status === "paused"))) {
       throw new Error("automated fee program is unavailable");
     }
+    // Persist the effective operation before signing. Retries must keep the saved
+    // operation, not reinterpret an already-signed reassignment envelope.
+    if (saved) args = { ...args, selfBurnBps: saved.selfBurnBps };
+    else if (program.creatorBurnLayerAddress && !args.enrollmentLayer
+      && args.operation === "reassign" && args.selfBurnBps === undefined
+      && args.recipient.toLowerCase() === args.expectedAddress.toLowerCase()) {
+      args = { ...args, selfBurnBps: 0 };
+    }
     const change = await ctx.runMutation(internal.automatedFeeEngine.reserveControllerChange, {
       enrollmentLayer:args.enrollmentLayer,
       selfBurnBps:args.selfBurnBps,
@@ -3066,8 +3074,8 @@ export const executeVerifiedControllerChange = internalAction({
     };
     const executeOne = async (
       requestId: string,
-      operation: {type:"percentage";bps:number} | { type: "pause" } | { type: "exit"; recipient: string } | { type: "reassign"; newController: string; newBeneficiary: string; execution: ControllerExecution },
-      expectedStatus: {type:"percentage";bps:number} | { type: "pause" } | { type: "exit"; recipient: string } | { type: "reassign"; newController: string; newBeneficiary: string },
+      operation: { type: "creator_refund"; layer: string; beneficiary: string; amount: string } | { type: "creator_payout"; layer: string; beneficiary: string } | {type:"percentage";bps:number} | { type: "pause" } | { type: "exit"; recipient: string } | { type: "reassign"; newController: string; newBeneficiary: string; execution: ControllerExecution },
+      expectedStatus: { type: "creator_refund"; layer: string; beneficiary: string; amount: string } | { type: "creator_payout"; layer: string; beneficiary: string } | {type:"percentage";bps:number} | { type: "pause" } | { type: "exit"; recipient: string } | { type: "reassign"; newController: string; newBeneficiary: string },
     ) => {
       let stored = requestId === args.requestId ? change : await ctx.runMutation(internal.automatedFeeEngine.reserveControllerChange, {
         requestId, parentRequestId: args.requestId, programId: args.programId, operation: args.operation,
@@ -3137,13 +3145,44 @@ export const executeVerifiedControllerChange = internalAction({
           : args.operation==="reassign"
           ? await executeOne(args.requestId,{type:"reassign",newController:args.recipient,newBeneficiary:args.recipient,execution},{type:"reassign",newController:args.recipient,newBeneficiary:args.recipient})
           : await executeOne(`${args.requestId}:exit`,{type:"exit",recipient:args.recipient},{type:"exit",recipient:args.recipient});
+        const receipt=await signerRequest<Status>("/v1/creator-burn/status",{vaultAddress:program.vaultAddress,layerAddress:program.creatorBurnLayerAddress,transactionHash:changed.transactionHash});
+        if(receipt.status!=="confirmed")throw new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION);
+        await ctx.runMutation(internal.creatorBurnEngine.ingest,{programId:program._id,layerAddress:program.creatorBurnLayerAddress,transactionHash:changed.transactionHash,blockNumber:receipt.blockNumber!,events:receipt.events??[]});
+        // The layer's configuration transaction collects credited upstream fees at
+        // the OLD percentage before changing owner/rate. Return the old owner's
+        // remaining unburned reserve and cash, including after holder-sharing exit.
+        // Each child has its own immutable envelope and resumes without refunding twice.
+        for (const type of ["creator_refund", "creator_payout"] as const) {
+          const childId = `${args.requestId}:${type}`;
+          const child = await ctx.runQuery(internal.automatedFeeEngine.controllerChangeByRequestId, { requestId: childId });
+          let operation: { type: "creator_refund"; layer: string; beneficiary: string; amount: string } | { type: "creator_payout"; layer: string; beneficiary: string };
+          if (child?.signedTransaction && child.operationJson) {
+            operation = JSON.parse(child.operationJson);
+            if (operation.type !== type || operation.layer.toLowerCase() !== program.creatorBurnLayerAddress.toLowerCase()
+              || operation.beneficiary.toLowerCase() !== args.expectedAddress.toLowerCase()) throw new Error("Creator refund journal mismatch");
+          } else {
+            const balance = await signerRequest<{ reserve: string; cash: string }>("/v1/creator-burn/inspect", {
+              vaultAddress: program.vaultAddress, layerAddress: program.creatorBurnLayerAddress, beneficiary: args.expectedAddress,
+            });
+            const amount = type === "creator_refund" ? balance.reserve : balance.cash;
+            if (!/^\d+$/.test(amount)) throw new Error("Creator remainder balance unavailable");
+            if (BigInt(amount) === 0n) continue;
+            operation = type === "creator_refund"
+              ? { type, layer: program.creatorBurnLayerAddress, beneficiary: args.expectedAddress, amount }
+              : { type, layer: program.creatorBurnLayerAddress, beneficiary: args.expectedAddress };
+          }
+          const returned = await executeOne(childId, operation, operation);
+          const delivery = await signerRequest<Status>("/v1/creator-burn/status", {
+            vaultAddress: program.vaultAddress, layerAddress: program.creatorBurnLayerAddress, transactionHash: returned.transactionHash,
+          });
+          if (delivery.status !== "confirmed") throw new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION);
+          await ctx.runMutation(internal.creatorBurnEngine.ingest, { programId: program._id, layerAddress: program.creatorBurnLayerAddress,
+            transactionHash: returned.transactionHash, blockNumber: delivery.blockNumber!, events: delivery.events ?? [] });
+        }
         if(args.selfBurnBps===undefined)await ctx.runMutation(internal.automatedFeeEngine.recordControllerChange,{
           programId:args.programId,transactionHash:changed.transactionHash,previousControllerAddress:args.expectedAddress,
           ...(args.operation==="reassign"?{newControllerAddress:args.recipient,newBeneficiaryAddress:args.recipient,outcome:"reassigned" as const}:{outcome:"holders" as const}),
         });
-        const receipt=await signerRequest<Status>("/v1/creator-burn/status",{vaultAddress:program.vaultAddress,layerAddress:program.creatorBurnLayerAddress,transactionHash:changed.transactionHash});
-        if(receipt.status!=="confirmed")throw new Error(AUTOMATED_FEE_WORKFLOW_CONTINUATION);
-        await ctx.runMutation(internal.creatorBurnEngine.ingest,{programId:program._id,layerAddress:program.creatorBurnLayerAddress,transactionHash:changed.transactionHash,blockNumber:receipt.blockNumber!,events:receipt.events??[]});
         await ctx.runAction(internal.creatorBurnEngine.sync,{programId:program._id});
         await ctx.runMutation(internal.automatedFeeEngine.markControllerChangeStatus,{requestId:args.requestId,status:"confirmed",workflowComplete:true,transactionHash:changed.transactionHash});
         await ctx.runMutation(internal.creatorBurnEngine.wake,{programId:program._id});
@@ -3323,7 +3362,7 @@ export const controllerChangesForRecovery = internalQuery({
       if (row.status === "failed" && !automatedFeeControllerTransactionMayExist(row)) continue;
       const childIds = [
         `${row.requestId}:pause`, `${row.requestId}:exit`, `${row.requestId}:controller-sweep`,
-        `${row.requestId}:former-beneficiary-delivery`,
+        `${row.requestId}:former-beneficiary-delivery`, `${row.requestId}:creator_refund`, `${row.requestId}:creator_payout`,
       ];
       const children = await Promise.all(childIds.map((requestId) => ctx.db.query("automatedFeeControllerChanges")
         .withIndex("by_request_id", (q) => q.eq("requestId", requestId)).unique()));

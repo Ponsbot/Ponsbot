@@ -21,7 +21,7 @@ import { checkLiquidityFunding, quoteLiquidity, prepareLiquidityStep, inspectLiq
 import { inspectLiquidityPosition } from "@/lib/wallet-signer/liquidity-status";
 import type { LiquidityQuotePlan } from "@/lib/wallet-signer/liquidity";
 import { creatorBurnSnapshot, discoverCreatorBurn, prepareCreatorBurn, broadcastCreatorBurn, creatorBurnStatus, creatorBurnHistory, replaceCreatorBurn } from "@/lib/wallet-signer/creator-burn";
-import { deployCreatorLayer } from "@/lib/wallet-signer/creator-burn-enrollment";
+import { deployCreatorLayer, creatorLayerLaunchPreflight } from "@/lib/wallet-signer/creator-burn-enrollment";
 import { prepareLiquidityEnvelope, signLiquidityEnvelope } from "@/lib/wallet-signer/liquidity";
 
 export const runtime = "nodejs";
@@ -112,6 +112,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       assertAutomatedFeeEnrollmentProof(request.headers, path, proofIdentity, body);
     }
     if (path === "v1/creator-burn/deploy-layer") return NextResponse.json(await deployCreatorLayer(body));
+    if (path === "v1/creator-burn/launch-preflight") return NextResponse.json(await creatorLayerLaunchPreflight());
     if (path === "v1/creator-burn/inspect") return NextResponse.json(await creatorBurnSnapshot(body));
     if (path === "v1/creator-burn/discover") return NextResponse.json({layer:await discoverCreatorBurn(body)});
     if (path === "v1/creator-burn/prepare") return NextResponse.json(await prepareCreatorBurn(body));

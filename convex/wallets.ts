@@ -3241,6 +3241,10 @@ export function safeFailure(
 ) {
   const message =
     error instanceof Error ? error.message : "wallet request failed";
+  if (message === "CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED")
+    return "⚠️ I couldn't verify the requested creator-fee setup. No token was launched.";
+  if (/Creator-fee configuration did not finish/i.test(message))
+    return "⚠️ The creator-fee configuration couldn't be completed.";
   const gasEstimateMatch = message.match(/\[gas_estimate_wei=(\d+)\]/i);
   const gasEstimate = gasEstimateMatch ? formatBufferedGasEstimate(gasEstimateMatch[1]) : undefined;
   const launchCostEstimateMatch = message.match(/\[launch_cost_estimate_wei=(\d+)\]/i);
@@ -4792,7 +4796,7 @@ export const executeCommand = internalAction({
             tokenAddress: commandToken!, transactionHash: routed.transactionHash,
             outcome: "reassigned", recipient,
           });
-          const message = `✅ Success! Reassigned future creator fees for ${assetLabel(tokenSymbol || command.token)}!\nYour TXN: ${transactionUrl(routed.transactionHash)}${warning}`;
+          const message = `✅ Success! Reassigned fees for ${assetLabel(tokenSymbol || command.token)} to ${destinationLabel(command.recipient)}!\nYour TXN: ${transactionUrl(routed.transactionHash)}${warning}`;
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
             requestId, status: "confirmed", workflowStage: "automated_fee_control_reassigned",
             transactionHash: routed.transactionHash, finalMessage: message,
@@ -5573,6 +5577,14 @@ export const executeCommand = internalAction({
           const automatedPairSupported = /^0x0{40}$/i.test(enrollmentPairToken)
             || AUTOMATED_FEE_PAIR_ROUTES.some((route) => route.pairAsset.toLowerCase() === enrollmentPairToken.toLowerCase());
           if(command.selfBurnBps!==undefined&&!automatedPairSupported)throw new Error("Self-buyback and burn is not available for this launch pairing yet. No launch was started.");
+          if (command.selfBurnBps !== undefined) {
+            try {
+              const readiness = await signerRequest<{ ready: boolean }>("/v1/creator-burn/launch-preflight", {}, 30_000);
+              if (readiness.ready !== true) throw new Error("Creator fee preflight incomplete");
+            } catch {
+              throw new Error("CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED");
+            }
+          }
           if (
             process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true" &&
             process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true" &&

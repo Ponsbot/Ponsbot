@@ -9,6 +9,8 @@ import { internal } from "./_generated/api";
 import { signerRequest } from "./automatedFeeEngine";
 import { redactSignerDiagnostic } from "../lib/signer-diagnostics";
 import { keccak256, stringToHex } from "viem";
+import { creatorBurnConfiguredMessage } from "../lib/creator-burn-messages";
+import { creatorBurnExecutionBps } from "../lib/creator-burn-percentage";
 
 export async function queueCreatorBurnRequest(
   ctx: MutationCtx,
@@ -57,7 +59,7 @@ export async function queueCreatorBurnRequest(
       throw new Error("Creator burn request conflict");
     if (old.status === "manual_review")
       throw new Error(
-        "Creator-fee configuration needs review. Please contact @Ponsbotfamily before trying again.",
+        "Creator-fee configuration did not finish.",
       );
     return old._id;
   }
@@ -78,6 +80,7 @@ export async function queueCreatorBurnRequest(
     ownerXUserId: a.ownerXUserId,
     ownerAddress: wallet.address,
     bps: a.bps,
+    executionBps: creatorBurnExecutionBps(p.tokenAddress, a.bps),
     status: "pending",
     nextAttemptAt: Date.now(),
     attempts: 0,
@@ -200,7 +203,29 @@ export const save = internalMutation({
       r.deploymentSigned !== a.deploymentSigned
     )
       throw new Error("Immutable deployment conflict");
-    const { id, leaseId, done, manualReview, diagnostic, ...patch } = a;
+    const { id, leaseId, done, diagnostic, ...patch } = a;
+    let manualReview = a.manualReview;
+    delete patch.manualReview;
+    // Stop repeated pre-sign/configuration failures. Never abandon an uncertain
+    // signed deployment or controller envelope merely because a retry budget ran out.
+    if (!done && diagnostic && diagnostic !== "Creator burn enrollment paused by configuration" && r.attempts >= 12
+      && !(r.deploymentSigned && !(a.deploymentSettled ?? r.deploymentSettled))) {
+      const children = (await Promise.all(
+        (["reserved", "prepared", "broadcast", "confirmed", "failed", "manual_review"] as const).map(status =>
+          ctx.db.query("automatedFeeControllerChanges").withIndex("by_program_status", q =>
+            q.eq("programId", r.programId).eq("status", status)).collect()),
+      )).flat().filter(c => c.requestId.startsWith(`${r.requestId}:`));
+      const unresolved = children.some(c =>
+        (c.executionLeaseUntil ?? 0) > Date.now()
+        || Boolean((c.signedTransaction || c.transactionHash) && !c.transactionSettledAt && c.status !== "confirmed"));
+      if (!unresolved) {
+        manualReview = true;
+        for (const child of children) {
+          if (!child.signedTransaction && !child.transactionHash && child.status === "reserved")
+            await ctx.db.patch(child._id, { status: "failed", diagnosticCode: "CREATOR_CONFIGURATION_RETRY_LIMIT", updatedAt: Date.now() });
+        }
+      }
+    }
     await ctx.db.patch(id, {
       ...patch,
       ...(done ? { status: "confirmed" as const, diagnostic: undefined, leaseUntil: 0 } : {}),
@@ -208,7 +233,7 @@ export const save = internalMutation({
         ? { status: "manual_review" as const, leaseUntil: 0 }
         : {}),
       ...(diagnostic
-        ? { diagnostic, nextAttemptAt: Date.now() + 60000, leaseUntil: 0 }
+        ? { diagnostic, nextAttemptAt: Date.now() + Math.min(15 * 60000, 60000 * 2 ** Math.min(4, Math.floor(r.attempts / 3))), leaseUntil: 0 }
         : {}),
     });
     if (done || manualReview) {
@@ -220,7 +245,7 @@ export const save = internalMutation({
         launch = p?.launchId ? await ctx.db.get(p.launchId) : null;
       if (wr && manualReview) {
         const message =
-          "⚠️ The creator-fee configuration did not finish and needs review. Please contact @Ponsbotfamily before trying again.";
+          "⚠️ The creator-fee configuration couldn't be completed.";
         await ctx.db.patch(wr._id, {
           status: "failed",
           workflowStage: "creator_self_burn_review",
@@ -233,7 +258,7 @@ export const save = internalMutation({
           status: "confirmed",
           transactionHash: a.transactionHash,
           workflowStage: "creator_self_burn_configured",
-          finalMessage: `✅ ${r.bps / 100}% of your creator-fee share from $${launch?.symbol ?? "TOKEN"} now buys back and burns $${launch?.symbol ?? "TOKEN"}.\nThis applies after Pons Bot’s 5% allocation.\nhttps://www.ponsbot.family/launch/${p?.tokenAddress}`,
+          finalMessage: creatorBurnConfiguredMessage(launch?.symbol ?? "TOKEN", r.bps, p?.tokenAddress, r.executionBps ?? r.bps),
           updatedAt: Date.now(),
         });
     }
@@ -465,7 +490,8 @@ export const run = internalAction({
           expectedAddress: r.ownerAddress,
           operation: "reassign",
           recipient: r.ownerAddress,
-          selfBurnBps: r.bps,
+          // Old requests retain their original authorization across retries.
+          selfBurnBps: r.executionBps ?? r.bps,
         },
       );
       await save({

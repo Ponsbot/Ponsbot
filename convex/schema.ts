@@ -259,7 +259,7 @@ export default defineSchema({
   }).index("by_asset", ["normalizedAssetAddress"]),
 
   creatorBurnRequests: defineTable({
-    requestId:v.string(),programId:v.id("automatedFeePrograms"),ownerXUserId:v.string(),ownerAddress:v.string(),bps:v.number(),
+    requestId:v.string(),programId:v.id("automatedFeePrograms"),ownerXUserId:v.string(),ownerAddress:v.string(),bps:v.number(),executionBps:v.optional(v.number()),
     status:v.union(v.literal("pending"),v.literal("confirmed"),v.literal("manual_review")),
     nextAttemptAt:v.number(),leaseUntil:v.optional(v.number()),leaseId:v.optional(v.string()),
     deploymentHash:v.optional(v.string()),deploymentSigned:v.optional(v.string()),deploymentIdentity:v.optional(v.string()),
@@ -283,7 +283,7 @@ export default defineSchema({
     key: v.string(), layerId: v.id("creatorBurnLayers"), programId: v.id("automatedFeePrograms"),
     transactionHash: v.string(), blockNumber: v.string(), owner: v.string(),
     kind: v.string(), received: v.string(), cashAllocated: v.string(), reserveAllocated: v.string(),
-    cashDebited: v.string(), cashReceived: v.string(), reserveSpent: v.string(), tokensBurned: v.string(), createdAt: v.number(),
+    cashDebited: v.string(), cashReceived: v.string(), reserveSpent: v.string(), reserveReleased: v.optional(v.string()), tokensBurned: v.string(), createdAt: v.number(),
   }).index("by_key", ["key"]).index("by_owner_created", ["owner", "createdAt"]).index("by_layer", ["layerId"]),
 
   automatedFeePrograms: defineTable({

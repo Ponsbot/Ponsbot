@@ -25,6 +25,7 @@ const eventValidator = v.object({
   cashDebited: v.string(),
   cashReceived: v.string(),
   reserveSpent: v.string(),
+  reserveReleased: v.optional(v.string()),
   tokensBurned: v.string(),
 });
 export type LayerEvent = {
@@ -37,6 +38,7 @@ export type LayerEvent = {
   cashDebited: string;
   cashReceived: string;
   reserveSpent: string;
+  reserveReleased?: string;
   tokensBurned: string;
 };
 type Snapshot = {
@@ -229,6 +231,7 @@ export const ingest = internalMutation({
           row.cashDebited,
           row.cashReceived,
           row.reserveSpent,
+          row.reserveReleased ?? "0",
           row.tokensBurned,
         ].every((n) => /^\d+$/.test(n))
       )
