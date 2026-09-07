@@ -1,6 +1,7 @@
 # Creator self-buyback layer: implementation checkpoint
 
-Status: dormant executor and factory deployed on Robinhood Chain, NOT production-ready.
+Status: local signer/worker/reassignment/display integration built; replacement deployment
+and an end-to-end live canary remain required. NOT approved for enrollment yet.
 No token layers, fee-right transfers, public commands or launch pipeline changes have been made.
 
 ## Current revision: replacement layer v2, LOCAL ONLY
@@ -15,8 +16,8 @@ vault, primary factory, control, adapter, or primary executors is changed.
   Full primary emergency exit remains irreversible; this is not primary reactivation.
 - Added issued-at authorization and a ten-minute maximum signed quote lifetime.
 - Classified unsolicited transfers as cash surplus, not fee income or automatic burns.
-- Added independent payout/collection/burn timing policy and retry tests. This policy is
-  not yet wired to a live worker; it does not establish an operational timing guarantee.
+- Added independent payout/collection/burn timing policy and retry tests. The local
+  production worker is now connected; it has not been deployed or exercised live.
 - Deployment uses a separate `creator-burn-foundation-v2.json` private journal, exclusive
   local lock, unique lease instance, persistent uncertain-deployment marker and validated
   saved envelopes. Deploy the updated Convex lease functions before running this script.
@@ -26,9 +27,60 @@ vault, primary factory, control, adapter, or primary executors is changed.
 - Read-only live check at block 56836555 confirmed the requested test primary remains active,
   wallet-controlled and not assigned a layer in the original deployed registry.
 
-**Enrollment remains blocked by missing integration**, not just an environment variable:
-the production signer, durable worker, controller workflows, history/accounting, and site
-query must be layer-aware before moving fee rights. Do not enable a partial integration.
+**Enrollment remains blocked pending replacement deployment and canary verification.**
+The old deployed foundation must not be configured as the new layer. The signer requires
+registry bindings, runtime code hashes, and the v2 quote-lifetime interface. This work does
+not add an automatic enrollment path or enroll new launches.
+
+## Production integration, local implementation
+
+- Authenticated `/v1/creator-burn/` inspection, preparation, broadcast and receipt routes.
+  Existing enrollment-proof authentication is required in addition to the signer token.
+- Primary delivery calls `collectAndPay`, never direct delivery to the layer. Its receipt
+  separates the upstream allocation, actual wallet cash and self-burn reserve.
+- `creatorBurnEngine` stores immutable signed envelopes before broadcasting, reconciles
+  their receipts across restarts, shares the global keeper lease and blocks overlapping
+  primary processing/controller changes. A pending hash is never discarded on timeout.
+- Cash payments precede burns. Historical beneficiaries are tracked separately. Confirmed
+  receipts are deduplicated by chain/layer/transaction/log index. Conflicting copies fail.
+- Existing reassignment signing maps to owner-only layer `reassign`; holder sharing maps
+  to atomic `shareWithHolders` after verifying the holder registry. Reassignment resets
+  future self-burn percentage to zero; old cash and reserves retain their original owner.
+- Public token queries expose the human recipient plus verified self-burn percentage.
+  Wallet history shows actual layer payouts, not the full upstream 95% or reserved funds.
+  Layer payouts use a distinct label because recovered surplus is not necessarily fees.
+- Permissionless collection is reconciled from finalized Allocation/Paid receipts since
+  the primary processing block. A collection without payment triggers the remaining
+  payout, not another buy. Ambiguous/missing evidence waits rather than inventing credit.
+- A bounded historical scanner starts at the layer's creation block and persists a cursor.
+  It ingests external transactions with the same deduplication keys as the live worker.
+  Actual payouts update delivery totals once; upstream allocation no longer double-counts.
+- Pending envelopes have a separate scheduling query even while disabled. Slow keeper
+  transactions can receive a same-nonce, same-call fee replacement; all hashes are checked
+  and signed envelopes retained in a private journal. Fees are capped relative to the
+  current gas market. A provably consumed but unrecognized nonce quarantines only the
+  affected program and releases the shared keeper reservation; it is not marked paid.
+- Each owner's economically deferred reserve has its own retry time. Current-owner dust
+  no longer prevents an older owner's reserve from being serviced.
+- `internal.creatorBurnEngine.changePercentage` accepts requestId, immutable ownerXUserId,
+  tokenAddress, and percentage (0–100, up to two decimal places). It checks the linked
+  wallet, acquires its execution lock, and uses the existing durable controller journal.
+  The signer independently verifies live layer ownership and the matching CDP wallet.
+  Only `setPercentage(uint16)` is signed; collection uses the previous percentage first.
+  This internal command-adapter entry point does not introduce new public X syntax or
+  enroll a token. Background controller recovery resumes pending percentage changes.
+
+Configuration for BOTH the signer host and Convex worker:
+`CREATOR_SELF_BUYBACK_ENABLED` (default off), `CREATOR_SELF_BUYBACK_FACTORY_ADDRESS`.
+The signer additionally requires `CREATOR_SELF_BUYBACK_EXECUTOR_ADDRESS`,
+`CREATOR_SELF_BUYBACK_FACTORY_CODE_HASH`, `CREATOR_SELF_BUYBACK_EXECUTOR_CODE_HASH`.
+Use runtime hashes of the verified replacement deployments, not creation-bytecode hashes.
+Existing automated-fee keeper/quote roles and execution switches are also enforced.
+
+Before enrollment: deploy/verify the replacement foundation, update both applications,
+verify the above bindings, then exercise collect/pay/burn/reassign/holder exit with a
+dedicated canary. Confirm that payout history agrees with actual transfers. No existing
+primary-vault source or deployed contract is modified by this integration.
 
 ## September 7 deployment checkpoint
 
@@ -45,8 +97,8 @@ query must be layer-aware before moving fee rights. Do not enable a partial inte
 - Executor accepts only registered active layers, canonical Pons token/pair routes, and
   a signed expected phase. It supports native/ERC-20 curves and canonical graduated V4 pools,
   clears allowances and verifies actual dead-address output. No arbitrary router calldata.
-- Backend scheduling, ownership resolution, signing, enrollment, and payout accounting are
-  still missing for this layer. DO NOT transfer production token control into it yet.
+- This was the original deployment checkpoint. The local integration described above
+  supersedes its missing backend work, but the old deployment remains unsuitable for v2.
 
 ## Implemented
 
@@ -110,8 +162,7 @@ withdrawal AND layer Allocation/Paid events. Separate `collect()` and `withdrawF
 remain available for recovery and historical-owner balances. Self-buyback is deliberately
 outside the cash-payout transaction. Receipt helpers distinguish actual cash transfer output,
 allocated reserves, surplus and burned tokens; their deduplication keys still require durable
-insertion by the future worker.
-The existing primary fee worker does not yet implement this branch.
+insertion by the worker. The local primary fee worker now implements this branch.
 
 ### Intended timing, covered by the local planner tests
 
@@ -122,20 +173,20 @@ The existing primary fee worker does not yet implement this branch.
 - After a receipt confirms, advance immediately. Pending receipts are checked every minute.
 - Burn only after cash obligations are resolved; missing pricing or a failed self-buyback
   must not delay a successful cash payout. The local planner accumulates a reserve below
-  $1 or below five times estimated burn gas cost; this is not yet a live rule.
+  $1 or below five times estimated burn gas cost; the local signer enforces this rule.
 - Burn retries back off independently, capped at fifteen minutes. They do not move the
   primary sweep schedule and do not recursively sweep fees generated by the self-buyback.
 - Keep reconciling existing transaction receipts after disabling; do not send new ones.
 - Reassignment must preserve and service previous-owner ledger balances, not merely the
   current owner's balance. A full exit disables further self-burn; owners can release reserves.
 
-`CREATOR_SELF_BUYBACK_ENABLED` is reserved for the new workflow only. Setting it currently
-does nothing because public workflow and signer integration are not connected yet.
+`CREATOR_SELF_BUYBACK_ENABLED` gates the new keeper submissions. Read-only reconciliation
+of stored transactions continues when it is disabled. It does not enable enrollment.
 
 The token-page presentation is prepared for an optional `creatorSelfBurn` public field
 (`active`, `percentageBps`). The site query must populate it ONLY from a verified active
 layer and continue resolving `creatorFeeRecipient`/`feeRecipientUsername` to its human
 owner, never the layer address. At 100% it replaces the recipient with "Buyback and burn
 $TOKEN"; partial allocations append "(XX% buyback and burn $TOKEN)" to the recipient.
-No live query populates this field yet, so ordinary pages remain unchanged. Do not
-advertise the capability in general help before activation.
+The local site query populates this field only for a verified enrolled program; ordinary
+pages remain unchanged. Do not advertise the capability before canary verification.

@@ -28,6 +28,9 @@ export async function terminalFeeReceipts(ctx: QueryCtx, ownerXUserId: string, u
   const assets = new Map<string, Doc<"tokenRegistry"> | null>();
   const receipts = new Map<string, TerminalFeeReceipt>();
   for (const run of rows) {
+    // Second-layer payments have their own actual-transfer ledger. Do not show
+    // the upstream 95% allocation as if that entire amount reached the wallet.
+    if(run.creatorBurnLayerAddress)continue;
     if (run.beneficiaryAddress.toLowerCase() !== beneficiary || !run.deliveryBlockNumber || !/^\d+$/.test(run.deliveryBlockNumber)
       || !run.processingBlockNumber || !run.beneficiaryDelivered || !/^\d+$/.test(run.beneficiaryDelivered)
       || BigInt(run.beneficiaryDelivered) <= 0n || run.beneficiaryDelivered !== run.beneficiaryAllocated
@@ -57,8 +60,29 @@ export async function terminalFeeReceipts(ctx: QueryCtx, ownerXUserId: string, u
       createdAt: run.updatedAt, updatedAt: run.updatedAt,
     });
   }
+  const layerEvents=await ctx.db.query("creatorBurnEvents").withIndex("by_owner_created",q=>{
+    const owner=q.eq("owner",beneficiary);return after===undefined?owner:owner.gte("createdAt",after);
+  }).order(after===undefined?"desc":"asc").take(100);
+  for(const event of layerEvents){
+    if(event.kind!=="payout"||!/^\d+$/.test(event.cashReceived)||BigInt(event.cashReceived)<=0n)continue;
+    const program=await ctx.db.get(event.programId);if(!program||program.privateTest)continue;
+    const token=program.normalizedTokenAddress,asset=program.normalizedPairTokenAddress;
+    const launch=await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address",q=>q.eq("normalizedTokenAddress",token)).unique();
+    const metadata=asset===zeroAddress?null:await ctx.db.query("tokenRegistry").withIndex("by_normalized_address",q=>q.eq("normalizedAddress",asset)).unique();
+    const decimals=asset===zeroAddress?18:metadata?.decimals;
+    const id=`creator-layer:${event.key}`;
+    receipts.set(id,{id,layerPayout:true,tokenAddress:token,tokenSymbol:launch?.symbol,tokenPageAvailable:launch?.publicPublished===true&&!isTokenIndexExcluded(token),
+      assetAddress:asset,assetSymbol:asset===zeroAddress?"ETH":metadata?.symbol,
+      amount:decimals===undefined?undefined:formatUnits(BigInt(event.cashReceived),decimals),rawAmount:event.cashReceived,
+      transactionHash:event.transactionHash,createdAt:event.createdAt,updatedAt:event.createdAt});
+  }
+  const latest=Math.max(after??0,...rows.map(run=>run.updatedAt),...layerEvents.map(event=>event.createdAt));
+  // Never advance beyond an independently capped stream's last fetched record.
+  const updatedThrough=after===undefined?latest:Math.min(latest,
+    rows.length===40?rows.at(-1)!.updatedAt:latest,
+    layerEvents.length===100?layerEvents.at(-1)!.createdAt:latest);
   return {
-    receipts: [...receipts.values()].sort((a, b) => b.createdAt - a.createdAt),
-    updatedThrough: Math.max(after ?? 0, ...rows.map(run => run.updatedAt)), delta: after !== undefined,
+    receipts: [...receipts.values()].filter(row=>after===undefined||row.updatedAt<=updatedThrough).sort((a, b) => b.createdAt - a.createdAt),
+    updatedThrough, delta: after !== undefined,
   };
 }

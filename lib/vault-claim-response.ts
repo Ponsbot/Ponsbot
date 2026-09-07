@@ -7,7 +7,7 @@ export type VaultClaimOutcome = {
   amount: string; transactionHash?: string;
   ponsbotBurned?: string;
   sharedCycle?: boolean;
-  state: "paid" | "no_fees" | "operator" | "unavailable" | "pending";
+  state: "paid" | "no_fees" | "operator" | "unavailable" | "pending" | "self_burn";
 };
 
 export function claimUsdDisplay(ethAmount: number, ethUsd?: number) {
@@ -51,6 +51,8 @@ export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolea
           lines.push(`${group.length > 1 ? label(item.tokenSymbol) + " payout TXN" : "Your TXN"}: https://robinhoodchain.blockscout.com/tx/${hash}`);
         }
       }
+    } else if (outcome.state === "self_burn") {
+      lines.push(`Creator fees from ${token} were processed. Your creator share is reserved for buying back and burning the token; no cash payout was made.`);
     } else if (outcome.state === "operator") {
       lines.push(`ℹ️ Fees from ${token} are still waiting for Pons to release them. Nothing was claimed from those fees yet.`);
     } else if (outcome.state === "no_fees") {

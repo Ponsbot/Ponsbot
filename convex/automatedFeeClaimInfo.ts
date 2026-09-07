@@ -185,7 +185,8 @@ export const requestedClaimResult = internalQuery({
       if (r.status === "no_fees") state = r.reason === "waiting_pons_operator" ? "operator" : "no_fees";
       else if (run && run.programId === r.programId && run.beneficiaryAddress.toLowerCase() === r.beneficiaryAddress && run.status === "confirmed") {
         if (run.deliveryBlockNumber && run.beneficiaryDelivered && run.beneficiaryDelivered === run.beneficiaryAllocated && BigInt(run.beneficiaryDelivered) > 0n) {
-          state = "paid"; amount = run.beneficiaryDelivered; ponsbotBurned = run.ponsbotBurned;
+          amount = run.creatorCashDelivered ?? run.beneficiaryDelivered;
+          state = run.creatorBurnLayerAddress && amount === "0" ? "self_burn" : "paid"; ponsbotBurned = run.ponsbotBurned;
           transactionHash = run.deliveryTransactionHash || run.processingTransactionHash;
         } else state = "no_fees";
       } else if (r.status === "unavailable" || !p || p.status !== "enrolled" || p.normalizedBeneficiaryAddress !== r.beneficiaryAddress

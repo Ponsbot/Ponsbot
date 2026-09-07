@@ -22,6 +22,7 @@ crons.interval("reconcile free launch sponsorships", { minutes: 1 }, internal.wa
 // automated fee engine is explicitly enabled and fully configured.
 // Wake/recover each minute: 10m cadence for launches under four hours, hourly afterward.
 crons.interval("process automated creator fees", { minutes: 1 }, internal.automatedFeeEngine.runScheduledProcessing);
+crons.interval("process optional creator self buybacks", { minutes: 1 }, internal.creatorBurnEngine.tick);
 crons.interval("recover automated fee enrollments", { minutes: 1 }, internal.automatedFeeEngine.recoverPreparedEnrollments);
 crons.interval("recover automated fee controller changes", { minutes: 1 }, internal.automatedFeeEngine.recoverControllerChanges);
 crons.interval("monitor automated fee health", { minutes: 5 }, internal.automatedFeeEngine.monitorOperationalHealth);

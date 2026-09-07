@@ -20,6 +20,7 @@ import { boundedJson, RequestBodyError } from "@/lib/bounded-json";
 import { checkLiquidityFunding, quoteLiquidity, prepareLiquidityStep, inspectLiquidityReceipt, inspectLiquidityLegs, liquiditySignerRequest, refreshLiquidityOpen } from "@/lib/wallet-signer/liquidity";
 import { inspectLiquidityPosition } from "@/lib/wallet-signer/liquidity-status";
 import type { LiquidityQuotePlan } from "@/lib/wallet-signer/liquidity";
+import { creatorBurnSnapshot, discoverCreatorBurn, prepareCreatorBurn, broadcastCreatorBurn, creatorBurnStatus, creatorBurnHistory, replaceCreatorBurn } from "@/lib/wallet-signer/creator-burn";
 import { prepareLiquidityEnvelope, signLiquidityEnvelope } from "@/lib/wallet-signer/liquidity";
 
 export const runtime = "nodejs";
@@ -101,7 +102,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
       "v1/automated-fees/controller-sweep-status",
       "v1/automated-fees/verify-enrollment",
     ]);
-    if (productionAutomatedFeePaths.has(path)) {
+    if (productionAutomatedFeePaths.has(path) || path.startsWith("v1/creator-burn/")) {
       const proofIdentity = typeof body === "object" && body !== null
         ? String("vaultAddress" in body ? body.vaultAddress
           : "token" in body ? body.token
@@ -109,6 +110,13 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
         : "";
       assertAutomatedFeeEnrollmentProof(request.headers, path, proofIdentity, body);
     }
+    if (path === "v1/creator-burn/inspect") return NextResponse.json(await creatorBurnSnapshot(body));
+    if (path === "v1/creator-burn/discover") return NextResponse.json({layer:await discoverCreatorBurn(body)});
+    if (path === "v1/creator-burn/prepare") return NextResponse.json(await prepareCreatorBurn(body));
+    if (path === "v1/creator-burn/broadcast") return NextResponse.json(await broadcastCreatorBurn(body));
+    if (path === "v1/creator-burn/status") return NextResponse.json(await creatorBurnStatus(body));
+    if (path === "v1/creator-burn/history") return NextResponse.json(await creatorBurnHistory(body));
+    if (path === "v1/creator-burn/replace") return NextResponse.json(await replaceCreatorBurn(body));
     if (path === "v1/automated-fees/inspect") {
       const input = automatedFeeInspectionRequestSchema.parse(body);
       await assertAutomatedFeeExecutionAccess({ vaultAddress: input.vaultAddress });

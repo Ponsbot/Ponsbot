@@ -471,6 +471,8 @@ export const getLaunch = query({
       market?.graduationUpdatedAt,
       ),
       creatorFeeRecipient: assignedFeeRecipient,
+      ...(automatedFeeProgram?.creatorBurnLayerAddress && automatedFeeProgram.status==="enrolled" && automatedFeeProgram.creatorBurnVerifiedAt
+        ? {creatorSelfBurn:{active:true,percentageBps:automatedFeeProgram.creatorBurnBps??0}} : {}),
       automatedFeeBuybackEnabled: hasPublicFeeBuyback(automatedFeeProgram, launch.holderFeeSharing),
     };
   },

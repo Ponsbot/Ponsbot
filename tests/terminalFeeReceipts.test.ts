@@ -38,6 +38,25 @@ function fixture() {
 }
 
 describe("terminal creator-fee receipt history", () => {
+  it("shows only actual layer cash, not the upstream allocation or burn reserve",async()=>{
+    const f=fixture();Object.assign(f.rows.automatedFeePrograms[0],{normalizedTokenAddress:address(11),normalizedPairTokenAddress:zeroAddress});
+    f.run({creatorBurnLayerAddress:address(21),creatorCashDelivered:"47500000000000000"});
+    f.rows.creatorBurnEvents=[{key:"ledger:1",owner:beneficiary,programId:"program",kind:"payout",cashReceived:"47500000000000000",transactionHash:hash(4),createdAt:2100}];
+    const result=await f.read();expect(result.receipts).toHaveLength(1);
+    expect(result.receipts[0]).toMatchObject({layerPayout:true,amount:"0.0475",transactionHash:hash(4)});
+  });
+  it("does not invent a wallet payout for a 100% self-burn allocation",async()=>{
+    const f=fixture();f.run({creatorBurnLayerAddress:address(21),creatorCashDelivered:"0"});
+    f.rows.creatorBurnEvents=[{key:"ledger:1",owner:beneficiary,programId:"program",kind:"allocation",cashReceived:"0",transactionHash:hash(4),createdAt:2100}];
+    expect((await f.read()).receipts).toEqual([]);
+  });
+  it("does not advance past capped primary history when newer layer payments exist",async()=>{
+    const f=fixture();Object.assign(f.rows.automatedFeePrograms[0],{normalizedTokenAddress:address(11),normalizedPairTokenAddress:zeroAddress});
+    for(let i=1;i<=50;i++)f.run({updatedAt:i,deliveryTransactionHash:hash(i)});
+    f.rows.creatorBurnEvents=[{key:"ledger:1",owner:beneficiary,programId:"program",kind:"payout",cashReceived:"1",transactionHash:hash(90),createdAt:1000}];
+    const first=await f.read(1);expect(first.updatedThrough).toBe(40);expect(first.receipts.some(r=>r.layerPayout)).toBe(false);
+    const next=await f.read(first.updatedThrough);expect(next.updatedThrough).toBe(1000);expect(next.receipts.some(r=>r.layerPayout)).toBe(true);
+  });
   it("shows actual net delivery and its delivery transaction, not gross fees or the buyback transaction", async () => {
     const f = fixture(); f.run();
     const result = await f.read();

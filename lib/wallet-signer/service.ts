@@ -19,6 +19,16 @@ import { inspectFeeAccumulation } from "./fee-accumulation";
 import { manualCreatorFeesEligible } from "../manual-creator-fee-policy";
 import { curveSweepIsEmpty } from "./legacy-fee-preflight";
 import type { LiquidityTransaction } from "../liquidity-contracts";
+import { inspectCreatorBurn, prepareCreatorBurn, broadcastCreatorBurn, creatorBurnStatus, reconcileCreatorDelivery } from "./creator-burn";
+import { creatorBurnVaultAbi } from "../creator-burn-policy";
+
+// Shared credentials and transport, invoked lazily by the layer signer. No API
+// endpoint accepts arbitrary calls through this internal context.
+export function creatorBurnSignerContext() {
+  return { client: rpcClient(), cdp: cdp(), role: automatedFeeAccount,
+    executionAccess: assertAutomatedFeeExecutionAccess,
+    launch: (token: Address, factory: Address) => resolveActivePonsCurve(token, factory, true) };
+}
 
 const tokenAbi = parseAbi([
   "function balanceOf(address owner) view returns (uint256)",
@@ -448,9 +458,13 @@ async function inspectAutomatedFeeVaultSnapshot(request: AutomatedFeeInspectionR
     ? await inspectFeeAccumulation({ client, blockNumber, factory: ponsFactory, escrow: escrowBalance, launch: launched,
         quoteNative: amount => quoteAutomatedFeePairNative(client, ponsFactory, launched, pairAsset, amount) })
     : undefined;
+  const layer = await inspectCreatorBurn(vault, undefined, blockNumber);
+  const effectiveLayer = layer?.active ? layer : undefined;
   return {
     ...accumulation,
-    blockNumber: blockNumber.toString(), token, pairAsset, controller, beneficiary,
+    blockNumber: blockNumber.toString(), token, pairAsset,
+    controller: effectiveLayer?.owner ?? controller, beneficiary: effectiveLayer?.owner ?? beneficiary,
+    ...(effectiveLayer ? { creatorBurnLayer: effectiveLayer.layer, creatorBurnBps: effectiveLayer.bps } : {}),
     executionNonce: nonce.toString(), active, paused, phase: Number(launched.phase),
     creatorFeeRecipient: launched.creatorFeeRecipient, escrowBalance: escrowBalance.toString(),
     lastCurveSweepBlock: lastCurveSweepBlock.toString(),
@@ -837,6 +851,18 @@ export async function prepareAutomatedFeeSweepTransaction(request: AutomatedFeeS
 
 export async function prepareAutomatedFeeDeliveryTransaction(request: AutomatedFeeDeliveryTransactionRequest) {
   await assertAutomatedFeeDeliveryAccess({ vaultAddress: request.vaultAddress });
+  const layer = await inspectCreatorBurn(request.vaultAddress as Address);
+  if (layer?.active) {
+    if (request.asset.toLowerCase() !== layer.asset.toLowerCase()) throw new Error("CREATOR_BURN_DELIVERY_OWNER_MISMATCH");
+    const available = await rpcClient().readContract({ address: layer.vault, abi: automatedFeeVaultAbi, functionName: "claimable", args: [layer.layer, layer.asset] });
+    if (available !== BigInt(request.amount)) {
+      const settled=await reconcileCreatorDelivery(layer.vault,layer.layer,request.amount,request.processingBlockNumber,request.beneficiary);
+      if(settled.complete)return {...settled,alreadyDelivered:true as const,deliveredAmount:request.amount};
+      return prepareCreatorBurn({vaultAddress:layer.vault,layerAddress:layer.layer,idempotencyKey:request.idempotencyKey,stage:"payout",beneficiary:settled.beneficiary});
+    }
+    if(request.beneficiary.toLowerCase()!==layer.owner.toLowerCase())throw new Error("CREATOR_BURN_DELIVERY_OWNER_MISMATCH");
+    return prepareCreatorBurn({ vaultAddress: request.vaultAddress, layerAddress: layer.layer, idempotencyKey: request.idempotencyKey, stage: "collect" });
+  }
   const client = rpcClient();
   const account = await automatedFeeAccount("AUTOMATED_FEE_KEEPER_CDP_ACCOUNT_NAME", "AUTOMATED_FEE_KEEPER_ADDRESS");
   const vault = request.vaultAddress as Address;
@@ -964,6 +990,7 @@ export async function broadcastAutomatedFeePairRoute(request: AutomatedFeePairRo
 }
 
 function automatedFeeControllerCalldata(operation: AutomatedFeeControllerTransactionRequest["operation"]) {
+  if(operation.type==="percentage")throw new Error("CREATOR_BURN_ACTIVE_LAYER_REQUIRED");
   if (operation.type === "pause") {
     return encodeFunctionData({ abi: automatedFeeVaultAbi, functionName: "pause" });
   }
@@ -988,7 +1015,27 @@ function automatedFeeControllerCalldata(operation: AutomatedFeeControllerTransac
   });
 }
 
+async function creatorLayerControllerCall(vault: Address, operation: AutomatedFeeControllerTransactionRequest["operation"], candidate?: Address) {
+  const layer = await inspectCreatorBurn(vault, candidate);
+  if (!layer || (!layer.active && !(layer.exited && operation.type === "exit"))) return null;
+  if(operation.type==="percentage")return {layer,to:layer.layer,data:encodeFunctionData({abi:creatorBurnVaultAbi,functionName:"setPercentage",args:[operation.bps]})};
+  if (operation.type === "reassign") {
+    if (operation.newController.toLowerCase() !== operation.newBeneficiary.toLowerCase()) throw new Error("CREATOR_BURN_REASSIGNMENT_MISMATCH");
+    return {layer, to:layer.layer, data:encodeFunctionData({abi:creatorBurnVaultAbi,functionName:"reassign",args:[operation.newController as Address]})};
+  }
+  if (operation.type === "exit") {
+    const registryAbi=parseAbi(["function holderRegistry() view returns(address)","function distributorOf(address) view returns(address)"]);
+    const registry=await rpcClient().readContract({address:layer.layer,abi:registryAbi,functionName:"holderRegistry"});
+    const destination=await rpcClient().readContract({address:registry,abi:registryAbi,functionName:"distributorOf",args:[layer.token]});
+    if(destination===zeroAddress||destination.toLowerCase()!==operation.recipient.toLowerCase())throw new Error("CREATOR_BURN_HOLDER_RECIPIENT_MISMATCH");
+    return {layer,to:layer.layer,data:encodeFunctionData({abi:creatorBurnVaultAbi,functionName:"shareWithHolders"})};
+  }
+  if(operation.type === "pause")throw new Error("CREATOR_BURN_HOLDER_EXIT_IS_ATOMIC");
+  return null;
+}
+
 export async function prepareAutomatedFeeControllerTransaction(request: AutomatedFeeControllerTransactionRequest) {
+  if(request.operation.type==="percentage"&&process.env.CREATOR_SELF_BUYBACK_ENABLED!=="true")throw new Error("CREATOR_BURN_DISABLED");
   await requireWalletNativeGas(request.expectedAddress);
   await assertAutomatedFeeControllerAccess({ vaultAddress: request.vaultAddress });
   const expected = await provisionWallet(request.ownerReference);
@@ -998,6 +1045,7 @@ export async function prepareAutomatedFeeControllerTransaction(request: Automate
   }
   const client = rpcClient();
   const vault = request.vaultAddress as Address;
+  const layerCall = await creatorLayerControllerCall(vault,request.operation);
   if (request.operation.type === "withdraw") {
     if (request.operation.recipient.toLowerCase() !== request.expectedAddress.toLowerCase()) {
       throw new Error("automated fee withdrawal recipient must be the Pons Bot wallet");
@@ -1008,25 +1056,26 @@ export async function prepareAutomatedFeeControllerTransaction(request: Automate
     });
     if (BigInt(request.operation.amount) > available) throw new Error("automated fee withdrawal exceeds claimable balance");
   } else {
-    const currentController = await client.readContract({ address: vault, abi: automatedFeeVaultAbi, functionName: "controller" });
+    const currentController = layerCall?.layer.owner ?? await client.readContract({ address: vault, abi: automatedFeeVaultAbi, functionName: "controller" });
     if (currentController.toLowerCase() !== request.expectedAddress.toLowerCase()) {
       throw new Error("wallet no longer controls this automated fee vault");
     }
   }
   const account = await cdp().evm.getOrCreateAccount({ name: accountName(request.ownerReference) });
   if (account.address.toLowerCase() !== request.expectedAddress.toLowerCase()) throw new Error("automated fee controller CDP mismatch");
-  const data = automatedFeeControllerCalldata(request.operation);
-  await client.call({ account: account.address, to: vault, data });
+  const data = layerCall?.data ?? automatedFeeControllerCalldata(request.operation);
+  const target = layerCall?.to ?? vault;
+  await client.call({ account: account.address, to: target, data });
   const [estimatedGas, fees, nonce, balance] = await Promise.all([
-    client.estimateGas({ account: account.address, to: vault, data }), estimateResilientAutomationFees(client),
+    client.estimateGas({ account: account.address, to: target, data }), estimateResilientAutomationFees(client),
     client.getTransactionCount({ address: account.address, blockTag: "pending" }), client.getBalance({ address: account.address }),
   ]);
   const gasEnvelope = transactionGasEnvelope(estimatedGas, fees.maxFeePerGas);
   if (balance < transactionMaximumCost(0n, estimatedGas, fees.maxFeePerGas)) throw new Error("automated fee controller has insufficient ETH");
-  const transaction = { chainId: ROBINHOOD_CHAIN_ID, type: "eip1559" as const, to: vault, data, value: 0n, nonce,
+  const transaction = { chainId: ROBINHOOD_CHAIN_ID, type: "eip1559" as const, to: target, data, value: 0n, nonce,
     gas: gasEnvelope.gas, maxFeePerGas: gasEnvelope.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
   const { signature } = await cdp().evm.signTransaction({ address: account.address, transaction: serializeTransaction(transaction), idempotencyKey: request.idempotencyKey });
-  return { transactionHash: keccak256(signature), signedTransaction: signature, from: account.address, to: vault, nonce };
+  return { transactionHash: keccak256(signature), signedTransaction: signature, from: account.address, to: target, nonce };
 }
 
 export async function broadcastAutomatedFeeControllerTransaction(request: AutomatedFeeControllerBroadcastRequest) {
@@ -1037,9 +1086,11 @@ export async function broadcastAutomatedFeeControllerTransaction(request: Automa
   const signed = request.signedTransaction as Hex;
   const parsed = parseTransaction(signed);
   const sender = await recoverTransactionAddress({ serializedTransaction: signed as Parameters<typeof recoverTransactionAddress>[0]["serializedTransaction"] });
-  const expectedData = automatedFeeControllerCalldata(request.operation);
+  const layerCall = await creatorLayerControllerCall(request.vaultAddress as Address,request.operation,
+    parsed.to && parsed.to.toLowerCase() !== request.vaultAddress.toLowerCase() ? parsed.to : undefined);
+  const expectedData = layerCall?.data ?? automatedFeeControllerCalldata(request.operation);
   if (sender.toLowerCase() !== request.expectedAddress.toLowerCase() || parsed.chainId !== ROBINHOOD_CHAIN_ID
-    || !parsed.to || parsed.to.toLowerCase() !== request.vaultAddress.toLowerCase() || parsed.data !== expectedData
+    || !parsed.to || parsed.to.toLowerCase() !== (layerCall?.to ?? request.vaultAddress).toLowerCase() || parsed.data !== expectedData
     || (parsed.value ?? 0n) !== 0n) throw new Error("automated fee controller transaction envelope mismatch");
   const localHash = keccak256(signed);
   if (localHash.toLowerCase() !== request.transactionHash.toLowerCase()) throw new Error("automated fee transaction hash mismatch");
@@ -1077,7 +1128,9 @@ export async function automatedFeeControllerTransactionStatus(request: Automated
   }
   if (receipt.status !== "success") return { status: "reverted" as const, blockNumber: receipt.blockNumber.toString() };
   const inspection = await inspectAutomatedFeeVault({ chainId: ROBINHOOD_CHAIN_ID, vaultAddress: request.vaultAddress });
-  const matches = request.operation.type === "reassign"
+  const matches = request.operation.type === "percentage"
+    ? Boolean(inspection.creatorBurnLayer && inspection.creatorBurnBps===request.operation.bps && inspection.controller.toLowerCase()===request.expectedAddress.toLowerCase())
+    : request.operation.type === "reassign"
     ? inspection.controller.toLowerCase() === request.operation.newController.toLowerCase()
       && inspection.beneficiary.toLowerCase() === request.operation.newBeneficiary.toLowerCase()
       && inspection.active && !inspection.paused
@@ -1207,6 +1260,9 @@ export async function broadcastAutomatedFeeDeliveryTransaction(request: Automate
   await assertAutomatedFeeDeliveryAccess({ vaultAddress: request.vaultAddress });
   const signed = request.signedTransaction as Hex;
   const parsed = parseTransaction(signed);
+  if (parsed.to && parsed.to.toLowerCase() !== request.vaultAddress.toLowerCase()) {
+    return broadcastCreatorBurn({ vaultAddress: request.vaultAddress, layerAddress: parsed.to, signedTransaction: request.signedTransaction, transactionHash: request.transactionHash });
+  }
   const sender = await recoverTransactionAddress({ serializedTransaction: signed as Parameters<typeof recoverTransactionAddress>[0]["serializedTransaction"] });
   const expectedKeeper = configuredAddress("AUTOMATED_FEE_KEEPER_ADDRESS", sender);
   if (sender.toLowerCase() !== expectedKeeper.toLowerCase() || parsed.chainId !== ROBINHOOD_CHAIN_ID
@@ -1266,6 +1322,21 @@ export async function automatedFeeTransactionStatus(request: AutomatedFeeTransac
       buybackSpent: event.args.buybackSpent.toString(), ponsbotBurned: event.args.ponsbotBurned.toString(), gasCostWei };
   }
   if (request.stage === "delivery") {
+    if (receipt.to && receipt.to.toLowerCase() !== request.vaultAddress.toLowerCase()) {
+      const result = await creatorBurnStatus({ vaultAddress: request.vaultAddress, layerAddress: receipt.to, transactionHash: request.transactionHash });
+      if (result.status !== "confirmed") return result;
+      const allocations = result.events.filter(e => e.kind === "allocation");
+      if (allocations.length !== 1) {
+        if(!request.expectedAmount||!request.processingBlockNumber)throw new Error("CREATOR_BURN_DELIVERY_CONTEXT_REQUIRED");
+        const reconciled=await reconcileCreatorDelivery(request.vaultAddress as Address,receipt.to,request.expectedAmount,request.processingBlockNumber);
+        if(!reconciled.complete)return {status:"pending" as const};
+        return {...result,...reconciled,status:"confirmed" as const};
+      }
+      const allocation = allocations[0], paid = result.events.find(e => e.kind === "payout" && e.owner.toLowerCase() === allocation.owner.toLowerCase());
+      if (BigInt(allocation.cashAllocated) > BigInt(paid?.cashDebited ?? "0")) throw new Error("CREATOR_BURN_CASH_NOT_DELIVERED");
+      const cash = paid && BigInt(paid.cashDebited)>0n ? (BigInt(allocation.cashAllocated)*BigInt(paid.cashReceived)/BigInt(paid.cashDebited)).toString() : "0";
+      return { ...result, amount: allocation.received, creatorBurnLayer: receipt.to, creatorCashDelivered: cash, creatorReserveAllocated: allocation.reserveAllocated };
+    }
     const event = decoded.find((item) => item.eventName === "BeneficiaryAllocationDelivered");
     if (!event || event.eventName !== "BeneficiaryAllocationDelivered") throw new Error("confirmed automated fee delivery receipt is missing its event");
     return { status: "confirmed" as const, blockNumber: receipt.blockNumber.toString(),

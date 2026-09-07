@@ -258,7 +258,30 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_asset", ["normalizedAssetAddress"]),
 
+  creatorBurnLayers: defineTable({
+    historyNextBlock:v.optional(v.string()),
+    manualReview:v.optional(v.boolean()),
+    programId: v.id("automatedFeePrograms"), layerAddress: v.string(), ownerAddress: v.string(),
+    bps: v.number(), active: v.boolean(), nextCheckAt: v.number(), updatedAt: v.number(),
+    leaseId: v.optional(v.string()), leaseUntil: v.optional(v.number()),
+    pending: v.optional(v.object({ key: v.string(), stage: v.union(v.literal("collect"),v.literal("payout"),v.literal("burn")),
+      beneficiary: v.string(), createdAt: v.number(), transactionHash: v.optional(v.string()), signedTransaction: v.optional(v.string()),previousHashes:v.optional(v.array(v.string())),replacementAt:v.optional(v.number()) })),
+    failures: v.number(), burnRetryAt: v.number(), hasPending:v.boolean(), ownerCursor: v.optional(v.string()), diagnostic: v.optional(v.string()),
+  }).index("by_layer", ["layerAddress"]).index("by_program", ["programId"]).index("by_due", ["nextCheckAt"]).index("by_pending",["hasPending"]),
+  creatorBurnOwners: defineTable({ layerId: v.id("creatorBurnLayers"), ownerAddress: v.string(),burnRetryAt:v.optional(v.number()) })
+    .index("by_layer", ["layerId"]).index("by_identity", ["layerId", "ownerAddress"]),
+  creatorBurnTransactionJournal:defineTable({layerId:v.id("creatorBurnLayers"),transactionHash:v.string(),signedTransaction:v.string(),createdAt:v.number()}).index("by_hash",["transactionHash"]),
+  creatorBurnEvents: defineTable({
+    key: v.string(), layerId: v.id("creatorBurnLayers"), programId: v.id("automatedFeePrograms"),
+    transactionHash: v.string(), blockNumber: v.string(), owner: v.string(),
+    kind: v.string(), received: v.string(), cashAllocated: v.string(), reserveAllocated: v.string(),
+    cashDebited: v.string(), cashReceived: v.string(), reserveSpent: v.string(), tokensBurned: v.string(), createdAt: v.number(),
+  }).index("by_key", ["key"]).index("by_owner_created", ["owner", "createdAt"]).index("by_layer", ["layerId"]),
+
   automatedFeePrograms: defineTable({
+    creatorBurnLayerAddress: v.optional(v.string()),
+    creatorBurnBps: v.optional(v.number()),
+    creatorBurnVerifiedAt: v.optional(v.number()),
     tokenAddress: v.string(),
     normalizedTokenAddress: v.string(),
     launchId: v.optional(v.id("tokenLaunches")),
@@ -368,6 +391,7 @@ export default defineSchema({
     .index("by_status_updated", ["status", "updatedAt"]),
 
   automatedFeeControllerChanges: defineTable({
+    selfBurnBps:v.optional(v.number()),
     requestId: v.string(),
     parentRequestId: v.optional(v.string()),
     programId: v.id("automatedFeePrograms"),
@@ -407,6 +431,9 @@ export default defineSchema({
     .index("by_status_workflow_root_updated", ["status", "workflowRoot", "updatedAt"]),
 
   automatedFeeRuns: defineTable({
+    creatorBurnLayerAddress: v.optional(v.string()),
+    creatorCashDelivered: v.optional(v.string()),
+    creatorReserveAllocated: v.optional(v.string()),
     programId: v.id("automatedFeePrograms"),
     requestedClaim: v.optional(v.boolean()),
     tokenAddress: v.string(),

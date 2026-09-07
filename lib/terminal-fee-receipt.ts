@@ -11,6 +11,8 @@ export type TerminalFeeReceipt = {
   transactionHash: string;
   createdAt: number;
   updatedAt: number;
+  /** Layer payouts may include recovered surplus; do not label all of it fees. */
+  layerPayout?: boolean;
 };
 
 export function mergeTerminalFeeReceipts(current: TerminalFeeReceipt[], incoming: TerminalFeeReceipt[]) {

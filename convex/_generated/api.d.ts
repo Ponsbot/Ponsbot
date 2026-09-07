@@ -14,6 +14,7 @@ import type * as automatedFeeOutcomes from "../automatedFeeOutcomes.js";
 import type * as automatedFeeQueue from "../automatedFeeQueue.js";
 import type * as burnedLookups from "../burnedLookups.js";
 import type * as creatorFeeHistory from "../creatorFeeHistory.js";
+import type * as creatorBurnEngine from "../creatorBurnEngine.js";
 import type * as crons from "../crons.js";
 import type * as freeLaunches from "../freeLaunches.js";
 import type * as graduationAnnouncements from "../graduationAnnouncements.js";
@@ -59,6 +60,7 @@ declare const fullApi: ApiFromModules<{
   automatedFeeQueue: typeof automatedFeeQueue;
   burnedLookups: typeof burnedLookups;
   creatorFeeHistory: typeof creatorFeeHistory;
+  creatorBurnEngine: typeof creatorBurnEngine;
   crons: typeof crons;
   freeLaunches: typeof freeLaunches;
   graduationAnnouncements: typeof graduationAnnouncements;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
 import { FEE_CHECK_INTERVAL_MS } from "../lib/automated-fee-scheduling";
 import * as engine from "../convex/automatedFeeEngine";
+import * as creatorBurnEngine from "../convex/creatorBurnEngine";
 import * as feeQueue from "../convex/automatedFeeQueue";
 import * as wallets from "../convex/wallets";
 import * as xReplies from "../convex/xReplies";
@@ -50,7 +51,7 @@ function database() {
   const invoke = async (ref: any, args: any) => {
     if (getFunctionName(ref) === "automatedFeeClaimInfo:hasPendingRequestedClaims") return false;
     const [module, name] = getFunctionName(ref).split(":");
-    return handler((module === "wallets" ? wallets : module === "liquidity" ? liquidity : module === "xFloodProtection" ? xFloodProtection : module === "xReplies" ? xReplies : module === "automatedFeeQueue" ? feeQueue : engine as any)[name])(ctx, args);
+    return handler((module === "creatorBurnEngine" ? creatorBurnEngine : module === "wallets" ? wallets : module === "liquidity" ? liquidity : module === "xFloodProtection" ? xFloodProtection : module === "xReplies" ? xReplies : module === "automatedFeeQueue" ? feeQueue : engine as any)[name])(ctx, args);
   };
   const ctx: any = { db, rows, scheduled, runQuery: invoke, runMutation: invoke, runAction: invoke,
     scheduler: { runAfter: vi.fn(async (_delay: number, ref: any, args: any) => { scheduled.push({ name: getFunctionName(ref), args }); }) } };
@@ -737,6 +738,25 @@ describe("durable enrollment and shared-wallet serialization", () => {
 });
 
 describe("complete public controller path with a strict mock signer", () => {
+  it.each(["reassign","holders"] as const)("finishes layer %s after state changes before receipt finality",async operation=>{
+    const ctx=fixture();vi.stubEnv("CREATOR_SELF_BUYBACK_FACTORY_ADDRESS",a(31));
+    ctx.rows.automatedFeePrograms[0].creatorBurnLayerAddress=a(30);
+    ctx.rows.creatorBurnLayers=[{_id:"layer",programId:"p",layerAddress:a(30),ownerAddress:a(1),bps:5000,active:true,nextCheckAt:0,failures:0,burnRetryAt:0,hasPending:false}];
+    let final=false,signs=0;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,init:RequestInit)=>{
+      const path=new URL(url).pathname;const body=JSON.parse(String(init.body));let result:any={};
+      if(path.endsWith("prepare-controller")){automatedFeeControllerTransactionRequestSchema.parse(body);signs++;result={transactionHash:h(7),signedTransaction:"0x1234",nonce:0};}
+      else if(path.endsWith("broadcast-controller"))result={status:"broadcast"};
+      else if(path.endsWith("controller-status"))result={status:"confirmed",blockNumber:"100"};
+      else if(path.endsWith("creator-burn/status"))result=final?{status:"confirmed",blockNumber:"100",events:[]}:{status:"pending"};
+      else if(path.endsWith("discover"))result={layer:{layer:a(30),owner:a(operation==="holders"?1:2),active:operation!=="holders",exited:operation==="holders",bps:0}};
+      else throw new Error(path);return new Response(JSON.stringify(result));
+    }));
+    const args={requestId:"root",programId:"p",ownerXUserId:"123",walletRef:a(1),expectedAddress:a(1),operation,recipient:a(2)};
+    await expect(handler(engine.executeVerifiedControllerChange)(ctx,args)).rejects.toThrow("continuation required");
+    final=true;expect((await handler(engine.executeVerifiedControllerChange)(ctx,args)).outcome).toBe(operation==="holders"?"holders":"reassigned");
+    expect(signs).toBe(1);expect(ctx.rows.automatedFeeControllerChanges.find((r:any)=>r.requestId==="root").workflowCompletedAt).toBeTruthy();
+  });
   it("retries a curve reassignment using the saved authorization and delivery amount", async () => {
     const ctx = fixture();
     let nonce = 0, sweepDone = false, reassigned = false, failBroadcast = true, deliveryPending = true;
