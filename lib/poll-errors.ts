@@ -1,10 +1,10 @@
 // Convex wraps errors from nested functions with request IDs and stack traces.
 // Match known internal errors but return only fixed public text, never the wrapper.
 const votingErrors: [string, string][] = [
-  ['No tokens held at the poll snapshot', '⚠️ This wallet did not hold any of this token at the holder snapshot. Tokens bought afterward or held in liquidity positions do not count for this vote.'],
-  ['This wallet has no eligible voting balance.', '⚠️ This wallet has no eligible directly held tokens at the holder snapshot. Tokens bought afterward or held in liquidity positions do not count for this vote.'],
+  ['No tokens held at the poll snapshot', '⚠️ This wallet did not hold any of this token at the holder snapshot.'],
+  ['This wallet has no eligible voting balance.', '⚠️ This wallet has no eligible directly held tokens at the holder snapshot.'],
   ['Your snapshot balance is below the minimum holding requirement.', '⚠️ Your token balance at the holder snapshot was below this poll’s minimum holding requirement. Buying more now will not change eligibility for this poll.'],
-  ['You have already voted in this poll.', 'ℹ️ You have already voted in this poll. Votes cannot be changed.'],
+  ['You have already voted in this poll.', 'ℹ️ You have already voted in this poll.'],
   ['This poll has closed.', '⚠️ This poll has closed. No new votes can be recorded.'],
   ['This poll is not ready for voting.', '⚠️ This poll is still being prepared. Wait for it to open, then try again.'],
   ['This address is excluded from voting.', '⚠️ This wallet is excluded from voting in this poll.'],

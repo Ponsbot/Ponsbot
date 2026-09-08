@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { FunctionReturnType } from 'convex/server';
 import { internal } from '@/convex/_generated/api';
 import { formatUnits } from 'viem';
-import { pollPercent, pollTokenLabel, type PollSpec } from '@/lib/polls';
+import { pollLeadingOptions, pollPercent, pollTokenLabel, type PollSpec } from '@/lib/polls';
 import styles from '@/app/votes/votes.module.css';
 import { VoteWalletConnect } from './VoteWalletConnect';
 type Poll = NonNullable<FunctionReturnType<typeof internal.polls.get>>;
@@ -21,6 +21,39 @@ export function VotesClient({ code }: { code?: string }) {
   const [token, setToken] = useState(''), [question, setQuestion] = useState(''), [options, setOptions] = useState('Yes, No'), [duration, setDuration] = useState('24'), [durationUnit, setDurationUnit] = useState<'hours' | 'days'>('hours'), [minimum, setMinimum] = useState('0.1');
   const [choice, setChoice] = useState(''), [ca, setCa] = useState('');
   const [creating, setCreating] = useState(false);
+  const [mySnapshot, setMySnapshot] = useState<{ key: string; balance?: string; error?: string } | null>(null);
+  const [snapshotRetry, setSnapshotRetry] = useState(0);
+  const snapshotHash = poll?.snapshot?.blockHash;
+  const snapshotKey = JSON.stringify([code, snapshotHash, votingWallet, walletSource]);
+  useEffect(() => {
+    if (!code || !snapshotHash || !votingWallet || !auth.csrfToken) return;
+    let live = true;
+    const controller = new AbortController();
+    setMySnapshot({ key: snapshotKey });
+    void fetch('/api/votes', { method: 'POST', signal: controller.signal, headers: { 'content-type': 'application/json', 'x-pons-csrf': auth.csrfToken },
+      body: JSON.stringify({ operation: 'snapshotBalance', code, walletSource, expectedWallet: votingWallet, eventId: crypto.randomUUID() }) })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok || !data.ok || typeof data.snapshotBalance !== 'string' || !/^\d+$/.test(data.snapshotBalance)) throw new Error('Snapshot balance unavailable');
+        if (live) setMySnapshot({ key: snapshotKey, balance: data.snapshotBalance });
+      }).catch(() => { if (live) setMySnapshot({ key: snapshotKey, error: 'Temporarily unavailable' }); });
+    return () => { live = false; controller.abort(); };
+  }, [code, snapshotHash, votingWallet, walletSource, auth.csrfToken, snapshotKey, snapshotRetry]);
+  const [rightsPreview, setRightsPreview] = useState<{ key: string; message: string } | null>(null);
+  const rightsKey = JSON.stringify([token.trim(), votingWallet, walletSource]);
+  useEffect(() => {
+    if (!creating || !token.trim()) return;
+    const controller = new AbortController();
+    let live = true;
+    const timer = setTimeout(() => {
+      if (!votingWallet || !auth.csrfToken) { setRightsPreview({ key: rightsKey, message: 'Sign in or connect a wallet to check whether this token’s vote would be Official.' }); return; }
+      void fetch('/api/votes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pons-csrf': auth.csrfToken }, signal: controller.signal,
+        body: JSON.stringify({ operation: 'preview', choice: token.trim(), walletSource, expectedWallet: votingWallet, eventId: crypto.randomUUID() }) })
+        .then(async response => { const data = await response.json(); if (live) setRightsPreview({ key: rightsKey, message: data.message || data.error || 'Unable to check token rights right now.' }); })
+        .catch(() => { if (live) setRightsPreview({ key: rightsKey, message: 'Unable to check token rights right now. Edit the token field to retry.' }); });
+    }, 700);
+    return () => { live = false; clearTimeout(timer); controller.abort(); };
+  }, [creating, token, votingWallet, walletSource, auth.csrfToken, rightsKey]);
   const request = useRef<{ payload: string; id: string } | null>(null);
   const activeLoad = useRef(0);
   const loadedPages = useRef(1);
@@ -58,7 +91,7 @@ export function VotesClient({ code }: { code?: string }) {
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); loadState.current++; };
   }, [load]);
   useEffect(() => { let live = true; fetch('/api/auth/x/session', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live) setAuth(d); }).catch(() => {}); return () => { live = false; }; }, []);
-  async function act(operation: 'create' | 'vote' | 'endorse' | 'correct', spec?: PollSpec) {
+  async function act(operation: 'cancel' | 'create' | 'vote' | 'endorse' | 'correct', spec?: PollSpec) {
     if (busy) return;
     if (!votingWallet) { setMessage(walletSource === 'pons' ? 'Sign in with X to use your Pons Bot wallet.' : 'Connect external wallet and sign to verify it before continuing.'); return; }
     setBusy(true); setMessage('');
@@ -76,7 +109,6 @@ export function VotesClient({ code }: { code?: string }) {
   const winners = poll?.options.filter((_, i) => BigInt(poll.totals[i]) === largestTotal) ?? [];
   return <section className={styles.page}>
     <header className={styles.heading}><div><Link href='/votes'>Community voting</Link><h1>{code ? 'Token-holder vote' : 'Token-Gated Voting'}</h1><p>Create a poll, give holders a voice, and follow the results.</p>{!code && <button onClick={() => setCreating(x => !x)}>{creating ? 'Browse polls' : 'Create a vote'}</button>}</div><div className={styles.walletConnect}><VoteWalletConnect csrf={auth.csrfToken} onChange={setVotingWallet} disabled={busy} />
-      <div className={styles.officialNotice}>{!code ? <><strong>You are creating a Community vote by default.</strong><p>Use the Pons Bot or external wallet that launched the token or holds its rights to create an Official vote.</p></> : <p>The launcher or current rights holder can use their Pons Bot or external wallet to make a Community vote Official.</p>}</div>
     </div></header>
     {!auth.authenticated && <p className={styles.notice}><a href={signIn}>Sign in with X</a> to access the voting preview.</p>}
     {loadError && <p role='alert' className={styles.notice}>{loadError} <button onClick={() => void load()}>Retry</button></p>}
@@ -84,25 +116,37 @@ export function VotesClient({ code }: { code?: string }) {
     {!code && creating && <form className={styles.form} onSubmit={e => { e.preventDefault(); void act('create', { token, question, options: options.split(/[,\n]/).map(x => x.trim()).filter(Boolean), durationMinutes: Number(duration) * (durationUnit === 'days' ? 1440 : 60), minimumHoldingPercent: Number(minimum) }); }}>
       <h2>Create a vote</h2><p>Anyone can create a Community poll. A verified token launcher, fee-rights holder, or supported contract owner creates an Official poll. Tokens do not need to be launched through Pons Bot. Polls are advisory and never move funds.</p>
       <label>Token ticker, contract, or both<input required maxLength={160} value={token} onChange={e => setToken(e.target.value)} placeholder='$PONSBOT or 0x…' /></label>
+      {token.trim() && <p role='status' className={styles.officialNotice}>{rightsPreview?.key === rightsKey ? rightsPreview.message : 'Checking this token’s rights…'}</p>}
       <label>Question<textarea required maxLength={400} value={question} onChange={e => setQuestion(e.target.value)} /></label>
       <label>Options, separated by commas (2–8)<textarea required value={options} maxLength={648} onChange={e => setOptions(e.target.value)} rows={3} placeholder='Yes, No, Abstain' /></label>
       <div className={styles.fields}><label>Voting duration (1 hour to 7 days)<input type='number' required min={durationUnit === 'days' ? 0.5 : 1} max={durationUnit === 'days' ? 7 : 168} step={0.5} value={duration} onChange={e => setDuration(e.target.value)} /><select aria-label='Duration unit' value={durationUnit} onChange={e => { const unit = e.target.value as 'hours' | 'days'; setDuration(unit === 'days' ? '1' : '24'); setDurationUnit(unit); }}><option value='hours'>Hours</option><option value='days'>Days</option></select></label><label>Minimum holding, % of total supply<input type='number' required min={0} max={100} step={0.000001} value={minimum} onChange={e => setMinimum(e.target.value)} /></label></div>
       <button disabled={busy || !votingWallet}>{busy ? 'Preparing…' : 'Create vote'}</button>
     </form>}
     {!code && !creating && <><div className={styles.tabs}><button aria-pressed={!closed} onClick={() => setClosed(false)}>Ongoing</button><button aria-pressed={closed} onClick={() => setClosed(true)}>Completed</button></div><div className={styles.grid}>
-      {items.map(p => <Link href={`/votes/${p.code}`} key={p.code} className={styles.card}><div className={styles.badges}><span>{p.official ? 'Official' : 'Community'}</span><span>{pollTokenLabel(p.snapshot?.symbol ?? 'TOKEN', p.tokenAddress)}</span></div><h2>{p.question}</h2><p>{p.voterCount} wallets · {p.turnout.toFixed(2)}% participation</p><p>{p.endsAt ? new Date(p.endsAt).toLocaleString() : ''}</p></Link>)}
+      {items.map(p => <Link href={`/votes/${p.code}`} key={p.code} className={styles.card}><div className={styles.badges}><span>{p.official ? 'Official' : 'Community'}</span><span>{pollTokenLabel(p.snapshot?.symbol ?? 'TOKEN', p.tokenAddress)}</span></div><h2>{p.question}</h2>
+        <ul className={styles.cardOptions}>{pollLeadingOptions(p.options, p.totals, p.votedWeight).map(option => <li key={option.index}><span>{option.text}</span><strong>{option.percent.toFixed(2)}%</strong></li>)}</ul>
+        {p.options.length > 3 && <span aria-label='More options'>…</span>}
+        <p>{p.voterCount} wallets · {p.turnout.toFixed(2)}% participation</p><p>{p.endsAt ? new Date(p.endsAt).toLocaleString() : ''}</p></Link>)}
     </div>{!items.length && !loadError && <p>No {closed ? 'completed' : 'ongoing'} polls yet.</p>}{next && <button onClick={() => void load(next)}>More polls</button>}</>}
     {code && poll && <article className={styles.detail}>
       <div className={styles.badges}><span>{poll.official ? 'Official' : 'Community'}</span><span>{poll.status.charAt(0).toUpperCase() + poll.status.slice(1).replaceAll('_', ' ')}</span><span>{poll.code}</span></div>
       <h2>{poll.question}</h2><p>{poll.tokenAddress && <a href={`https://robinhoodchain.blockscout.com/token/${poll.tokenAddress}`} target='_blank' rel='noreferrer'><strong>{pollTokenLabel(poll.snapshot?.symbol ?? 'TOKEN', poll.tokenAddress)}</strong></a>}</p>
       <p>Created by: <span title={poll.creatorWallet}>{poll.creatorXUsername ? `@${poll.creatorXUsername}` : short(poll.creatorWallet)}</span></p>
+      {['open', 'preparing', 'needs_token'].includes(poll.status) && votingWallet?.toLowerCase() === poll.creatorWallet.toLowerCase() && <button disabled={busy} onClick={() => { if (window.confirm('Cancel this poll? Voting will stop and it cannot be reopened.')) void act('cancel'); }}>Cancel poll</button>}
+      {poll.status === 'cancelled' && <p className={styles.notice}>This poll was cancelled by its creator.</p>}
       {poll.status === 'preparing' && <p role='status'>Preparing and verifying the fixed-block holder snapshot… This page updates automatically.</p>}
       {poll.status === 'failed' && <p>The snapshot could not be verified. Voting was not opened. Please create a new poll.</p>}
       {poll.status === 'needs_token' && <form onSubmit={e => { e.preventDefault(); void act('correct'); }}><p>Double-check the ticker and supply its matching contract address to continue.</p><label>Contract address<input value={ca} onChange={e => setCa(e.target.value)} pattern='0x[a-fA-F0-9]{40}' required /></label><button disabled={busy || !votingWallet || votingWallet.toLowerCase() !== poll.creatorWallet}>Continue</button></form>}
       {poll.snapshot && <>
         <p>{poll.status === 'closed' ? 'Closed' : 'Closes'}: {poll.endsAt && new Date(poll.endsAt).toLocaleString()}</p>
         {poll.status === 'closed' && <p className={styles.notice}>{largestTotal === 0n ? 'No votes were cast.' : `${winners.length > 1 ? 'Tie' : 'Winning option'}: ${winners.join(', ')}`}</p>}
-        <div className={styles.stats}><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Supply Participated</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Holders Voted</small><strong>{poll.voterCount}</strong></div></div>
+        <div className={styles.stats}><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Supply Participated</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Holders Voted</small><strong>{poll.voterCount}</strong></div>
+          <div><small>Your Tokens at Snapshot</small><strong>{!votingWallet ? 'Connect a wallet' : mySnapshot?.key === snapshotKey && mySnapshot.balance !== undefined
+            ? `${amount(mySnapshot.balance, poll.snapshot.decimals)} $${poll.snapshot.symbol} (${pollPercent(mySnapshot.balance, poll.snapshot.supply).toLocaleString('en-US', { maximumFractionDigits: 4 })}%)`
+            : mySnapshot?.key === snapshotKey && mySnapshot.error ? mySnapshot.error : 'Loading…'}</strong>
+            {votingWallet && mySnapshot?.key === snapshotKey && mySnapshot.error && <button onClick={() => setSnapshotRetry(n => n + 1)}>Retry</button>}
+          </div>
+        </div>
         <div className={styles.options}>{poll.options.map((o, i) => <label key={i} className={styles.option}>
           <span>{poll.status === 'open' && <input type='radio' name='vote' value={i + 1} checked={choice === String(i + 1)} onChange={e => setChoice(e.target.value)} disabled={busy} />}{i + 1}. {o}</span>
           <strong>{pollPercent(poll.totals[i], poll.votedWeight).toFixed(2)}%</strong><progress value={pollPercent(poll.totals[i], poll.votedWeight)} max={100} /><small>{amount(poll.totals[i], poll.snapshot!.decimals)} tokens</small>
@@ -110,7 +154,6 @@ export function VotesClient({ code }: { code?: string }) {
         {poll.status === 'open' && <button disabled={busy || !choice || !votingWallet} onClick={() => void act('vote')}>{busy ? 'Checking…' : 'Cast vote'}</button>}
         <p>Holder snapshot taken {new Date(poll.snapshot.timestamp).toLocaleString()}.</p>
         <p>Minimum holding: {poll.minimumHoldingPercent}% of total supply. Votes cannot be changed.</p>
-        {poll.official && <p>Official endorsement verified for {short(poll.officialBy ?? poll.creatorWallet)}{poll.officialAt ? ` on ${new Date(poll.officialAt).toLocaleString()}` : ''}. This is not a binding governance action.</p>}
         {!poll.official && poll.status === 'open' && <div className={styles.notice}><p>The launcher or current fee-rights holder can endorse this Community poll without changing existing votes.</p><button disabled={busy || !votingWallet} onClick={() => void act('endorse')}>Verify rights and make Official</button></div>}
         {poll.xPostId && <p><a href={`https://x.com/Ponsbotfamily/status/${poll.xPostId}`} target='_blank' rel='noreferrer'>View the X voting post</a></p>}
       </>}

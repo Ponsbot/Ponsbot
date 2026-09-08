@@ -6,6 +6,7 @@ export const pollDisplayText = (text: string) => text.normalize('NFKC').replace(
 export const pollInputText = (text: string) => text.trim().replace(/^(?:@ponsbotfamily\b[\s,!:]*)+/i, '').replace(/\s+@ponsbotfamily[.!?]*$/i, '').trim();
 const createPrefix = /^(?:(?:hey|hi)[,!]?[\s]+)?(?:(?:please|can you|could you|would you|i want to|i would like to|i'd like to|let's)\s+)?(?:create|start|make|open|set\s+up)\s+(?:me\s+)?(?:(?:a|an|new)\s+)?(?:poll|vote)\b[\s,:]*/iu;
 export const isPollCreate = (text: string) => createPrefix.test(pollInputText(text));
+export const isPollCancel = (text: string) => /^(?:please\s+)?cancel(?:\s+(?:(?:this|the|my)\s+)?(?:poll|vote|votes|voting))?(?:\s+please)?[.!?]*$/i.test(pollInputText(text));
 export function pollDuration(text: string) {
   const m = text.trim().match(/^(?:for\s+)?(\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven)\s*(hours?|hrs?|h|days?|d)[.!]?$/i);
   if (!m) throw new Error('Reply with a duration in hours or days, such as 12 hours or 2 days.');
@@ -143,6 +144,12 @@ export function pollChoice(text: string, options: string[]) {
 }
 export function pollPercent(part: string, whole: string) {
   return BigInt(whole) > 0n ? Number(BigInt(part) * 1_000_000n / BigInt(whole)) / 10_000 : 0;
+}
+export function pollLeadingOptions(options: string[], totals: string[], votedWeight: string) {
+  return options.map((text, index) => ({ text, index, weight: BigInt(totals[index] ?? '0') }))
+    .sort((a, b) => a.weight === b.weight ? a.index - b.index : a.weight > b.weight ? -1 : 1)
+    .slice(0, 3)
+    .map(({ text, index, weight }) => ({ text, index, percent: pollPercent(weight.toString(), votedWeight) }));
 }
 export function updatePollTotals(totals: string[], old: { option: number; weight: string } | null, option: number, weight: string) {
   const result = totals.map(BigInt);

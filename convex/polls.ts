@@ -11,10 +11,10 @@ import { isPollCommand, parsePollDraft, pollChoice, pollCreatedText, pollDisplay
 import { advancePollDraft, nextPollStep, pollPrompt } from '../lib/poll-workflow';
 import { pollDiagnostic } from '../lib/poll-diagnostics';
 import { safePollError } from '../lib/poll-errors';
-import { pollTokenLabel } from '../lib/polls';
-import { assertPollBlock, buildPollSnapshot, pollAnchor, pollOfficial, pollVotingBalance } from '../lib/poll-chain';
+import { pollTokenLabel, isPollCancel } from '../lib/polls';
+import { assertPollBlock, buildPollSnapshot, pollAnchor, pollMetadata, pollOfficial, pollVotingBalance } from '../lib/poll-chain';
 
-type Result = { message: string; code?: string; pending?: boolean; ok: boolean; silent?: boolean };
+type Result = { message: string; code?: string; pending?: boolean; ok: boolean; silent?: boolean; official?: boolean; tokenAddress?: string; snapshotBalance?: string };
 const find = (ctx: Parameters<typeof publicPoll>[0], code: string) => ctx.db.query('polls').withIndex('by_code', q => q.eq('code', code.toUpperCase())).unique();
 function publicPoll(_ctx: import('./_generated/server').QueryCtx, p: Doc<'polls'>) {
   return { code: p.code, status: p.status === 'open' && (p.endsAt ?? 0) <= Date.now() ? 'closed' : p.status,
@@ -223,8 +223,8 @@ async function vote(ctx: ActionCtx, code: string, wallet: string, choice: string
   if (BigInt(weight) === 0n) throw new Error('No tokens held at the poll snapshot');
   if (c.vote) await assertPollBlock(c.poll.snapshot);
   const saved = await ctx.runMutation(internal.polls.saveVote, { code, wallet, option, weight, event, source, eventOrder: order, ...(xOwner ? { xOwner } : {}) });
-  if (saved.duplicate) return { ok: true, code, silent: !saved.duplicateNotice, message: `ℹ️ You have already voted in ${code}. Votes cannot be changed.` };
-  return { ok: true, code, message: `🗳️ Vote recorded for ${code}: ${pollDisplayText(c.poll.spec.options[option])}\nVoting power: ${Number(formatUnits(BigInt(saved.weight), c.poll.snapshot.decimals)).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${pollTokenLabel(c.poll.snapshot.symbol, c.poll.tokenAddress)}\n${pollUrl(code)}` };
+  if (saved.duplicate) return { ok: true, code, silent: !saved.duplicateNotice, message: `ℹ️ You have already voted in ${code}.` };
+  return { ok: true, code, message: `🗳️ Vote recorded for ${code}: ${pollDisplayText(c.poll.spec.options[option])}\nVoting power: ${Number(formatUnits(BigInt(saved.weight), c.poll.snapshot.decimals)).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${pollTokenLabel(c.poll.snapshot.symbol, c.poll.tokenAddress)}${source === 'x' ? `\n${pollUrl(code)}` : ''}` };
 }
 export const markOfficial = internalMutation({ args: { code: v.string(), wallet: v.string() }, handler: async (ctx, a) => {
   const p = await find(ctx, a.code); if (!p || p.status !== 'open' || (p.endsAt ?? 0) <= Date.now()) throw new Error('Only open polls can be endorsed.');
@@ -238,6 +238,15 @@ async function endorse(ctx: ActionCtx, code: string, wallet: string): Promise<Re
   await ctx.runMutation(internal.polls.markOfficial, { code, wallet });
   return { ok: true, code, message: `🗳️ ${code} is now an Official poll. Its question, options, snapshot, and existing votes are unchanged.\n${pollUrl(code)}` };
 }
+export const cancel = internalMutation({ args: { code: v.string(), wallet: v.optional(v.string()), xOwner: v.optional(v.string()), parentPostId: v.optional(v.string()) }, handler: async (ctx, a) => {
+  const p = await find(ctx, a.code); if (!p) throw new Error('Poll not found.');
+  const walletOwner = a.wallet?.toLowerCase() === p.creatorWallet.toLowerCase();
+  const xCreator = p.source === 'x' && a.xOwner === p.ownerXUserId && !!p.xPostId && a.parentPostId === p.xPostId;
+  if (!walletOwner && !xCreator) throw new Error('Only the poll creator can cancel this poll.');
+  if (p.status === 'cancelled') return;
+  if (!['preparing', 'needs_token', 'open'].includes(p.status) || (p.endsAt !== undefined && p.endsAt <= Date.now())) throw new Error('This poll has already ended and cannot be cancelled.');
+  await ctx.db.patch(p._id, { status: 'cancelled', nextAttemptAt: Date.now(), lease: undefined, leaseUntil: undefined });
+} });
 export const close = internalMutation({ args: { code: v.string() }, handler: async (ctx, { code }) => {
   const p = await find(ctx, code); if (!p || !p.endsAt || p.endsAt > Date.now() || !['open', 'closed'].includes(p.status)) return;
   if (p.status === 'open') await ctx.db.patch(p._id, { status: 'closed', nextAttemptAt: Date.now() });
@@ -262,12 +271,16 @@ export const handleX = internalAction({ args: { postId: v.string(), owner: v.str
   if (!X_VOTING_ENABLED) return { handled: isPollCommand(a.text) || Boolean(parent) };
   if (!isPollCommand(a.text) && !parent) return { handled: false };
   // Polls are public threads. Their replies never enter another user's wallet workflow.
-  if (parent && !parent.draftPostId && !parent.correction && !isPollCommand(a.text) && !/^\s*(?:[1-8][.!]?|0x[0-9a-f]{40})\s*$/i.test(a.text)) {
+  if (parent && !parent.draftPostId && !parent.correction && !isPollCancel(a.text) && !isPollCommand(a.text) && !/^\s*(?:[1-8][.!]?|0x[0-9a-f]{40})\s*$/i.test(a.text)) {
     const p = await ctx.runQuery(internal.polls.record, { code: parent.code });
     if (!p || pollChoice(a.text, p.spec.options) < 0) return { handled: true };
   }
   try {
     if ((parent?.draftPostId || parent?.correction) && parent.owner !== a.owner) return { handled: true };
+    if (parent && !parent.draftPostId && !parent.correction && isPollCancel(a.text)) {
+      await ctx.runMutation(internal.polls.cancel, { code: parent.code, xOwner: a.owner, parentPostId: a.parentPostId });
+      return { handled: true, result: { ok: true, code: parent.code, message: `🗳️ ${parent.code} has been cancelled.` } };
+    }
     const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: a.owner });
     if (!who?.wallet || who.wallet.status !== 'active' || who.wallet.chainId !== 4663) throw new Error('👛 Ask for your Pons Bot wallet first, or vote on the website with your Pons Bot account.');
     const wallet = who.wallet.address;
@@ -305,7 +318,7 @@ export const handleX = internalAction({ args: { postId: v.string(), owner: v.str
     return result.silent ? { handled: true } : { handled: true, result };
   } catch (e) { return { handled: true, result: { ok: false, message: safePollError(e) } }; }
 } });
-export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), walletToken: v.optional(v.string()), walletSource: v.optional(v.union(v.literal('pons'), v.literal('external'))), expectedWallet: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
+export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), walletToken: v.optional(v.string()), walletSource: v.optional(v.union(v.literal('pons'), v.literal('external'))), expectedWallet: v.string(), eventId: v.string(), operation: v.union(v.literal('cancel'), v.literal('snapshotBalance'), v.literal('preview'), v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
   if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)) throw new Error('Unauthorized');
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(a.eventId)) throw new Error('Invalid request identifier');
   const valid = await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId });
@@ -337,12 +350,49 @@ export const web = action({ args: { secret: v.string(), owner: v.string(), sessi
   if (a.expectedWallet.toLowerCase() !== wallet) throw new Error('Your connected wallet changed. Refresh and verify the intended wallet.');
   if (!await ctx.runMutation(internal.polls.gate, { key: `vote:${a.owner}`, limit: 30, window: 60000 })) return { ok: false, message: 'Please wait a minute before another voting request.' };
   try {
+    if (a.operation === 'preview') {
+      try {
+        const token = a.choice?.trim();
+        if (!token || token.length > 160) throw new Error('Invalid token');
+        const identity = pollTokenIdentity(token);
+        let address = identity.address;
+        if (!address) {
+          const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: a.owner });
+          const own = who?.wallet?.address.toLowerCase() === wallet.toLowerCase();
+          const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier: identity.ticker!, walletId: own ? who?.wallet?._id : undefined });
+          if (matches.length === 1) address = matches[0];
+          else if (!matches.length && own && who?.wallet) {
+            const held = await ctx.runAction(internal.wallets.resolveHeldTokenTicker, { walletId: who.wallet._id, ownerXUserId: a.owner, identifier: identity.ticker! });
+            if (held.status === 'found') address = held.tokenAddress;
+          }
+        }
+        if (!address) return { ok: false, message: 'Enter the token’s contract address so I can check whether your vote would be Official.' };
+        const anchor = await pollAnchor();
+        await pollMetadata(address, token, anchor);
+        const hints = await ctx.runQuery(internal.polls.hints, { token: address });
+        const official = await pollOfficial(address, wallet, hints, anchor);
+        return { ok: true, official, tokenAddress: address, message: official ? 'Your active wallet can create an Official vote for this token.' : 'Your active wallet would create a Community vote for this token. Use the wallet that launched it or holds its rights to create an Official vote.' };
+      } catch {
+        return { ok: false, message: 'Could not verify this token’s rights. Double-check the ticker or contract address and try again.' };
+      }
+    }
     if (a.operation === 'create') {
       if (!a.spec) throw new Error('Provide the poll details.');
       const code = await ctx.runMutation(internal.polls.request, { requestKey: `web:${a.owner}:${wallet}:${a.eventId}`, ownerXUserId: a.owner, creatorWallet: wallet, ...(creatorXUsername ? { creatorXUsername } : {}), source: 'web', spec: validatePollSpec(a.spec), anchor: await pollAnchor() });
       return { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' };
     }
     if (!a.code) throw new Error('Poll not found.');
+    if (a.operation === 'cancel') {
+      await ctx.runMutation(internal.polls.cancel, { code: a.code, wallet });
+      return { ok: true, code: a.code, message: 'This poll has been cancelled.' };
+    }
+    if (a.operation === 'snapshotBalance') {
+      const ballot = await ctx.runQuery(internal.polls.ballot, { code: a.code, wallet });
+      if (!ballot?.poll.snapshot || !ballot.poll.tokenAddress) return { ok: false, message: 'The holder snapshot is not ready yet.' };
+      const snapshotBalance = ballot.vote ? (await assertPollBlock(ballot.poll.snapshot), ballot.vote.weight)
+        : await pollVotingBalance(ballot.poll.tokenAddress, wallet, ballot.poll.snapshot);
+      return { ok: true, code: a.code, snapshotBalance, message: '' };
+    }
     if (a.operation === 'correct') { await ctx.runMutation(internal.polls.correctToken, { code: a.code, owner: a.owner, address: a.choice ?? '', creatorWallet: wallet }); return { ok: true, code: a.code, pending: true, message: 'Preparing the holder snapshot.' }; }
     if (a.operation === 'endorse') return await endorse(ctx, a.code, wallet);
     return await vote(ctx, a.code, wallet, a.choice ?? '', 'web', `web:${wallet}:${a.eventId}`, Date.now().toString());

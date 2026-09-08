@@ -41,12 +41,12 @@ export async function POST(req: NextRequest) {
     const body = await boundedJson(req, 8192) as { operation?: string; eventId?: string; code?: string; choice?: string; spec?: PollSpec; expectedWallet?: string; walletSource?: 'pons' | 'external' };
     if (body?.walletSource !== undefined && !['pons', 'external'].includes(body.walletSource)) return json({ error: 'Invalid wallet selection.' }, 400);
     if (body?.walletSource !== 'pons' && (!walletToken || !/^[a-f0-9]{64}$/.test(walletToken))) return json({ error: 'Connect external wallet and sign to verify it before continuing.' }, 401);
-    if (!body || !['create', 'vote', 'endorse', 'correct'].includes(body.operation ?? '') || !/^[a-zA-Z0-9_-]{12,100}$/.test(body.eventId ?? '')
+    if (!body || !['cancel', 'snapshotBalance', 'preview', 'create', 'vote', 'endorse', 'correct'].includes(body.operation ?? '') || !/^[a-zA-Z0-9_-]{12,100}$/.test(body.eventId ?? '')
       || typeof body.expectedWallet !== 'string' || !/^0x[0-9a-f]{40}$/i.test(body.expectedWallet)
       || (body.code !== undefined && !/^POLL-[a-f0-9]{16}$/i.test(body.code)) || (body.choice !== undefined && (typeof body.choice !== 'string' || body.choice.length > 200))) return json({ error: 'Invalid voting request.' }, 400);
     const spec = body.operation === 'create' ? validatePollSpec(body.spec!) : undefined;
     const result = await new ConvexHttpClient(url).action(api.polls.web, { secret, owner: session.xUserId, sessionId: session.sessionId, walletToken: body.walletSource === 'pons' ? undefined : walletToken, walletSource: body.walletSource ?? 'external', expectedWallet: body.expectedWallet,
-      eventId: body.eventId!, operation: body.operation as 'create' | 'vote' | 'endorse' | 'correct', ...(spec ? { spec } : {}), ...(body.code ? { code: body.code } : {}), ...(body.choice ? { choice: body.choice } : {}) });
+      eventId: body.eventId!, operation: body.operation as 'cancel' | 'snapshotBalance' | 'preview' | 'create' | 'vote' | 'endorse' | 'correct', ...(spec ? { spec } : {}), ...(body.code ? { code: body.code } : {}), ...(body.choice ? { choice: body.choice } : {}) });
     return json(result);
   } catch { return json({ error: 'The request could not be completed. Check your sign-in and poll details, then try again.' }, 400); }
 }

@@ -160,8 +160,10 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
   }
   return <div>
     {!verified.address && wallets.length > 1 && <label>Wallet <select value={selected || wallets[0]?.id} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>{wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>}
-    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect' : 'Connect external wallet'}</button>
-    {!verified.address && <button disabled={busy || disabled || !csrf} onClick={() => void connect(true)}>Mobile wallet / QR code</button>}
+    <button disabled={busy || disabled || !csrf} onClick={() => {
+      const mobileBrowser = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      void (verified.address ? disconnect() : connect(mobileBrowser || wallets.length === 0));
+    }}>{busy ? 'Verifying…' : verified.address ? 'Disconnect' : 'Connect external wallet'}</button>
     {verified.address && <p>Verified voting wallet: <strong title={verified.address}>{verified.address.slice(0, 6)}…{verified.address.slice(-4)}</strong></p>}
     <p><small>Sign-in only. No gas, token approvals, or transactions.</small></p>
     {error && <p role='alert'>{error}</p>}

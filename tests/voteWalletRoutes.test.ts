@@ -67,3 +67,25 @@ it('permits an explicit Pons wallet selection through the authenticated server s
   expect(action.mock.calls[0][1]).toMatchObject({ owner: VOTING_PREVIEW_X_ID, sessionId: session.sessionId, walletSource: 'pons' });
   expect(action.mock.calls[0][1].walletToken).toBeUndefined();
 });
+it('passes token-rights previews through the same authenticated wallet path', async () => {
+  action.mockResolvedValue({ ok: true, official: true, message: 'Official' });
+  const response = await vote(request({ operation: 'preview', eventId: 'preview-event-123', expectedWallet: address, choice: '$PONSBOT', walletSource: 'pons' }));
+  expect(response.status).toBe(200);
+  expect(action.mock.calls[0][1]).toMatchObject({ operation: 'preview', choice: '$PONSBOT', owner: VOTING_PREVIEW_X_ID, walletSource: 'pons', expectedWallet: address });
+  expect(action.mock.calls[0][1].spec).toBeUndefined();
+});
+it('requires wallet verification for external-wallet rights previews', async () => {
+  const response = await vote(request({ operation: 'preview', eventId: 'preview-event-123', expectedWallet: address, choice: '$PONSBOT', walletSource: 'external' }));
+  expect(response.status).toBe(401); expect(action).not.toHaveBeenCalled();
+});
+it('uses the verified wallet for a read-only snapshot balance lookup', async () => {
+  action.mockResolvedValue({ ok: true, snapshotBalance: '0', message: '' });
+  const response = await vote(request({ operation: 'snapshotBalance', code: 'POLL-1234567890ABCDEF', eventId: 'balance-event-123', expectedWallet: address, walletSource: 'pons' }));
+  expect(response.status).toBe(200);
+  expect(action.mock.calls[0][1]).toMatchObject({ operation: 'snapshotBalance', code: 'POLL-1234567890ABCDEF', expectedWallet: address, walletSource: 'pons', owner: VOTING_PREVIEW_X_ID });
+  expect(await response.json()).toMatchObject({ snapshotBalance: '0' });
+});
+it('does not permit unauthenticated external snapshot balance lookup', async () => {
+  const response = await vote(request({ operation: 'snapshotBalance', code: 'POLL-1234567890ABCDEF', eventId: 'balance-event-123', expectedWallet: address, walletSource: 'external' }));
+  expect(response.status).toBe(401); expect(action).not.toHaveBeenCalled();
+});
