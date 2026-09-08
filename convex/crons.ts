@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 crons.interval("recover poll snapshots and close voting", { minutes: 1 }, internal.polls.recover);
+crons.interval("remove expired voting sign-ins", { minutes: 30 }, internal.pollWalletAuth.cleanup);
 
 // X jobs exit before contacting X unless replies are explicitly enabled.
 crons.interval("poll direct X mentions", { minutes: 1 }, internal.xReplies.pollMentions);

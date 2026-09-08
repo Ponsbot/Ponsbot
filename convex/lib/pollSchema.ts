@@ -4,7 +4,9 @@ export const pollSpecValidator = v.object({ token: v.string(), question: v.strin
 export const pollSnapshotValidator = v.object({ block: v.string(), blockHash: v.string(), timestamp: v.number(), symbol: v.string(), decimals: v.number(), supply: v.string(), activeSupply: v.string(),
   exclusions: v.array(v.object({ address: v.string(), balance: v.string(), label: v.string() })), policy: v.string() });
 export const pollTables = {
-  polls: defineTable({ code: v.string(), requestKey: v.string(), ownerXUserId: v.string(), creatorWallet: v.string(), source: v.union(v.literal('x'), v.literal('web')), sourcePostId: v.optional(v.string()),
+  pollWalletChallenges: defineTable({ nonce: v.string(), binding: v.string(), address: v.string(), message: v.string(), expiresAt: v.number(), used: v.boolean() }).index('by_nonce', ['nonce']).index('by_expiry', ['expiresAt']),
+  pollWalletSessions: defineTable({ hash: v.string(), binding: v.string(), address: v.string(), expiresAt: v.number(), contractProof: v.optional(v.object({ message: v.string(), signature: v.string() })) }).index('by_hash', ['hash']).index('by_expiry', ['expiresAt']),
+  polls: defineTable({ code: v.string(), requestKey: v.string(), ownerXUserId: v.string(), creatorWallet: v.string(), creatorXUsername: v.optional(v.string()), source: v.union(v.literal('x'), v.literal('web')), sourcePostId: v.optional(v.string()),
     spec: pollSpecValidator, tokenAddress: v.optional(v.string()), status: v.union(v.literal('preparing'), v.literal('needs_token'), v.literal('open'), v.literal('closed'), v.literal('failed')),
     createdAt: v.number(), endsAt: v.optional(v.number()), anchor: v.object({ block: v.string(), blockHash: v.string(), timestamp: v.number() }), snapshot: v.optional(pollSnapshotValidator), official: v.boolean(), officialBy: v.optional(v.string()), officialAt: v.optional(v.number()),
     totals: v.array(v.string()), votedWeight: v.string(), voterCount: v.number(), xPostId: v.optional(v.string()), resultPostId: v.optional(v.string()), resultPublication: v.optional(v.string()),

@@ -6,6 +6,7 @@ import { boundedJson } from '@/lib/bounded-json';
 import { readWebWalletSession, WEB_WALLET_SESSION_COOKIE, webWalletCsrfToken } from '@/lib/web-wallet-session';
 import { validatePollSpec, type PollSpec } from '@/lib/polls';
 import { votingPreviewAllowed } from '@/lib/voting-access';
+import { VOTE_WALLET_COOKIE } from '@/lib/vote-wallet-auth';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -35,12 +36,15 @@ export async function POST(req: NextRequest) {
   if (req.headers.get('origin') !== new URL(site).origin) return json({ error: 'Invalid request origin.' }, 403);
   const supplied = Buffer.from(req.headers.get('x-pons-csrf') ?? ''), expected = Buffer.from(webWalletCsrfToken(session.sessionId, secret));
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return json({ error: 'Invalid session token.' }, 403);
+  const walletToken = req.cookies.get(VOTE_WALLET_COOKIE)?.value;
+  if (!walletToken || !/^[a-f0-9]{64}$/.test(walletToken)) return json({ error: 'Connect Wallet and sign to verify it before continuing.' }, 401);
   try {
-    const body = await boundedJson(req, 8192) as { operation?: string; eventId?: string; code?: string; choice?: string; spec?: PollSpec };
+    const body = await boundedJson(req, 8192) as { operation?: string; eventId?: string; code?: string; choice?: string; spec?: PollSpec; expectedWallet?: string };
     if (!body || !['create', 'vote', 'endorse', 'correct'].includes(body.operation ?? '') || !/^[a-zA-Z0-9_-]{12,100}$/.test(body.eventId ?? '')
+      || typeof body.expectedWallet !== 'string' || !/^0x[0-9a-f]{40}$/i.test(body.expectedWallet)
       || (body.code !== undefined && !/^POLL-[a-f0-9]{16}$/i.test(body.code)) || (body.choice !== undefined && (typeof body.choice !== 'string' || body.choice.length > 200))) return json({ error: 'Invalid voting request.' }, 400);
     const spec = body.operation === 'create' ? validatePollSpec(body.spec!) : undefined;
-    const result = await new ConvexHttpClient(url).action(api.polls.web, { secret, owner: session.xUserId, sessionId: session.sessionId,
+    const result = await new ConvexHttpClient(url).action(api.polls.web, { secret, owner: session.xUserId, sessionId: session.sessionId, walletToken, expectedWallet: body.expectedWallet,
       eventId: body.eventId!, operation: body.operation as 'create' | 'vote' | 'endorse' | 'correct', ...(spec ? { spec } : {}), ...(body.code ? { code: body.code } : {}), ...(body.choice ? { choice: body.choice } : {}) });
     return json(result);
   } catch { return json({ error: 'The request could not be completed. Check your sign-in and poll details, then try again.' }, 400); }

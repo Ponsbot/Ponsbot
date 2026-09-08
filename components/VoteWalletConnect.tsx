@@ -1,0 +1,100 @@
+'use client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { isAddress, stringToHex } from 'viem';
+import { parseSiweMessage } from 'viem/siwe';
+type Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown>; on?: (event: string, fn: () => void) => void; removeListener?: (event: string, fn: () => void) => void };
+type Wallet = { id: string; name: string; provider: Provider };
+type Verified = { address?: string; expiresAt?: number };
+export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string; onChange: (address: string | null) => void; disabled: boolean }) {
+  const [wallets, setWallets] = useState<Wallet[]>([]), [selected, setSelected] = useState('');
+  const [verified, setVerified] = useState<Verified>({}), [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const selectedProvider = useRef<Provider | null>(null);
+  const pending = useRef(false);
+  const generation = useRef(0);
+  const apply = useCallback((value: Verified) => { setVerified(value); onChange(value.address ?? null); }, [onChange]);
+  const call = useCallback(async (body: Record<string, string>) => {
+    const r = await fetch('/api/votes/wallet', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pons-csrf': csrf ?? '' }, body: JSON.stringify(body) });
+    const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Wallet verification failed.'); return data;
+  }, [csrf]);
+  useEffect(() => {
+    // Wallet-supplied names are text only. Never execute or embed provider icons.
+    const announce = (event: Event) => {
+      const d = (event as CustomEvent).detail;
+      if (!d || typeof d.info?.uuid !== 'string' || typeof d.info?.name !== 'string' || typeof d.provider?.request !== 'function') return;
+      setWallets(old => old.some(x => x.provider === d.provider) || old.length >= 20 ? old : [...old, { id: d.info.uuid.slice(0, 100), name: d.info.name.slice(0, 80), provider: d.provider }]);
+    };
+    window.addEventListener('eip6963:announceProvider', announce);
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const fallback = (window as Window & { ethereum?: Provider }).ethereum;
+    if (fallback?.request) setWallets(old => old.some(x => x.provider === fallback) ? old : [...old, { id: 'injected', name: 'Browser wallet', provider: fallback }]);
+    return () => window.removeEventListener('eip6963:announceProvider', announce);
+  }, []);
+  useEffect(() => {
+    // Restore the signed identity, not an unverified provider address.
+    let live = true;
+    const version = generation.current;
+    if (csrf) fetch('/api/votes/wallet', { cache: 'no-store' }).then(r => r.ok ? r.json() : {}).then(d => { if (live && !pending.current && generation.current === version) apply(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [csrf, apply]);
+  useEffect(() => {
+    if (!verified.expiresAt) return;
+    const timer = setTimeout(() => { apply({}); setError('Your verification expired. Connect and sign again.'); }, Math.max(0, verified.expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [verified.expiresAt, apply]);
+  useEffect(() => {
+    const provider = selectedProvider.current;
+    if (!provider) return;
+    const changed = () => {
+      generation.current++; apply({}); pending.current = true; setBusy(true);
+      void call({ operation: 'disconnect' }).catch(() => {}).finally(() => { pending.current = false; setBusy(false); });
+      setError('Wallet changed. Connect and sign again.');
+    };
+    provider.on?.('accountsChanged', changed); provider.on?.('chainChanged', changed); provider.on?.('disconnect', changed);
+    return () => { provider.removeListener?.('accountsChanged', changed); provider.removeListener?.('chainChanged', changed); provider.removeListener?.('disconnect', changed); };
+  }, [verified.address, apply, call]);
+  async function connect() {
+    if (pending.current || disabled || !csrf) return;
+    const wallet = wallets.find(x => x.id === selected) ?? wallets[0];
+    if (!wallet) { setError('Open this page in a wallet browser, or install a browser wallet such as MetaMask.'); return; }
+    pending.current = true; setBusy(true); setError(''); selectedProvider.current = null; apply({});
+    const attempt = ++generation.current;
+    try {
+      await call({ operation: 'disconnect' });
+      const provider = wallet.provider;
+      const accounts = await provider.request({ method: 'eth_requestAccounts' });
+      const address = Array.isArray(accounts) ? accounts[0] : undefined;
+      if (typeof address !== 'string' || !isAddress(address, { strict: false })) throw new Error('No wallet account selected.');
+      if (await provider.request({ method: 'eth_chainId' }) !== '0x1237') {
+        try { await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1237' }] }); }
+        catch { throw new Error('Select Robinhood Chain (4663) in your wallet, then connect again.'); }
+      }
+      const challenge = await call({ operation: 'challenge', address });
+      const parsed = parseSiweMessage(challenge.message);
+      if (parsed.domain !== window.location.host || parsed.uri !== `${window.location.origin}/votes` || parsed.chainId !== 4663 || parsed.address?.toLowerCase() !== address.toLowerCase() || parsed.nonce !== challenge.nonce) throw new Error('Sign-in details did not match this page.');
+      const signature = await provider.request({ method: 'personal_sign', params: [stringToHex(challenge.message), address] });
+      const current = await provider.request({ method: 'eth_accounts' });
+      if (attempt !== generation.current || !Array.isArray(current) || current[0]?.toLowerCase() !== address.toLowerCase() || await provider.request({ method: 'eth_chainId' }) !== '0x1237') throw new Error('Wallet changed while signing. Please reconnect.');
+      if (typeof signature !== 'string') throw new Error('No signature returned.');
+      const result = await call({ operation: 'verify', nonce: challenge.nonce, signature });
+      const finalAccounts = await provider.request({ method: 'eth_accounts' });
+      if (attempt !== generation.current || !Array.isArray(finalAccounts) || finalAccounts[0]?.toLowerCase() !== address.toLowerCase() || await provider.request({ method: 'eth_chainId' }) !== '0x1237') {
+        await call({ operation: 'disconnect' }); throw new Error('Wallet changed while verifying. Please reconnect.');
+      }
+      selectedProvider.current = provider; apply(result);
+    } catch (e) { setError(e instanceof Error && !('code' in e) ? e.message : 'Signing was cancelled or unavailable. No transaction was submitted.'); }
+    finally { pending.current = false; setBusy(false); }
+  }
+  async function disconnect() {
+    if (pending.current) return;
+    pending.current = true; setBusy(true); generation.current++;
+    try { await call({ operation: 'disconnect' }); apply({}); selectedProvider.current = null; setError(''); } catch { setError('Could not disconnect the server session. Please retry disconnecting.'); }
+    finally { pending.current = false; setBusy(false); }
+  }
+  return <div>
+    <p>{verified.address ? <>Verified voting wallet: <strong title={verified.address}>{verified.address.slice(0, 6)}…{verified.address.slice(-4)}</strong></> : 'Connect Wallet and sign to create a vote or vote with your token holdings.'}</p>
+    {!verified.address && wallets.length > 1 && <label>Wallet <select value={selected || wallets[0]?.id} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>{wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>}
+    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect wallet' : 'Connect Wallet'}</button>
+    <p><small>Sign-in only. No gas, token approvals, or transactions. Voting eligibility is checked separately against the poll snapshot.</small></p>
+    {error && <p role='alert'>{error}</p>}
+  </div>;
+}

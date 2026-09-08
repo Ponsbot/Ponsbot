@@ -32,6 +32,7 @@ import type * as liquidityAi from "../liquidityAi.js";
 import type * as liquidityTerminal from "../liquidityTerminal.js";
 import type * as llm from "../llm.js";
 import type * as marketData from "../marketData.js";
+import type * as pollWalletAuth from "../pollWalletAuth.js";
 import type * as polls from "../polls.js";
 import type * as ponsV2 from "../ponsV2.js";
 import type * as registry from "../registry.js";
@@ -83,6 +84,7 @@ declare const fullApi: ApiFromModules<{
   liquidityTerminal: typeof liquidityTerminal;
   llm: typeof llm;
   marketData: typeof marketData;
+  pollWalletAuth: typeof pollWalletAuth;
   polls: typeof polls;
   ponsV2: typeof ponsV2;
   registry: typeof registry;

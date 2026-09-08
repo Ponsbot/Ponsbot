@@ -1,7 +1,9 @@
 import { v } from 'convex/values';
-import { formatUnits, isAddress } from 'viem';
+import { formatUnits, hashMessage, isAddress, type Hex } from 'viem';
 import { action, internalAction, internalMutation, internalQuery, type ActionCtx } from './_generated/server';
 import { votingPreviewAllowed, X_VOTING_ENABLED } from '../lib/voting-access';
+import { voteAuthHash } from '../lib/vote-wallet-auth';
+import { verifyVotingContractSignature } from '../lib/poll-wallet-chain';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { pollSpecValidator, pollSnapshotValidator } from './lib/pollSchema';
@@ -14,7 +16,7 @@ function publicPoll(_ctx: import('./_generated/server').QueryCtx, p: Doc<'polls'
   return { code: p.code, status: p.status === 'open' && (p.endsAt ?? 0) <= Date.now() ? 'closed' : p.status,
     tokenAddress: p.tokenAddress, question: p.spec.question, options: p.spec.options, minimumHoldingPercent: p.spec.minimumHoldingPercent,
     durationMinutes: p.spec.durationMinutes, official: p.official, officialBy: p.officialBy, officialAt: p.officialAt,
-    creatorWallet: p.creatorWallet, createdAt: p.createdAt, endsAt: p.endsAt, snapshot: p.snapshot, totals: p.totals,
+    creatorWallet: p.creatorWallet, creatorXUsername: p.source === 'x' ? p.creatorXUsername : undefined, createdAt: p.createdAt, endsAt: p.endsAt, snapshot: p.snapshot, totals: p.totals,
     votedWeight: p.votedWeight, voterCount: p.voterCount, xPostId: p.xPostId, resultPostId: p.resultPostId,
     turnout: p.snapshot ? pollPercent(p.votedWeight, p.snapshot.activeSupply) : 0 };
 }
@@ -52,10 +54,10 @@ export const gate = internalMutation({ args: { key: v.string(), limit: v.number(
   return true;
 } });
 export const request = internalMutation({ args: { requestKey: v.string(), ownerXUserId: v.string(), creatorWallet: v.string(), source: v.union(v.literal('x'), v.literal('web')),
-  sourcePostId: v.optional(v.string()), spec: pollSpecValidator, anchor: v.object({ block: v.string(), blockHash: v.string(), timestamp: v.number() }) }, handler: async (ctx, a): Promise<string> => {
+  sourcePostId: v.optional(v.string()), creatorXUsername: v.optional(v.string()), spec: pollSpecValidator, anchor: v.object({ block: v.string(), blockHash: v.string(), timestamp: v.number() }) }, handler: async (ctx, a): Promise<string> => {
   if (!votingPreviewAllowed(a.ownerXUserId) || (a.source === 'x' && !X_VOTING_ENABLED)) throw new Error('Voting preview is website-only');
   const existing = await ctx.db.query('polls').withIndex('by_request', q => q.eq('requestKey', a.requestKey)).unique();
-  if (existing) { if (existing.ownerXUserId !== a.ownerXUserId || JSON.stringify(existing.spec) !== JSON.stringify(validatePollSpec(a.spec))) throw new Error('Request owner or details mismatch'); return existing.code; }
+  if (existing) { if (existing.ownerXUserId !== a.ownerXUserId || existing.creatorWallet !== a.creatorWallet.toLowerCase() || JSON.stringify(existing.spec) !== JSON.stringify(validatePollSpec(a.spec))) throw new Error('Request owner or details mismatch'); return existing.code; }
   const spec = validatePollSpec(a.spec);
   const recent = await ctx.db.query('polls').withIndex('by_owner_created', q => q.eq('ownerXUserId', a.ownerXUserId).gte('createdAt', Date.now() - 86400000)).take(10);
   if (recent.length >= 10) throw new Error('You can create up to 10 polls per day.');
@@ -106,9 +108,10 @@ export const prepare = internalAction({ args: { code: v.string() }, handler: asy
     let address = p.tokenAddress ?? identity.address;
     if (!address) {
       const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: p.ownerXUserId });
-      const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier: identity.ticker!, walletId: who?.wallet?._id });
+      const useCustodialWallet = who?.wallet?.address.toLowerCase() === p.creatorWallet.toLowerCase();
+      const matches = await ctx.runQuery(internal.wallets.listKnownTokenMatches, { identifier: identity.ticker!, walletId: useCustodialWallet ? who?.wallet?._id : undefined });
       if (matches.length === 1) address = matches[0];
-      else if (!matches.length && who?.wallet) {
+      else if (!matches.length && useCustodialWallet && who?.wallet) {
         const held = await ctx.runAction(internal.wallets.resolveHeldTokenTicker, { walletId: who.wallet._id, ownerXUserId: p.ownerXUserId, identifier: identity.ticker! });
         if (held.status === 'found') address = held.tokenAddress;
       }
@@ -122,8 +125,9 @@ export const prepare = internalAction({ args: { code: v.string() }, handler: asy
     await ctx.runMutation(internal.polls.prepareFailed, { code, lease: p.lease, needsToken: e instanceof Error && e.message === 'TOKEN_MISMATCH', message: 'Snapshot verification failed' });
   }
 } });
-export const correctToken = internalMutation({ args: { code: v.string(), owner: v.string(), address: v.string(), sourcePostId: v.optional(v.string()) }, handler: async (ctx, a) => {
+export const correctToken = internalMutation({ args: { code: v.string(), owner: v.string(), address: v.string(), creatorWallet: v.optional(v.string()), sourcePostId: v.optional(v.string()) }, handler: async (ctx, a) => {
   const p = await find(ctx, a.code); if (!p || p.ownerXUserId !== a.owner || p.status !== 'needs_token') throw new Error('This poll is not waiting for your correction.');
+  if (p.source === 'web' && a.creatorWallet?.toLowerCase() !== p.creatorWallet) throw new Error('Only the creating wallet can correct this poll.');
   if (Date.now() - p.createdAt > 600000) throw new Error('This request has expired. Please create a new poll.');
   if (!isAddress(a.address, { strict: false })) throw new Error('Please supply a full contract address.');
   await ctx.db.patch(p._id, { tokenAddress: a.address.toLowerCase(), status: 'preparing', attempts: 0, nextAttemptAt: Date.now(), sourcePostId: a.sourcePostId ?? p.sourcePostId });
@@ -219,7 +223,7 @@ export const handleX = internalAction({ args: { postId: v.string(), owner: v.str
     }
     const spec = parsePollCreate(a.text);
     if (spec) {
-      const code = await ctx.runMutation(internal.polls.request, { requestKey: `x:${a.postId}`, ownerXUserId: a.owner, creatorWallet: wallet, source: 'x', sourcePostId: a.postId, spec, anchor: await pollAnchor() });
+      const code = await ctx.runMutation(internal.polls.request, { requestKey: `x:${a.postId}`, ownerXUserId: a.owner, creatorWallet: wallet, creatorXUsername: who.user.username, source: 'x', sourcePostId: a.postId, spec, anchor: await pollAnchor() });
       return { handled: true, result: { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' } };
     }
     const code = a.text.match(/\bPOLL-[a-f0-9]{16}\b/i)?.[0].toUpperCase() ?? parent?.code;
@@ -233,24 +237,33 @@ function safePollError(e: unknown) {
   const m = e instanceof Error ? e.message : '';
   return /^(?:🗳️|⚠️|👛|This |Your |Only |Please |You can|Poll not found|A newer vote|Vote request mismatch)/.test(m) ? m : '⚠️ The voting check could not be completed. No new vote was recorded. Please try again.';
 }
-export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
+export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), walletToken: v.string(), expectedWallet: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
   if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)) throw new Error('Unauthorized');
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(a.eventId)) throw new Error('Invalid request identifier');
   const valid = await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId });
   if (!valid) throw new Error('Unauthorized');
-  const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: a.owner });
-  if (!who?.wallet || who.wallet.status !== 'active' || who.wallet.chainId !== 4663) throw new Error('Wallet unavailable');
+  if (!/^[a-f0-9]{64}$/.test(a.walletToken)) throw new Error('Connect and verify your voting wallet.');
+  const verifiedWallet = await ctx.runQuery(internal.pollWalletAuth.session, { hash: await voteAuthHash(a.walletToken), binding: await voteAuthHash(`${a.owner}:${a.sessionId}`) });
+  if (!verifiedWallet) throw new Error('Connect and verify your voting wallet.');
+  const wallet = verifiedWallet.address;
+  if (a.expectedWallet.toLowerCase() !== wallet) throw new Error('Your connected wallet changed. Refresh and verify the intended wallet.');
+  // Smart-account ownership can change during a session. Revalidate ERC-1271
+  // before each write rather than treating an old owner signature as permanent.
+  if (verifiedWallet.contractProof && !await verifyVotingContractSignature(wallet as Hex, hashMessage(verifiedWallet.contractProof.message), verifiedWallet.contractProof.signature as Hex)) {
+    await ctx.runMutation(internal.pollWalletAuth.revoke, { hash: await voteAuthHash(a.walletToken), binding: await voteAuthHash(`${a.owner}:${a.sessionId}`) });
+    throw new Error('Your wallet authorization changed. Connect and sign again.');
+  }
   if (!await ctx.runMutation(internal.polls.gate, { key: `vote:${a.owner}`, limit: 30, window: 60000 })) return { ok: false, message: 'Please wait a minute before another voting request.' };
   try {
     if (a.operation === 'create') {
       if (!a.spec) throw new Error('Provide the poll details.');
-      const code = await ctx.runMutation(internal.polls.request, { requestKey: `web:${a.owner}:${a.eventId}`, ownerXUserId: a.owner, creatorWallet: who.wallet.address, source: 'web', spec: validatePollSpec(a.spec), anchor: await pollAnchor() });
+      const code = await ctx.runMutation(internal.polls.request, { requestKey: `web:${a.owner}:${wallet}:${a.eventId}`, ownerXUserId: a.owner, creatorWallet: wallet, source: 'web', spec: validatePollSpec(a.spec), anchor: await pollAnchor() });
       return { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' };
     }
     if (!a.code) throw new Error('Poll not found.');
-    if (a.operation === 'correct') { await ctx.runMutation(internal.polls.correctToken, { code: a.code, owner: a.owner, address: a.choice ?? '' }); return { ok: true, code: a.code, pending: true, message: 'Preparing the holder snapshot.' }; }
-    if (a.operation === 'endorse') return await endorse(ctx, a.code, who.wallet.address);
-    return await vote(ctx, a.code, who.wallet.address, a.choice ?? '', 'web', `web:${a.owner}:${a.eventId}`, Date.now().toString());
+    if (a.operation === 'correct') { await ctx.runMutation(internal.polls.correctToken, { code: a.code, owner: a.owner, address: a.choice ?? '', creatorWallet: wallet }); return { ok: true, code: a.code, pending: true, message: 'Preparing the holder snapshot.' }; }
+    if (a.operation === 'endorse') return await endorse(ctx, a.code, wallet);
+    return await vote(ctx, a.code, wallet, a.choice ?? '', 'web', `web:${wallet}:${a.eventId}`, Date.now().toString());
   } catch (e) { return { ok: false, message: safePollError(e) }; }
 } });
 export const checkWebSession = internalAction({ args: { secret: v.string(), owner: v.string(), sessionId: v.string() }, handler: async (ctx, a): Promise<boolean> => {
