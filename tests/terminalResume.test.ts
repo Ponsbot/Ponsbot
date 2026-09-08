@@ -40,6 +40,16 @@ beforeEach(() => {
 });
 
 describe("terminal gas resume", () => {
+  it("preserves the transaction across an intervening wallet question", async () => {
+    const ctx = fixture();
+    for (const [index, [role, text]] of [
+      ["user", "buy $20 of TEST"],
+      ["assistant", "⛽ You'll need to fund your wallet with ETH for gas to buy. Fund it, then reply “resume”."],
+      ["user", "what's my wallet?"],
+      ["assistant", "Your wallet: https://www.ponsbot.family/wallet/0x123"],
+    ].entries()) await ctx.db.insert("terminalMessages", { sessionId: "session", ownerXUserId: "owner", role, text, createdAt: Date.now() - 4000 + index * 1000 });
+    expect(await invoke(wallets.terminalGasResumeContext, ctx, { sessionId: "session", ownerXUserId: "owner" })).toMatchObject({ sourceText: "buy $20 of TEST" });
+  });
   it("reconstructs a fresh request and permits only one idempotent request id", async () => {
     const ctx = fixture();
     await ctx.db.insert("terminalMessages", { sessionId: "session", ownerXUserId: "owner", role: "user", messageType: "chat", text: "buy $20 of TEST", createdAt: Date.now() - 2_000 });

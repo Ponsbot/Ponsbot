@@ -10,12 +10,14 @@ export const queueKind = v.union(
   v.literal("houdini_progress"),
   v.literal("houdini_final"),
   v.literal("graduation"),
+  v.literal("poll_created"), v.literal("poll_result"),
 );
 export const xReplyQueueTables = {
   xReplyQueue: defineTable({
     key: v.string(), postId: v.optional(v.string()), text: v.string(), priority: queuePriority, kind: queueKind,
     ok: v.boolean(), standalone: v.boolean(), allowLong: v.boolean(), username: v.optional(v.string()),
     houdiniQuoteId: v.optional(v.id("xHoudiniQuotes")), launchId: v.optional(v.id("tokenLaunches")),
+    pollId: v.optional(v.id("polls")), replyTargetPostId: v.optional(v.string()),
     status: v.union(v.literal("queued"), v.literal("paused"), v.literal("sending"), v.literal("published"), v.literal("expired"), v.literal("cancelled"), v.literal("blocked"), v.literal("uncertain")),
     readyAt: v.number(), expiresAt: v.optional(v.number()), nextAttemptAt: v.number(), attempts: v.number(),
     leaseToken: v.optional(v.string()), eventId: v.optional(v.id("xPublicationEvents")),

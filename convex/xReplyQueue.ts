@@ -41,6 +41,14 @@ async function wake(ctx: MutationCtx, state: QueueState, at = Date.now()) {
 
 async function settleBindings(ctx: MutationCtx, row: QueueRow, status: "published" | "expired" | "cancelled" | "blocked" | "uncertain", responsePostId?: string) {
   const now = Date.now();
+  if (row.pollId) {
+    const poll = await ctx.db.get(row.pollId);
+    if (poll && row.kind === "poll_created" && status === "published" && responsePostId) {
+      await ctx.db.patch(poll._id, { xPostId: responsePostId });
+      if ((poll.endsAt ?? Infinity) <= now) await ctx.scheduler.runAfter(0, internal.polls.close, { code: poll.code });
+    }
+    if (poll && row.kind === "poll_result") await ctx.db.patch(poll._id, { resultPublication: status, ...(responsePostId ? { resultPostId: responsePostId } : {}) });
+  }
   if (row.postId) {
     const interaction = await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", row.postId!)).unique();
     if (interaction && interaction.commandKind !== "operator_cancelled") {
@@ -105,10 +113,16 @@ async function settleBindings(ctx: MutationCtx, row: QueueRow, status: "publishe
 
 export const enqueue = internalMutation({
   args: { key: v.string(), postId: v.optional(v.string()), text: v.string(), ok: v.optional(v.boolean()), kind: queueKind,
+    pollId: v.optional(v.id("polls")), replyTargetPostId: v.optional(v.string()),
     allowLong: v.optional(v.boolean()), houdiniQuoteId: v.optional(v.id("xHoudiniQuotes")), launchId: v.optional(v.id("tokenLaunches")) },
   handler: async (ctx, args): Promise<{ status: string; responsePostId?: string }> => {
     const existing = await ctx.db.query("xReplyQueue").withIndex("by_key", q => q.eq("key", args.key)).unique();
     if (existing) return { status: existing.status, ...(existing.responsePostId ? { responsePostId: existing.responsePostId } : {}) };
+    if (args.kind === "poll_result" || args.kind === "poll_created") {
+      const poll = args.pollId ? await ctx.db.get(args.pollId) : null;
+      if (!poll || (args.kind === "poll_result" ? poll.status !== "closed" || args.replyTargetPostId !== poll.xPostId || !!args.postId
+        : args.postId !== poll.sourcePostId)) throw new Error("Poll publication binding mismatch");
+    } else if (args.replyTargetPostId || args.pollId) throw new Error("Invalid poll publication kind");
     const interaction = args.postId ? await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", args.postId!)).unique() : null;
     if (args.postId && (!interaction || interaction.commandKind === "operator_cancelled" || interaction.replySuppressedReason || interaction.walletLookupSuppressed)) return { status: "cancelled" };
     const prior = await ctx.db.query("xPublicationEvents").withIndex("by_post_id", q => q.eq("postId", args.key)).order("desc").first();
@@ -162,7 +176,7 @@ export const enqueue = internalMutation({
       dailyWarning = budget.warning;
       if (dailyWarning) safeText += `\n\n${UNVERIFIED_REPLY_WARNING}`;
     }
-    const standalone = args.kind === "graduation" || process.env.X_STANDALONE_MENTIONS_ENABLED === "true";
+    const standalone = args.kind === "graduation" || (args.kind !== "poll_result" && args.kind !== "poll_created" && process.env.X_STANDALONE_MENTIONS_ENABLED === "true");
     await ctx.db.insert("xReplyQueue", {
       ...args, text: safeText, kind: effectiveKind, ok: args.ok ?? (priority === "C" ? commandKind === "help" || commandKind === "show_wallet" || commandKind === "show_balance" || commandKind === "create_wallet" : /^✅/.test(safeText.trim())),
       priority, standalone, allowLong: args.allowLong === true || dailyWarning, ...(user?.username ? { username: user.username } : {}),

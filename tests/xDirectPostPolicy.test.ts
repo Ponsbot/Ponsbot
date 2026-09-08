@@ -31,11 +31,17 @@ describe("X resume reply normalization", () => {
     "ready now", "all set", "go ahead", "try again", "retry please",
     "continue", "proceed now", "yes", "I'm done", "I’m done", "did it",
     "finished", "good to go", "it's funded",
+    "@Ponsbotfamily Resume @Ponsbotfamily",
+    "Resume @Ponsbotfamily", "@Ponsbotfamily Done! @PONSBOTFAMILY!",
+    "@Ponsbotfamily please resume @Ponsbotfamily now",
+    "Resume!@Ponsbotfamily", "Done,@Ponsbotfamily!",
   ])("accepts %s", text => expect(isResumeReply(text)).toBe(true));
 
   it.each([
     "resume my launch", "can you resume", "@alice resume", "resume and buy",
     "done with the launch", "ready to launch something else", "send ETH to @alice",
     "I added ETH and want to buy PONSBOT",
+    "resume @alice", "resume @PonsbotfamilyFake", "resume @Ponsbotfamily and buy $20 of TEST",
+    "send ETH to @Ponsbotfamily", "assign fees to @Ponsbotfamily",
   ])("rejects %s", text => expect(isResumeReply(text)).toBe(false));
 });

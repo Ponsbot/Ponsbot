@@ -1,4 +1,5 @@
 import { tokenPattern } from "../lib/token-pattern";
+import { isPollCommand } from "../lib/polls";
 import { v } from "convex/values";
 import { parseContextualBuy, resolveContextualBuyToken } from "../lib/contextual-buy";
 import { api, internal } from "./_generated/api";
@@ -363,7 +364,7 @@ export const drainReplyQueue = internalAction({
       }
       if (!row.allowLong) text = fitXReply(text);
       if (xWeightedLength(text) > (row.allowLong ? 8000 : 280)) throw new Error("X reply exceeded its character limit");
-      if (!row.standalone && !row.postId) throw new Error("X reply source unavailable");
+      if (!row.standalone && !row.postId && !row.replyTargetPostId) throw new Error("X reply source unavailable");
       const url = `${X_API}/tweets`;
       const authorization = await xAuthorization("POST", url);
       if (!repliesEnabled()) {
@@ -373,7 +374,7 @@ export const drainReplyQueue = internalAction({
         const response = await fetch(url, {
           method: "POST",
           headers: { authorization, "content-type": "application/json" },
-          body: JSON.stringify(row.standalone ? { text } : { text, reply: { in_reply_to_tweet_id: row.postId } }),
+          body: JSON.stringify(row.standalone ? { text } : { text, reply: { in_reply_to_tweet_id: row.replyTargetPostId || row.postId } }),
           signal: AbortSignal.timeout(20_000),
         });
         const payload = await response.json().catch(() => ({})) as {
@@ -1037,13 +1038,14 @@ function decodeAmbiguousTokenState(value?: string) {
 }
 
 export const ambiguousTokenReplyContext = internalQuery({
-  args: { ownerXUserId: v.string(), parentPostId: v.optional(v.string()) },
+  args: { ownerXUserId: v.string(), parentPostId: v.optional(v.string()), consumerPostId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     if (!args.parentPostId) return null;
     const parent = await ctx.db.query("xReplyInteractions")
       .withIndex("by_response_post_id", q => q.eq("responsePostId", args.parentPostId!)).unique();
     if (!parent || parent.authorXUserId !== args.ownerXUserId
-      || parent.updatedAt < Date.now() - GUIDED_HELP_TTL_MS || parent.guidedHelpConsumedByPostId) return null;
+      || parent.updatedAt < Date.now() - GUIDED_HELP_TTL_MS
+      || (parent.guidedHelpConsumedByPostId && parent.guidedHelpConsumedByPostId !== args.consumerPostId)) return null;
     return decodeAmbiguousTokenState(parent.guidedHelpStateJson);
   },
 });
@@ -1663,6 +1665,14 @@ export const retryInteraction = internalAction({
     // X can prepend every participant in a reply chain. Strip only that leading
     // invocation block; never read or append parent/quoted post text.
     const directText = directPostCommandText(current.interaction.text);
+    const pollContext = current.interaction.parentPostId ? await ctx.runQuery(internal.polls.context, { parentPostId: current.interaction.parentPostId }) : null;
+    if (isPollCommand(directText) || pollContext) await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "processing", commandKind: "poll" });
+    const poll = isPollCommand(directText) || pollContext ? await ctx.runAction(internal.polls.handleX, { postId, owner: current.user.xUserId, text: directText, parentPostId: current.interaction.parentPostId }) : null;
+    if (poll?.handled) {
+      if (!poll.result) await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "rejected", commandKind: "poll" });
+      if (poll.result && !poll.result.pending) await ctx.runMutation(internal.xReplyQueue.enqueue, { key: postId, postId, text: poll.result.message, kind: "reply", ok: poll.result.ok, allowLong: true });
+      return;
+    }
     if (/^unlink\s+tg[.!]?$/i.test(directText.trim())) {
       await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId, status: "processing", commandKind: "unlink_telegram",
@@ -1698,10 +1708,18 @@ export const retryInteraction = internalAction({
       ? await ctx.runQuery(internal.xReplies.ambiguousTokenReplyContext, {
           ownerXUserId: current.user.xUserId,
           parentPostId: current.interaction.parentPostId,
+          consumerPostId: postId,
         })
       : null;
     let ambiguousTokenIntent: XWalletIntent | undefined;
     if (suppliedContract && ambiguousTokenContext?.intent.kind === "command") {
+      // Reserve even an incorrect correction before creating its next prompt.
+      // Sibling replies cannot fork the same transaction into separate chains.
+      if (!current.interaction.parentPostId || !await ctx.runMutation(internal.xReplies.claimAmbiguousTokenReply, {
+        ownerXUserId: current.user.xUserId,
+        parentPostId: current.interaction.parentPostId,
+        consumerPostId: postId,
+      })) return;
       const originalToken = ambiguousTokenValue(ambiguousTokenContext.intent.command, ambiguousTokenContext.field);
       if (typeof originalToken !== "string") return;
       const originalTicker = originalToken.replace(/^\$/, "").toUpperCase();
@@ -1727,11 +1745,6 @@ export const retryInteraction = internalAction({
         });
         return;
       }
-      if (!current.interaction.parentPostId || !await ctx.runMutation(internal.xReplies.claimAmbiguousTokenReply, {
-        ownerXUserId: current.user.xUserId,
-        parentPostId: current.interaction.parentPostId,
-        consumerPostId: postId,
-      })) return;
       ambiguousTokenIntent = replaceAmbiguousToken(
         ambiguousTokenContext.intent,
         ambiguousTokenContext.field,
@@ -1856,11 +1869,12 @@ export const retryInteraction = internalAction({
           await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "processing", commandKind: "liquidity" });
           if (result.deferred) return;
           if (result.message && !result.silent) {
-            const responsePostId = await publishReplyOnce(ctx, result.message, postId, undefined, true, { kind: "liquidity" });
+            const responsePostId = await publishReplyOnce(ctx, result.message, postId, undefined, true, { ok: result.ok !== false, kind: "liquidity" });
             await ctx.runMutation(internal.liquidity.attachPrompt, { requestKey: `x:${postId}`, responsePostId });
             await ctx.runMutation(internal.xReplies.updateInteraction, {
               postId,
-              status: "completed",
+              status: result.ok === false ? "rejected" : "completed",
+              ...(result.ok === false ? { safeError: result.message } : {}),
               responsePostId,
               ...(isGuidedHelpCompletion(result.message)
                 ? { commandKind: guidedHelpCommandKind("root") }
@@ -3441,7 +3455,9 @@ export const pollMentions = internalAction({
         );
         // Hard stop before persistence, rate limiting, AI, wallet work, or X
         // publication. This prevents automated accounts from sustaining loops.
-        const lpThread = await inspectLpThread(mention);
+        const pollThread = parentPostId ? await ctx.runQuery(internal.polls.context, { parentPostId }) : null;
+        const pollRequest = isPollCommand(directPostCommandText(directText));
+        const lpThread = pollThread ? null : await inspectLpThread(mention);
         if (lpThread === "silent") continue;
         let guidedHelpContinuation = await ctx.runQuery(internal.xReplies.guidedHelpContext, {
           ownerXUserId: mention.author_id || "",
@@ -3449,6 +3465,7 @@ export const pollMentions = internalAction({
         });
         if (guidedHelpContinuation && parseContextualBuy(directText) && parentPostId
           && (await ctx.runQuery(internal.xReplies.contextualBuyParent, { postId: parentPostId })).token) guidedHelpContinuation = null;
+        if (pollThread) guidedHelpContinuation = null;
         if (guidedHelpContinuation && !guidedHelpContinuation.allowed) continue;
         const ambiguousTokenContinuation = parentPostId
           ? await ctx.runQuery(internal.xReplies.ambiguousTokenReplyContext, {
@@ -3520,7 +3537,7 @@ export const pollMentions = internalAction({
         if (exceedsXReplyDepthLimit({
           replyDepth,
           maximumDepth: MAX_X_REPLY_DEPTH,
-          guidedWorkflow: Boolean(guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || expiredWorkflowResume),
+          guidedWorkflow: Boolean(pollThread || pollRequest || guidedHelpContinuation?.allowed || ambiguousTokenContinuation || liquidityContinuation || expiredWorkflowResume),
           liquidityRequest,
           contextualGasHelp,
           // The parent prompt is explicitly waiting for a response. Do not
@@ -3543,6 +3560,7 @@ export const pollMentions = internalAction({
         if (
           restrictedReply &&
           !directedHelp &&
+          !pollThread && !pollRequest &&
           !liquidityContinuation && !liquidityRequest && !guidedHelpContinuation?.allowed && !ambiguousTokenContinuation && !gasResume &&
           !expiredWorkflowResume && !shouldHandlePassiveChainText(directText)
         )

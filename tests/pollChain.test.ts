@@ -1,0 +1,29 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const read = vi.hoisted(() => vi.fn());
+const getBlock = vi.hoisted(() => vi.fn());
+vi.mock('viem', async original => ({ ...await original<typeof import('viem')>(), createPublicClient: () => ({ readContract: read, getBlock }) }));
+import { pollOfficial, pollMetadata, assertPollBlock } from '../lib/poll-chain';
+const token = '0x1111111111111111111111111111111111111111';
+const actor = '0x2222222222222222222222222222222222222222';
+const vault = '0x3333333333333333333333333333333333333333';
+const layer = '0x4444444444444444444444444444444444444444';
+const other = '0x5555555555555555555555555555555555555555';
+const anchor = { block: '100', blockHash: '0xabc', timestamp: 0 };
+beforeEach(() => { vi.stubEnv('ROBINHOOD_RPC_URL', 'https://example.invalid'); read.mockReset(); getBlock.mockReset(); });
+describe('onchain poll authorization', () => {
+  it('allows the actual launcher', async () => { read.mockResolvedValue({ token, exists: true, deployer: actor, creatorFeeRecipient: other }); expect(await pollOfficial(token, actor, {}, anchor)).toBe(true); });
+  it('allows the actual direct recipient', async () => { read.mockResolvedValue({ token, exists: true, deployer: other, creatorFeeRecipient: actor }); expect(await pollOfficial(token, actor, {}, anchor)).toBe(true); });
+  it('does not endorse an unrelated wallet', async () => { read.mockResolvedValue({ token, exists: true, deployer: other, creatorFeeRecipient: other }); expect(await pollOfficial(token, actor, {}, anchor)).toBe(false); });
+  it('leaves non-Pons tokens Community', async () => { read.mockResolvedValue({ exists: false }); expect(await pollOfficial(token, actor, {}, anchor)).toBe(false); });
+  it('checks the trusted vault token and controller onchain', async () => { read.mockResolvedValueOnce({ token, exists: true, deployer: other, creatorFeeRecipient: vault }).mockResolvedValueOnce(token).mockResolvedValueOnce(actor); expect(await pollOfficial(token, actor, { vault }, anchor)).toBe(true); expect(read.mock.calls.every(([a]) => a.blockNumber === 100n)).toBe(true); });
+  it('checks the burn layer owner when it controls the primary vault', async () => { read.mockResolvedValueOnce({ token, exists: true, deployer: other, creatorFeeRecipient: vault }).mockResolvedValueOnce(token).mockResolvedValueOnce(layer).mockResolvedValueOnce(token).mockResolvedValueOnce(actor); expect(await pollOfficial(token, actor, { vault, layer }, anchor)).toBe(true); });
+  it('rejects a layer that now belongs to another person', async () => { read.mockResolvedValueOnce({ token, exists: true, deployer: other, creatorFeeRecipient: vault }).mockResolvedValueOnce(token).mockResolvedValueOnce(layer).mockResolvedValueOnce(token).mockResolvedValueOnce(other); expect(await pollOfficial(token, actor, { vault, layer }, anchor)).toBe(false); });
+  it('rejects stale vault records after reassignment', async () => { read.mockResolvedValue({ token, exists: true, deployer: other, creatorFeeRecipient: other }); expect(await pollOfficial(token, actor, { vault, layer }, anchor)).toBe(false); expect(read).toHaveBeenCalledTimes(1); });
+  it('rejects a vault for another token', async () => { read.mockResolvedValueOnce({ token, exists: true, deployer: other, creatorFeeRecipient: vault }).mockResolvedValueOnce(other).mockResolvedValueOnce(actor); expect(await pollOfficial(token, actor, { vault }, anchor)).toBe(false); });
+  it('does not turn a failed rights read into an endorsement', async () => { read.mockRejectedValue(new Error('RPC unavailable')); await expect(pollOfficial(token, actor, {}, anchor)).rejects.toThrow(); });
+});
+describe('fixed-block token identity', () => {
+  it('validates the supplied symbol onchain', async () => { read.mockResolvedValueOnce('ABC').mockResolvedValueOnce(18).mockResolvedValueOnce(100n); await expect(pollMetadata(token, `$WRONG ${token}`, anchor)).rejects.toThrow('TOKEN_MISMATCH'); });
+  it('accepts case-insensitive matching', async () => { read.mockResolvedValueOnce('AbC').mockResolvedValueOnce(18).mockResolvedValueOnce(100n); expect((await pollMetadata(token, `$abc ${token}`, anchor)).symbol).toBe('AbC'); });
+  it('fails closed on a changed block hash', async () => { getBlock.mockResolvedValue({ hash: '0xdef' }); await expect(assertPollBlock(anchor)).rejects.toThrow('changed'); });
+});

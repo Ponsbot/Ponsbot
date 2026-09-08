@@ -22,7 +22,8 @@ export async function GET(request: NextRequest) {
   const requestedReturn = request.nextUrl.searchParams.get("returnTo");
   const telegramLink = request.nextUrl.searchParams.get("telegramLink");
   const validTelegramLink = telegramLink && /^[a-f0-9]{64}$/.test(telegramLink) ? telegramLink : null;
-  const returnTo = requestedReturn === "/terminal" ? "/terminal" : `/wallet/${session?.walletAddress || ""}`;
+  const votingReturn = requestedReturn && /^\/votes(?:\/POLL-[a-f0-9]{16})?$/i.test(requestedReturn) ? requestedReturn : null;
+  const returnTo = votingReturn || (requestedReturn === "/terminal" ? "/terminal" : `/wallet/${session?.walletAddress || ""}`);
   // Telegram account linking must always pass through X authorization. Reusing
   // a website session here can bind the Telegram nonce to a stale or different
   // X identity, and can make relinking fail before the nonce is consumed.
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
   const cookie = { httpOnly: true, secure, sameSite: "lax" as const, path: "/api/auth/x", maxAge: 10 * 60 };
   response.cookies.set("pons_x_oauth_state", state, cookie);
   response.cookies.set("pons_x_oauth_verifier", verifier, cookie);
-  response.cookies.set("pons_x_oauth_return", requestedReturn === "/terminal" ? "/terminal" : "/wallet", cookie);
+  response.cookies.set("pons_x_oauth_return", votingReturn || (requestedReturn === "/terminal" ? "/terminal" : "/wallet"), cookie);
   if (validTelegramLink) response.cookies.set("pons_telegram_link", validTelegramLink, cookie);
   else response.cookies.set("pons_telegram_link", "", { ...cookie, maxAge: 0 });
   // A cryptographically valid cookie may refer to a revoked or missing Convex

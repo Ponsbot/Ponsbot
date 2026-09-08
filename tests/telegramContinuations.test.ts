@@ -20,6 +20,7 @@ function fixture(conversation: any = null) {
     runMutation: vi.fn(async (ref: any, args: any) => { mutations.push([getFunctionName(ref), args]); return true; }),
     runAction: vi.fn(async (ref: any, args: any) => {
       actions.push([getFunctionName(ref), args]);
+      if (getFunctionName(ref) === "walletContinuations:resolve") return null;
       if (getFunctionName(ref) === "liquidity:handle") return args.text === "cancel" ? { handled: true, message: "Cancelled." } : { handled: false };
       return { message: CLAIM_LP_FEE_OFFER };
     }),

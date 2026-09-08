@@ -419,6 +419,14 @@ export function extractGroundedLaunchName(text: string) {
     || text.match(tokenPattern(/['\u2018]([^'\u2019]{1,48})['\u2019]\s*(?:[,;:|/\-\u2014]\s*)?\(?\s*\$[A-Z][A-Z0-9]{0,11}\b/))?.[1]
     || text.match(tokenPattern(/\$[A-Z][A-Z0-9]{0,11}\s*(?:[-—|/]\s*)?["\u201c]([^"\u201d]{1,48})["\u201d]/))?.[1]
     || text.match(tokenPattern(/\$[A-Z][A-Z0-9]{0,11}\s*(?:[-—|/]\s*)?['\u2018]([^'\u2019]{1,48})['\u2019]/))?.[1];
+  // Some users put the label after its value: "launch token Hermes name
+  // ticker Herman". Recognize that bounded launch clause before the generic
+  // name-label matcher can consume "ticker Herman" as the name. Explicitly
+  // quoted names remain authoritative and are never rewritten.
+  const postfixedName = text.match(/\b(?:launch|create|deploy)\s+(?:(?:me|my)\s+)?(?:(?:a|the)\s+)?(?:new\s+)?(?:(?:token|coin)\s+)?([^,;|\n"'“”‘’]{1,48}?)\s+name\s*:?\s+(?:ticker|symbol)\b(?=\s*(?:(?:should|will)\s+be\b|is\b|=|:)?\s*["'“”‘’]?\s*\$?[\p{L}\p{N}])/iu)?.[1];
+  if (!quoted && postfixedName && !/^(?:name|ticker|symbol|token|coin)\b/i.test(postfixedName)) {
+    return sliceTokenText(cleanLaunchNameEdges(postfixedName), 48);
+  }
   // The boundary after `name` is essential: without it, the `name` branch can
   // consume only the first four letters of `named`, leaving the trailing `d`
   // attached to the actual value (for example, `d Tesladog`).

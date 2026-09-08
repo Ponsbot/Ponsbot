@@ -14,6 +14,10 @@ export function directPostCommandText(text: string, botUsername = "Ponsbotfamily
  * prepended reply-participant handles. */
 export function isResumeReply(text: string, botUsername = "Ponsbotfamily") {
   const normalized = directPostCommandText(text, botUsername)
+    // A repeated invocation can also trail the control word. Remove only our
+    // exact standalone handle here, not in general commands where it may be a
+    // payment/fee recipient. Other handles and extra instructions still fail.
+    .replace(new RegExp(`(^|[\\s.!?,;:])@${escapeRegExp(botUsername)}(?=$|[\\s.!?,;:])`, "gi"), " ")
     .toLowerCase()
     .replace(/[’']/g, "")
     .replace(/[^a-z0-9]+$/g, "")

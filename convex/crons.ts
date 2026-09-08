@@ -2,11 +2,13 @@ import { cronJobs } from "convex/server";
 import { internal } from "./_generated/api";
 
 const crons = cronJobs();
+crons.interval("recover poll snapshots and close voting", { minutes: 1 }, internal.polls.recover);
 
 // X jobs exit before contacting X unless replies are explicitly enabled.
 crons.interval("poll direct X mentions", { minutes: 1 }, internal.xReplies.pollMentions);
 crons.interval("recover queued X publications", { minutes: 1 }, internal.xReplyQueue.kick);
 crons.interval("recover interrupted X interactions", { minutes: 5 }, internal.xReplies.recoverStaleInteractions);
+crons.interval("recover Telegram wallet result delivery", { minutes: 1 }, internal.telegramDeliveries.recover);
 crons.interval("monitor recent token graduations", { minutes: 1 }, internal.graduationAnnouncements.monitorGraduations);
 crons.interval("maintain registry migrations", { hours: 1 }, internal.registry.ensureInitialized);
 crons.interval("refresh public platform statistics", { hours: 1 }, internal.site.refreshPlatformStatsCache);

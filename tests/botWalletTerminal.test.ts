@@ -29,6 +29,8 @@ function fixture(session: any = activeSession(), guidedContext: any = null) {
     };
     if (name === "wallets:consumeTerminalLimit") return true;
     if (name === "wallets:recordTerminalMessage") return;
+    if (name === "walletContinuations:resolve") return null;
+    if (name === "walletContinuations:save" || name === "walletContinuations:clear") return false;
     if (name === "wallets:executeCommand") return handler(executeCommand)(ctx, args);
     throw new Error(`Unexpected downstream work: ${name}`);
   });

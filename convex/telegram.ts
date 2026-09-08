@@ -1,7 +1,7 @@
 import { internal } from "./_generated/api";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
-import { isTerminalCommand, type WalletCommand } from "./walletCommands";
+import { isTerminalCommand, isValueMovingCommand, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { parseXWalletIntent, walletHelpMessage } from "./xWalletIntent";
 import { parseXHoudiniCommand } from "./xHoudini";
 import { GENERAL_GUIDED_HELP_MESSAGE, guidedHelpCancelled, guidedHelpClaimLpOfferSelection, guidedHelpClaimSelection, guidedHelpCommandText, guidedHelpPrompt, guidedHelpQuestion, guidedHelpQuestionResponse, guidedHelpSelection, type GuidedHelpOperation } from "../lib/guided-help-workflow";
@@ -219,11 +219,25 @@ export const recordMessage = internalMutation({
   handler: async (ctx, args) => ctx.db.insert("telegramMessages", { ...args, createdAt: Date.now() }),
 });
 
+export const deliveredMessage = internalQuery({
+  args: { requestId: v.string(), telegramUserId: v.string(), telegramChatId: v.string() },
+  handler: async (ctx, args) => Boolean((await ctx.db.query("telegramMessages").withIndex("by_request", q => q.eq("requestId", args.requestId)).collect())
+    .some(row => row.role === "assistant" && row.telegramUserId === args.telegramUserId && row.telegramChatId === args.telegramChatId)),
+});
+
 export const activeConversation = internalQuery({
   args: { telegramUserId: v.string() },
   handler: async (ctx, args) => {
     const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
     return rows.filter(row => row.expiresAt > Date.now()).sort((a, b) => b.updatedAt - a.updatedAt)[0] || null;
+  },
+});
+
+export const expiredConversation = internalQuery({
+  args: { telegramUserId: v.string(), telegramChatId: v.string() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("telegramConversations").withIndex("by_user_active", q => q.eq("telegramUserId", args.telegramUserId).eq("active", true)).collect();
+    return rows.some(row => row.telegramChatId === args.telegramChatId && row.expiresAt <= Date.now());
   },
 });
 
@@ -530,7 +544,7 @@ export const processUpdate = internalAction({
           ? "✅ Telegram has been unlinked from your Pons Bot X account. Your wallet and funds are unchanged."
           : "ℹ️ No active Telegram link was found.");
       } else if (command === "/link" && link) {
-        await sendMessage(chatId, "✅ Your Telegram account is permanently linked to your Pons Bot X account.");
+        await sendMessage(chatId, "✅ Your Telegram account is linked to your Pons Bot X account.");
       } else if (!link) {
         const nonce = randomNonce();
         await ctx.runMutation(internal.telegram.storeLinkNonce, {
@@ -557,6 +571,7 @@ export const processUpdate = internalAction({
           ],
         });
       } else if (command === "/cancel" || guidedHelpCancelled(text)) {
+        await ctx.runMutation(internal.walletContinuations.clear, { owner: link.ownerXUserId, source: "telegram", scope: `${telegramUserId}:${link._id}` });
         const cancelled = await ctx.runAction(internal.liquidity.handle, {
           ownerXUserId: link.ownerXUserId, source: "telegram",
           scope: `telegram:telegram_${telegramUserId}`,
@@ -566,6 +581,15 @@ export const processUpdate = internalAction({
         await sendMessage(chatId, cancelled.message || "Cancelled.");
       } else {
         const currentConversation = await ctx.runQuery(internal.telegram.activeConversation, { telegramUserId });
+        const resumed = await ctx.runAction(internal.walletContinuations.resolve, {
+          owner: link.ownerXUserId, source: "telegram", scope: `${telegramUserId}:${link._id}`, text, requestId: args.updateId,
+        });
+        if (resumed?.message || (!resumed?.commandJson && !currentConversation && isResumeReply(text)
+          && await ctx.runQuery(internal.telegram.expiredConversation, { telegramUserId, telegramChatId: chatId }))) {
+          await sendMessage(chatId, resumed?.message || WORKFLOW_EXPIRED_MESSAGE);
+          await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
+          return;
+        }
         if (burnedResume && currentConversation && currentConversation.operation !== "root") {
           await ctx.runMutation(internal.burnedLookups.resume, {
             owner: link.ownerXUserId, source: "telegram", text, superseded: true,
@@ -620,7 +644,7 @@ export const processUpdate = internalAction({
           }
           effectiveText = privacy === "private" ? `private ${saved}` : saved;
         }
-        if (conversation?.operation === "gas_resume" && isResumeReply(text)) {
+        if (!resumed?.commandJson && conversation?.operation === "gas_resume" && isResumeReply(text)) {
           const saved = await ctx.runMutation(internal.telegram.consumeGasResume, {
             conversationId: conversation._id, telegramUserId, telegramChatId: chatId, ownerXUserId: link.ownerXUserId,
           });
@@ -636,7 +660,7 @@ export const processUpdate = internalAction({
           ? await ctx.runQuery(internal.telegram.activeLiquidityConversation, { scope: liquidityScope, ownerXUserId: link.ownerXUserId })
           : false;
         await assertBoundLink();
-        const liquidity = await ctx.runAction(internal.liquidity.handle, {
+        const liquidity = resumed?.commandJson ? { handled: false, message: undefined, deferred: false } : await ctx.runAction(internal.liquidity.handle, {
           ownerXUserId: link.ownerXUserId,
           source: "telegram",
           scope: liquidityScope,
@@ -653,7 +677,7 @@ export const processUpdate = internalAction({
           await ctx.runMutation(internal.telegram.updateStatus, { updateId: args.updateId, status: "completed" });
           return;
         }
-        if (conversation?.operation === "claim_lp_offer") {
+        if (!resumed?.commandJson && conversation?.operation === "claim_lp_offer") {
           if (lpOfferChoice === "cancel") {
             await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
             await sendMessage(chatId, "Okay.");
@@ -712,7 +736,8 @@ export const processUpdate = internalAction({
           return;
         }
         if (burnedResume) effectiveText = burnedResume;
-        const intent = await parseXWalletIntent(effectiveText, false);
+        const restored = resumed?.commandJson ? validateStructuredWalletCommand(JSON.parse(resumed.commandJson)) : null;
+        const intent = restored ? { kind: "command" as const, command: restored } : await parseXWalletIntent(effectiveText, false);
         if (intent.kind === "help") {
           await sendMessage(chatId, operation && operation !== "liquidity" && guidedHelpQuestion(text)
             ? telegramGuideQuestionResponse(operation, walletHelpMessage(intent.topic))
@@ -732,6 +757,11 @@ export const processUpdate = internalAction({
           const sourcePostId = `tg_${telegramUserId}_${message.message_id || args.updateId}`;
           const requestId = `telegram:${telegramUserId}:${args.updateId}:${intent.command.kind}`;
           await assertBoundLink();
+          await ctx.runMutation(internal.telegramDeliveries.enqueue, { requestId, ownerXUserId: link.ownerXUserId,
+            telegramUserId, telegramChatId: chatId, telegramUpdateId: args.updateId });
+          if (!resumed?.commandJson && isValueMovingCommand(intent.command)) await ctx.runMutation(internal.walletContinuations.clear, {
+            owner: link.ownerXUserId, source: "telegram", scope: `${telegramUserId}:${link._id}`,
+          });
           const result = await ctx.runAction(internal.wallets.executeCommand, {
             sourcePostId,
             requestId,
@@ -748,11 +778,12 @@ export const processUpdate = internalAction({
             // must not be interpreted as answers to its old guide prompt.
             await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
             await sendMessage(chatId, "⏳ Your request is processing...");
-            await ctx.scheduler.runAfter(5_000, internal.telegram.deliverDeferredWalletResult, {
-              requestId, ownerXUserId: link.ownerXUserId, telegramUserId, telegramChatId: chatId, attempt: 0,
-            });
           } else {
-            await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
+            if (isValueMovingCommand(intent.command) || operation !== null) await ctx.runMutation(internal.telegram.clearConversation, { telegramUserId });
+            await ctx.runMutation(internal.walletContinuations.save, {
+              owner: link.ownerXUserId, source: "telegram", scope: `${telegramUserId}:${link._id}`, requestId: args.updateId,
+              commandJson: JSON.stringify(intent.command), sourceText: resumed?.sourceText || effectiveText, message: result.message,
+            });
             if (isGasResumePrompt(result.message)) await ctx.runMutation(internal.telegram.setConversation, {
               telegramUserId, telegramChatId: chatId, operation: "gas_resume",
               resumeText: effectiveText, resumeOwner: link.ownerXUserId,
@@ -760,7 +791,8 @@ export const processUpdate = internalAction({
             else if (result.message.trim().endsWith(CLAIM_LP_FEE_OFFER)) await ctx.runMutation(internal.telegram.setConversation, {
               telegramUserId, telegramChatId: chatId, operation: "claim_lp_offer",
             });
-            await sendMessage(chatId, result.message);
+            await ctx.runMutation(internal.telegramDeliveries.setText, { requestId, text: result.message });
+            await ctx.runAction(internal.telegramDeliveries.deliver, { requestId });
           }
         }
       }
@@ -771,7 +803,7 @@ export const processUpdate = internalAction({
         const message = update.message || update.callback_query?.message;
         const from = update.message?.from || update.callback_query?.from;
         if (message?.chat?.id && message.chat.type === "private" && from?.id && !from.is_bot) {
-          const text = "⚠️ I couldn't complete that request. No new transaction was started. Check the details and try again.";
+          const text = "⚠️ I couldn't finish processing or delivering this request. Check your wallet activity before submitting it again.";
           await sendMessage(String(message.chat.id), text);
           await ctx.runMutation(internal.telegram.recordMessage, {
             telegramUserId: String(from.id), telegramChatId: String(message.chat.id), role: "assistant", text,
@@ -802,6 +834,7 @@ export const deliverHoudiniMessage = internalAction({
   handler: async (ctx, args): Promise<boolean> => {
     const link = await ctx.runQuery(internal.telegram.activeLink, { telegramUserId: args.telegramUserId });
     if (!link || link.ownerXUserId !== args.ownerXUserId || link.telegramChatId !== args.telegramChatId) return false;
+    if (await ctx.runQuery(internal.telegram.deliveredMessage, { requestId: args.requestId, telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId })) return true;
     await sendMessage(args.telegramChatId, args.text);
     await ctx.runMutation(internal.telegram.recordMessage, {
       telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, role: "assistant", text: args.text, requestId: args.requestId,
@@ -813,33 +846,12 @@ export const deliverHoudiniMessage = internalAction({
 export const deliverDeferredWalletResult = internalAction({
   args: { requestId: v.string(), ownerXUserId: v.string(), telegramUserId: v.string(), telegramChatId: v.string(), attempt: v.number() },
   handler: async (ctx, args) => {
-    const link = await ctx.runQuery(internal.telegram.activeLink, { telegramUserId: args.telegramUserId });
-    if (!link || link.ownerXUserId !== args.ownerXUserId || link.telegramChatId !== args.telegramChatId) return;
-    const result = await ctx.runQuery(internal.telegram.walletRequestResult, { requestId: args.requestId, ownerXUserId: args.ownerXUserId });
-    if (result && ["confirmed", "rejected", "failed", "skipped"].includes(result.status)) {
-      const rawText = result.finalMessage || result.safeError || "The request finished without a displayable result.";
-      // Deferred results must not replace a newer conversation or promise an
-      // unsaved continuation. The user can explicitly submit a fresh request.
-      let text = isGasResumePrompt(rawText)
-        ? rawText.replace(/reply\s+[“"]resume[”"]/i, "send the full request again")
-        : rawText;
-      if (text.trim().endsWith(CLAIM_LP_FEE_OFFER)) {
-        const registered = await ctx.runMutation(internal.telegram.setConversation, {
-          telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, operation: "claim_lp_offer", onlyIfIdle: true,
-        });
-        if (!registered) text = text.replace(CLAIM_LP_FEE_OFFER, 'For LP fees, send "claim LP fees".');
-      }
-      await sendMessage(args.telegramChatId, text);
-      await ctx.runMutation(internal.telegram.recordMessage, {
-        telegramUserId: args.telegramUserId, telegramChatId: args.telegramChatId, role: "assistant", text,
-        requestId: `telegram-result:${args.requestId}`,
-      });
-      return;
-    }
-    if (args.attempt >= 59) {
-      await sendMessage(args.telegramChatId, "⚠️ This request is taking longer than expected. Check your wallet activity before trying it again.");
-      return;
-    }
-    await ctx.scheduler.runAfter(5_000, internal.telegram.deliverDeferredWalletResult, { ...args, attempt: args.attempt + 1 });
+    // Migrate already-scheduled callbacks into the durable delivery queue too.
+    const updateId = args.requestId.match(/^telegram:\d+:(\d+):/)?.[1];
+    if (!updateId) return;
+    await ctx.runMutation(internal.telegramDeliveries.enqueue, {
+      requestId: args.requestId, ownerXUserId: args.ownerXUserId, telegramUserId: args.telegramUserId,
+      telegramChatId: args.telegramChatId, telegramUpdateId: updateId,
+    });
   },
 });

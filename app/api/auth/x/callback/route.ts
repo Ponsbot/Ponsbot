@@ -88,7 +88,8 @@ export async function GET(request: NextRequest) {
       });
       return response;
     }
-    const returnTo = request.cookies.get("pons_x_oauth_return")?.value === "/terminal" ? "/terminal" : `/wallet/${wallet.address}`;
+    const requestedReturn = request.cookies.get("pons_x_oauth_return")?.value;
+    const returnTo = requestedReturn && /^\/votes(?:\/POLL-[a-f0-9]{16})?$/i.test(requestedReturn) ? requestedReturn : requestedReturn === "/terminal" ? "/terminal" : `/wallet/${wallet.address}`;
     const sessionCookie = createWebWalletSession(wallet.address, identity.id, identity.username, webSecret);
     const session = readWebWalletSession(sessionCookie, webSecret);
     if (!session) return errorRedirect(request, "session");

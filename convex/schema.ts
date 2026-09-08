@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { liquidityTables } from "./lib/liquiditySchema";
 import { liquidityWorkflowTables } from "./lib/liquidityWorkflowSchema";
 import { xReplyQueueTables } from "./lib/xReplyQueueSchema";
+import { pollTables } from "./lib/pollSchema";
 
 const intakeFilterGuardState = v.object({
   recentPosts: v.array(v.object({ id: v.string(), at: v.number() })),
@@ -13,6 +14,19 @@ const intakeFilterGuardState = v.object({
 });
 
 export default defineSchema({
+  ...pollTables,
+  walletContinuations: defineTable({
+    owner: v.string(), source: v.union(v.literal("terminal"), v.literal("telegram")), scope: v.string(),
+    requestId: v.string(), kind: v.union(v.literal("gas"), v.literal("contract")), commandJson: v.string(), sourceText: v.string(),
+    field: v.optional(v.string()), ticker: v.optional(v.string()), consumedBy: v.optional(v.string()),
+    expiresAt: v.number(), updatedAt: v.number(),
+  }).index("by_scope", ["owner", "source", "scope"]),
+  telegramWalletDeliveries: defineTable({
+    requestId: v.string(), ownerXUserId: v.string(), telegramUserId: v.string(), telegramChatId: v.string(), telegramUpdateId: v.string(),
+    status: v.union(v.literal("pending"), v.literal("delivered"), v.literal("cancelled")),
+    text: v.optional(v.string()), nextAttemptAt: v.number(), leaseToken: v.optional(v.string()), leaseUntil: v.optional(v.number()),
+    attempts: v.number(), createdAt: v.number(), updatedAt: v.number(),
+  }).index("by_request", ["requestId"]).index("by_due", ["status", "nextAttemptAt"]),
   burnedLookupContinuations: defineTable({ owner: v.string(), source: v.string(), scope: v.optional(v.string()), ticker: v.optional(v.string()), expiresAt: v.number() }).index("by_owner_source", ["owner", "source"]),
   ...liquidityTables,
   ...liquidityWorkflowTables,

@@ -13,6 +13,23 @@ describe("retired Houdini decisions do not intercept active workflows", () => {
   });
 });
 
+describe('poll publication bindings', () => {
+  it('queues closed results as a durable reply to the original bot post', async () => {
+    const ctx = fixture();
+    const pollId = await ctx.db.insert('polls', { status: 'closed', xPostId: 'bot-created' });
+    await invoke(queue.enqueue, ctx, { key: 'poll-result:test', pollId, replyTargetPostId: 'bot-created', text: 'Voting closed', kind: 'poll_result', ok: true, allowLong: true });
+    expect(row(ctx, 'poll-result:test')).toMatchObject({ priority: 'A', standalone: false, replyTargetPostId: 'bot-created', allowLong: true });
+  });
+  it('rejects results attached to a different post', async () => {
+    const ctx = fixture(); const pollId = await ctx.db.insert('polls', { status: 'closed', xPostId: 'bot-created' });
+    await expect(invoke(queue.enqueue, ctx, { key: 'poll-result:test', pollId, replyTargetPostId: 'wrong', text: 'Voting closed', kind: 'poll_result' })).rejects.toThrow('binding mismatch');
+  });
+  it('does not publish results while voting remains open', async () => {
+    const ctx = fixture(); const pollId = await ctx.db.insert('polls', { status: 'open', xPostId: 'bot-created' });
+    await expect(invoke(queue.enqueue, ctx, { key: 'poll-result:test', pollId, replyTargetPostId: 'bot-created', text: 'Voting closed', kind: 'poll_result' })).rejects.toThrow('binding mismatch');
+  });
+});
+
 // Real Convex handlers with an index-aware in-memory DB; no live X, AI or wallets.
 type Row = Record<string, any>;
 const invoke = (fn: any, ctx: any, args: any = {}) => fn._handler(ctx, args);

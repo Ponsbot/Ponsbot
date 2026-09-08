@@ -22,6 +22,7 @@ export function MobileNav() {
     {open ? <div className="mobile-menu">
       <Link href="/" onClick={() => setOpen(false)}>HOME</Link>
       <Link href="/stats" onClick={() => setOpen(false)}>STATS</Link>
+      <Link href="/votes" onClick={() => setOpen(false)}>VOTING</Link>
       <Link href="/terminal" onClick={() => setOpen(false)}>TERMINAL</Link>
       <Link href="/how-it-works" onClick={() => setOpen(false)}>HOW IT WORKS</Link>
       <Link href="/#launches" onClick={() => setOpen(false)}>LAUNCHES</Link>

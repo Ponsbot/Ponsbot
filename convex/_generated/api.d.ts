@@ -13,6 +13,7 @@ import type * as automatedFeeEngine from "../automatedFeeEngine.js";
 import type * as automatedFeeOutcomes from "../automatedFeeOutcomes.js";
 import type * as automatedFeeQueue from "../automatedFeeQueue.js";
 import type * as burnedLookups from "../burnedLookups.js";
+import type * as polls from "../polls.js";
 import type * as creatorBurnEngine from "../creatorBurnEngine.js";
 import type * as creatorBurnEnrollment from "../creatorBurnEnrollment.js";
 import type * as creatorFeeHistory from "../creatorFeeHistory.js";
@@ -35,6 +36,8 @@ import type * as ponsV2 from "../ponsV2.js";
 import type * as registry from "../registry.js";
 import type * as site from "../site.js";
 import type * as telegram from "../telegram.js";
+import type * as telegramDeliveries from "../telegramDeliveries.js";
+import type * as walletContinuations from "../walletContinuations.js";
 import type * as walletCommands from "../walletCommands.js";
 import type * as wallets from "../wallets.js";
 import type * as xFloodProtection from "../xFloodProtection.js";
@@ -55,6 +58,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  polls: typeof polls;
   automatedFeeClaimInfo: typeof automatedFeeClaimInfo;
   automatedFeeEngine: typeof automatedFeeEngine;
   automatedFeeOutcomes: typeof automatedFeeOutcomes;
@@ -82,6 +86,8 @@ declare const fullApi: ApiFromModules<{
   registry: typeof registry;
   site: typeof site;
   telegram: typeof telegram;
+  telegramDeliveries: typeof telegramDeliveries;
+  walletContinuations: typeof walletContinuations;
   walletCommands: typeof walletCommands;
   wallets: typeof wallets;
   xFloodProtection: typeof xFloodProtection;

@@ -71,6 +71,7 @@ import {
   guidedHelpQuestion,
   guidedHelpQuestionResponse,
   guidedHelpSelection,
+  guidedHelpImmediateCommand,
   withClaimLpFeeOffer,
 } from "../lib/guided-help-workflow";
 import { WORKFLOW_EXPIRED_MESSAGE } from "../lib/workflow-expiration";
@@ -3304,7 +3305,7 @@ export function safeFailure(
     if (/holder fee sharing is already enabled/i.test(message)) return FEE_UPGRADE_RESPONSES.holders;
     if (/automated fee upgrades are not enabled/i.test(message)) return FEE_UPGRADE_RESPONSES.unavailable;
   }
-  if (/^The buy completed, but the send did not\./i.test(message))
+  if (/^The buy completed, but the (?:send|burn) did not\./i.test(message))
     return `⚠️ ${message}`;
   if (/^The .+ sale completed, but the purchase of /i.test(message))
     return `⚠️ ${message}`;
@@ -5404,21 +5405,22 @@ export const executeCommand = internalAction({
             funded.command,
             buyOperation,
           );
-          if (
-            !(await ctx.runMutation(
-              internal.wallets.acquireWalletExecutionLock,
-              {
-                walletId: wallet._id,
-                requestId,
-                leaseToken: executionLeaseToken,
-              },
-            ))
-          ) {
-            throw new Error(
-              "wallet execution lease was lost before burning purchased tokens",
-            );
-          }
+          let purchasedForBurn: string | undefined;
           try {
+            if (
+              !(await ctx.runMutation(
+                internal.wallets.acquireWalletExecutionLock,
+                {
+                  walletId: wallet._id,
+                  requestId,
+                  leaseToken: executionLeaseToken,
+                },
+              ))
+            ) {
+              throw new Error(
+                "wallet execution lease was lost before burning purchased tokens",
+              );
+            }
             const after = await exactTokenBalance(
               wallet,
               args.xUserId,
@@ -5434,6 +5436,7 @@ export const executeCommand = internalAction({
                 "the confirmed buy did not increase the token balance",
               );
             const displayPurchased = formatUnits(purchased, after.decimals);
+            purchasedForBurn = displayPurchased;
             // Value the exact confirmed output against the Pons token price at
             // the buy receipt's block. This represents the received tokens at
             // purchase time rather than the requested spend or a later price.
@@ -5486,7 +5489,7 @@ export const executeCommand = internalAction({
             };
           } catch (error) {
             throw new Error(
-              `The buy completed, but the burn did not. The purchased tokens remain in your wallet. Buy TXN: ${transactionUrl(buy.transactionHash)} ${safeFailure(error)}`,
+              `The buy completed, but the burn did not. Check the burn transaction status before trying again. Buy TXN: ${transactionUrl(buy.transactionHash)}${purchasedForBurn ? `\nIf no burn was confirmed, submit “burn ${purchasedForBurn} ${commandToken}” to burn only the purchased amount.` : "\nCheck your wallet activity before submitting a separate burn request."}`,
             );
           }
         }
@@ -6177,15 +6180,22 @@ export const terminalGasResumeContext = internalQuery({
   handler: async (ctx, args) => {
     const recent = await ctx.db.query("terminalMessages")
       .withIndex("by_session_created_at", q => q.eq("sessionId", args.sessionId))
-      .order("desc").take(8);
-    const latest = recent[0];
+      .order("desc").take(50);
+    const gasIndex = recent.findIndex(message => message.role === "assistant" && isGasResumePrompt(message.text));
+    if (gasIndex < 0) return null;
+    // Read-only questions can sit between a funding prompt and resume. A new
+    // transaction or explicit cancellation supersedes the older request.
+    if (recent.slice(0, gasIndex).some(message => message.role === "user" && (guidedHelpCancelled(message.text)
+      || isValueMovingCommand(parseWalletCommand(message.text))))) return null;
+    const latest = recent[gasIndex];
     if (!latest || latest.ownerXUserId !== args.ownerXUserId || latest.role !== "assistant"
       || !isGasResumePrompt(latest.text)) return null;
     if (latest.createdAt < Date.now() - GUIDED_HELP_TTL_MS)
       return { expired: true as const };
     if (latest.resumeConsumedByRequestId) return null;
-    const sourceIndex = recent.slice(1).findIndex(message => message.role === "user" && !isResumeReply(message.text)) + 1;
-    if (sourceIndex <= 0) return null;
+    const sourceOffset = recent.slice(gasIndex + 1).findIndex(message => message.role === "user" && !isResumeReply(message.text));
+    if (sourceOffset < 0) return null;
+    const sourceIndex = gasIndex + 1 + sourceOffset;
     const source = recent[sourceIndex];
     const prompt = recent.slice(sourceIndex + 1).find(message => message.role === "assistant"
       && guidedHelpOperationFromPrompt(message.text));
@@ -6741,6 +6751,7 @@ export const executeTerminalCommand = action({
     let command: WalletCommand | null = null;
     let displayText = args.text?.trim() || "";
     let executionText = displayText;
+    let resumedCommandJson: string | undefined;
     if (args.channel === "terminal_chat") {
       if (!displayText || displayText.length > 500) {
         const message = "Enter a terminal request of 500 characters or fewer.";
@@ -6758,11 +6769,25 @@ export const executeTerminalCommand = action({
         sessionId: args.sessionId,
         ownerXUserId: args.ownerXUserId,
       });
+      if (guidedHelpCancelled(displayText)) await ctx.runMutation(internal.walletContinuations.clear, {
+        owner: args.ownerXUserId, source: "terminal", scope: args.sessionId,
+      });
+      const resumed = await ctx.runAction(internal.walletContinuations.resolve, {
+        owner: args.ownerXUserId, source: "terminal", scope: args.sessionId, text: displayText, requestId: args.eventId,
+      });
+      if (resumed?.message) {
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId,
+          role: "user", messageType: "chat", text: displayText, requestId: args.eventId });
+        await ctx.runMutation(internal.wallets.recordTerminalMessage, { sessionId: args.sessionId, ownerXUserId: args.ownerXUserId,
+          role: "assistant", messageType: "result", text: resumed.message, requestId: args.eventId });
+        return { ok: false, message: resumed.message };
+      }
+      resumedCommandJson = resumed?.commandJson;
       const burnedResume = await ctx.runMutation(internal.burnedLookups.resume, {
         owner: args.ownerXUserId, source: "terminal", scope: args.sessionId, text: displayText,
         superseded: Boolean(guidedContext && guidedContext.operation !== "root"),
       });
-      let gasResumeContext = isResumeReply(displayText)
+      let gasResumeContext = !resumedCommandJson && isResumeReply(displayText)
         ? await ctx.runQuery(internal.wallets.terminalGasResumeContext, {
             sessionId: args.sessionId,
             ownerXUserId: args.ownerXUserId,
@@ -6802,7 +6827,7 @@ export const executeTerminalCommand = action({
       const liquidityText = guidedClaimChoice === "lp" || guidedLpOfferChoice === "lp"
         ? "claim LP fees"
         : displayText;
-      const liquidity = await ctx.runAction(internal.liquidity.handle, {
+      const liquidity = resumedCommandJson ? { handled: false, message: undefined, deferred: false, silent: false } : await ctx.runAction(internal.liquidity.handle, {
         ownerXUserId: args.ownerXUserId, source: "terminal", scope: `terminal:${args.sessionId}`,
         requestKey: `terminal:${args.sessionId}:${args.eventId}`, text: liquidityText,
       });
@@ -6812,6 +6837,7 @@ export const executeTerminalCommand = action({
         return { ok: !liquidity.silent, message, ...(liquidity.deferred ? { pending: true } : {}) };
       }
       if (guidedContext && guidedHelpCancelled(displayText)) {
+        await ctx.runMutation(internal.walletContinuations.clear, { owner: args.ownerXUserId, source: "terminal", scope: args.sessionId });
         const message = "Guided help cancelled.";
         await ctx.runMutation(internal.wallets.recordTerminalMessage, {
           sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant",
@@ -6827,7 +6853,7 @@ export const executeTerminalCommand = action({
         });
         return { ok: true, message };
       }
-      if (guidedContext?.operation === "claim_lp_offer" && !guidedLpOfferChoice) {
+      if (!resumedCommandJson && guidedContext?.operation === "claim_lp_offer" && !guidedLpOfferChoice) {
         const message = guidedHelpPrompt("claim_lp_offer");
         await ctx.runMutation(internal.wallets.recordTerminalMessage, {
           sessionId: args.sessionId, ownerXUserId: args.ownerXUserId, role: "assistant",
@@ -6844,7 +6870,7 @@ export const executeTerminalCommand = action({
         return { ok: true, message };
       }
       const guidedSelection = guidedContext ? guidedHelpSelection(displayText) : null;
-      if (guidedSelection) {
+      if (guidedSelection && !guidedHelpImmediateCommand(guidedSelection)) {
         const message = guidedSelection === "cross_chain" || guidedSelection === "private_swap"
           ? "🌐 Open “Multi-Chain and Private Swaps” at the top of the terminal to prepare and review this swap."
           : guidedSelection === "reassign_fees"
@@ -6856,7 +6882,7 @@ export const executeTerminalCommand = action({
         });
         return { ok: true, message };
       }
-      executionText = gasResumeContext?.sourceText || (guidedContext
+      executionText = gasResumeContext?.sourceText || guidedHelpImmediateCommand(guidedSelection) || (guidedContext
         ? guidedHelpCommandText(displayText, guidedContext.operation)
         : displayText);
       if (burnedResume === "expired") {
@@ -6864,7 +6890,8 @@ export const executeTerminalCommand = action({
         return { ok: false, message: WORKFLOW_EXPIRED_MESSAGE };
       }
       if (burnedResume) executionText = burnedResume;
-      const intent = await parseXWalletIntent(executionText, false);
+      const restored = resumedCommandJson ? validateStructuredWalletCommand(JSON.parse(resumedCommandJson)) : null;
+      const intent = restored ? { kind: "command" as const, command: restored } : await parseXWalletIntent(executionText, false);
       if (intent.kind === "help") {
         const activeQuestion = Boolean(
           guidedContext?.operation && guidedContext.operation !== "root" && guidedHelpQuestion(displayText),
@@ -6879,7 +6906,7 @@ export const executeTerminalCommand = action({
           : guidedOperation
             ? guidedHelpPrompt(guidedOperation)
             : intent.topic === "fees"
-            ? "💸 Pons Bot V2 payouts are automatic: 95% goes to the wallet or holders currently assigned the creator fees, while 5% buys and burns $PONSBOT. Say “claim my fees” to request a V2 cycle and claim legacy ETH fees. Reassignment and upgrades are available through X posts only."
+            ? "💸 Automated creator fees allocate 95% to the current recipient and 5% to buying and burning $PONSBOT. An optional share of the recipient’s allocation can buy and burn the launch token. Holder-sharing launches distribute fees through Pons instead. Say “claim my fees” to request an eligible cycle or claim legacy fees. Creator-fee controls are available through X posts only."
             : walletHelpMessage(intent.topic);
         await ctx.runMutation(internal.wallets.recordTerminalMessage, {
           sessionId: args.sessionId,
@@ -6972,6 +6999,9 @@ export const executeTerminalCommand = action({
           })
         : undefined;
     const requestId = `terminal:${args.sessionId}:${args.eventId}:${command.kind}`;
+    if (!resumedCommandJson && isValueMovingCommand(command)) await ctx.runMutation(internal.walletContinuations.clear, {
+      owner: args.ownerXUserId, source: "terminal", scope: args.sessionId,
+    });
     const result = await ctx.runAction(internal.wallets.executeCommand, {
       sourcePostId: args.eventId,
       requestId,
@@ -6984,6 +7014,10 @@ export const executeTerminalCommand = action({
       ...(recipientAddress ? { recipientAddress } : {}),
     });
     if (result.deferred) return result;
+    await ctx.runMutation(internal.walletContinuations.save, {
+      owner: args.ownerXUserId, source: "terminal", scope: args.sessionId, requestId: args.eventId,
+      commandJson: JSON.stringify(command), sourceText: executionText, message: result.message,
+    });
     await ctx.runMutation(internal.wallets.recordTerminalMessage, {
       sessionId: args.sessionId,
       ownerXUserId: args.ownerXUserId,

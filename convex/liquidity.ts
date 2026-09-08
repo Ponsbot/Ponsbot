@@ -400,7 +400,7 @@ async function positionStatusPages(ctx: ActionCtx, ownerXUserId: string, source:
 }
 export const handle = internalAction({
   args: requestArgs,
-  handler: async (ctx, args): Promise<{ handled: boolean; message?: string; silent?: boolean; deferred?: boolean }> => {
+  handler: async (ctx, args): Promise<{ handled: boolean; ok?: boolean; message?: string; silent?: boolean; deferred?: boolean }> => {
     // Position-card actions in the terminal are independent of an unfinished
     // builder draft. Give an explicit LP claim/withdraw its own scope so it can
     // execute without replacing or conflicting with the user's saved setup.
@@ -420,6 +420,7 @@ export const handle = internalAction({
     let preservedSetup: LiquidityDraft | undefined;
     let message: string | undefined, active = true, analyzedThisTurn = false, walletAddress: string | undefined;
     let terminalSearchWarning: string | undefined;
+    let ok = true;
     try {
       const inputText = normalizeLiquidityTokenAliases(args.text);
       const control = liquidityControl(inputText, d.phase);
@@ -657,6 +658,7 @@ export const handle = internalAction({
       }
     } catch (error) {
       const code = liquidityDiagnostic(error, "LP_WORKFLOW_FAILED");
+      ok = false;
       if (preservedSetup) d = preservedSetup;
       d.diagnosticCode = code;
       if (!preservedSetup) { d.review = undefined; d.executionPlanJson = undefined; d.remainingPages = []; d.quoteSummary = []; }
@@ -693,7 +695,7 @@ export const handle = internalAction({
       if (hint) message += `\n${hint}`;
     }
     await ctx.runMutation(internal.liquidity.saveTurn, { turnId: reservation.turnId, revision: reservation.revision, state: JSON.stringify(d), message: message || R.invalid, active });
-    return { handled: true, message: message || R.invalid };
+    return { handled: true, ok, message: message || R.invalid };
   },
 });
 
