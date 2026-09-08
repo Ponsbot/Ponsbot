@@ -15,10 +15,10 @@ const headers = { cookie: `${WEB_WALLET_SESSION_COOKIE}=${cookie}`, origin: 'htt
 const request = (body: object, overrides: Record<string, string> = {}) => new NextRequest('https://example.com/api/votes/wallet', { method: 'POST', headers: { ...headers, ...overrides }, body: JSON.stringify(body) });
 beforeEach(() => { vi.stubEnv('WEB_AUTH_SECRET', secret); vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://test.convex.cloud'); vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://example.com'); action.mockReset().mockResolvedValue({}); });
 afterEach(() => vi.unstubAllEnvs());
-it('rejects unsigned visitors and non-preview users', async () => {
+it('rejects unsigned visitors and another account using the wrong CSRF token', async () => {
   expect((await GET(new NextRequest('https://example.com/api/votes/wallet'))).status).toBe(404);
-  const outsider = createWebWalletSession(address, 'outsider', 'Ponsboyfamily', secret);
-  expect((await POST(request({ operation: 'challenge', address }, { cookie: `${WEB_WALLET_SESSION_COOKIE}=${outsider}` }))).status).toBe(404);
+  const outsider = createWebWalletSession(address, '1234567890123456789', 'OtherUser', secret);
+  expect((await POST(request({ operation: 'challenge', address }, { cookie: `${WEB_WALLET_SESSION_COOKIE}=${outsider}` }))).status).toBe(403);
   expect(action).not.toHaveBeenCalled();
 });
 it.each<Record<string, string>>([{ origin: 'https://evil.example' }, { 'x-pons-csrf': 'forged' }])('rejects cross-site or invalid-CSRF writes', async extra => {

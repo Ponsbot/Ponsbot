@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+vi.mock('../lib/voting-access', async original => ({ ...await original<typeof import('../lib/voting-access')>(), WEBSITE_VOTING_PUBLIC: false, votingPreviewAllowed: (id?: string) => id === '2085516993315188736' }));
 import { NextRequest } from 'next/server';
 import { createWebWalletSession, WEB_WALLET_SESSION_COOKIE } from '../lib/web-wallet-session';
 import { VOTING_PREVIEW_X_ID } from '../lib/voting-access';

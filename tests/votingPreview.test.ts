@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+vi.mock('../lib/voting-access', async original => ({ ...await original<typeof import('../lib/voting-access')>(), X_VOTING_ENABLED: false, WEBSITE_VOTING_PUBLIC: false, votingPreviewAllowed: (id?: string) => id === '2085516993315188736' }));
 import { votingPreviewAllowed, VOTING_PREVIEW_X_ID, X_VOTING_ENABLED } from '../lib/voting-access';
 import * as polls from '../convex/polls';
 import { enqueue } from '../convex/xReplyQueue';
