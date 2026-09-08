@@ -118,8 +118,11 @@ if (enabling) {
     .filter(([role]) => role !== "quoteAuthorizer")
     .filter(([, balance]) => BigInt(String(balance)) < 5_000_000_000_000_000n)
     .map(([role]) => role);
+  // A repeated --enable is also a health check. Accept the live enabled state
+  // when processing is already on; a first activation must still observe false.
+  const expectedProcessingState = Boolean(currentlyEnabled);
   if (infrastructure.chainId !== CHAIN_ID || infrastructure.configurationValid !== true
-    || infrastructure.processingEnabled !== false || infrastructure.allRoutesReady !== true
+    || infrastructure.processingEnabled !== expectedProcessingState || infrastructure.allRoutesReady !== true
     || infrastructure.allContractsDeployed !== true || infrastructure.controlMatches !== true
     || infrastructure.factoryMatches !== true || infrastructure.enrollmentProofConfigured !== true
     || missingRoutes.length > 0 || missingContracts.length > 0 || lowBalanceRoles.length > 0) {

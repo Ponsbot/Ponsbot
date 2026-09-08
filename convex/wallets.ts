@@ -2592,6 +2592,27 @@ export const deferHolderFeeSharing = internalMutation({
   },
 });
 
+export const recordInitialHolderFeeSharingFailure = internalMutation({
+  args: { requestId: v.string(), safeError: v.string() },
+  handler: async (ctx, args) => {
+    const launch = await ctx.db
+      .query("tokenLaunches")
+      .withIndex("by_request_id", (q) => q.eq("requestId", args.requestId))
+      .unique();
+    if (!launch || !launch.holderFeeSharing || launch.holderFeeDistributor)
+      return;
+    const now = Date.now();
+    await ctx.db.patch(launch._id, {
+      holderFeeSharingStatus: "retrying",
+      holderFeeSharingAttempts: Math.max(1, launch.holderFeeSharingAttempts || 0),
+      holderFeeSharingLastError: args.safeError.slice(0, 240),
+      // recordConfirmedExecution already schedules the first recovery attempt.
+      holderFeeSharingNextAttemptAt: now + 30_000,
+      updatedAt: now,
+    });
+  },
+});
+
 export const resumeHolderFeeSharing = internalAction({
   args: { requestId: v.string() },
   handler: async (ctx, { requestId }) => {
@@ -5591,19 +5612,18 @@ export const executeCommand = internalAction({
           const enrollmentPairToken = String(operation.pairToken || "0x0000000000000000000000000000000000000000");
           const automatedPairSupported = /^0x0{40}$/i.test(enrollmentPairToken)
             || AUTOMATED_FEE_PAIR_ROUTES.some((route) => route.pairAsset.toLowerCase() === enrollmentPairToken.toLowerCase());
-          if(command.selfBurnBps!==undefined&&!automatedPairSupported)throw new Error("Self-buyback and burn is not available for this launch pairing yet. No launch was started.");
-          if (process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true"
+          const automatedLaunchRequired = process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true"
             && process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true"
-            && !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing
-            && automatedPairSupported) {
+            && !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing;
+          // With production enrollment enabled, every wallet-distribution
+          // launch must be prebound to the automated vault. A catalog omission
+          // must fail before launch instead of silently creating a legacy token.
+          if (automatedLaunchRequired && !automatedPairSupported)
+            throw new Error("CREATOR_FEE_LAUNCH_PREFLIGHT_FAILED: paired route is not configured");
+          if (automatedLaunchRequired) {
             await verifyCreatorFeeLaunchSetup();
           }
-          if (
-            process.env.AUTOMATED_BUYBACK_BURN_ENABLED?.trim().toLowerCase() === "true" &&
-            process.env.AUTOMATED_FEE_NEW_LAUNCH_ENROLLMENT_ENABLED?.trim().toLowerCase() === "true" &&
-            !(executionCommand as Extract<WalletCommand, { kind: "launch" }>).holderFeeSharing &&
-            automatedPairSupported
-          ) {
+          if (automatedLaunchRequired) {
             const controllerAddress = String(operation.creatorFeeRecipient || wallet.address);
             const ponsFactoryAddress = registry.contracts.pons_v2_factory;
             if (!safeAddress(controllerAddress) || !safeAddress(ponsFactoryAddress)) {
@@ -5773,33 +5793,9 @@ export const executeCommand = internalAction({
             reconciled.involvedPairTokenAddress,
             registry.pairs,
           );
-          if (command.kind === "launch" && reconciled.tokenAddress) {
-            try {
-              await enableHolderFeeSharing(
-                ctx,
-                wallet,
-                args.xUserId,
-                args.sourcePostId,
-                requestId,
-                command,
-                reconciled.tokenAddress,
-                registry,
-              );
-            } catch (error) {
-              const message = `${await transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress)}\n⚠️ The token launched, but holder fee sharing was not enabled. ${safeFailure(error)}`;
-              await ctx.runMutation(internal.wallets.updateWalletRequest, {
-                requestId,
-                status: "confirmed",
-                transactionHash: reconciled.transactionHash,
-                finalMessage: message,
-              });
-              return {
-                ok: false,
-                transactionHash: reconciled.transactionHash,
-                message,
-              };
-            }
-          }
+          if (command.kind === "launch" && reconciled.tokenAddress)
+            await attemptHolderFeeSharingAfterLaunch(ctx, wallet, args.xUserId, args.sourcePostId,
+              requestId, command, reconciled.tokenAddress, registry);
           const message = await combineVaultClaimMessage(ctx, requestId, command,
             `${await transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay, claimIncludesOtherLaunches, reconciled.tradeOutputTokenAddress, reconciled.valueWei)}${warning}`);
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
@@ -5837,33 +5833,9 @@ export const executeCommand = internalAction({
             reconciled.involvedPairTokenAddress,
             registry.pairs,
           );
-          if (command.kind === "launch" && reconciled.tokenAddress) {
-            try {
-              await enableHolderFeeSharing(
-                ctx,
-                wallet,
-                args.xUserId,
-                args.sourcePostId,
-                requestId,
-                command,
-                reconciled.tokenAddress,
-                registry,
-              );
-            } catch (error) {
-              const message = `${await transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress)}\n⚠️ The token launched, but holder fee sharing was not enabled. ${safeFailure(error)}`;
-              await ctx.runMutation(internal.wallets.updateWalletRequest, {
-                requestId,
-                status: "confirmed",
-                transactionHash: reconciled.transactionHash,
-                finalMessage: message,
-              });
-              return {
-                ok: false,
-                transactionHash: reconciled.transactionHash,
-                message,
-              };
-            }
-          }
+          if (command.kind === "launch" && reconciled.tokenAddress)
+            await attemptHolderFeeSharingAfterLaunch(ctx, wallet, args.xUserId, args.sourcePostId,
+              requestId, command, reconciled.tokenAddress, registry);
           const message = await combineVaultClaimMessage(ctx, requestId, command,
             `${await transactionMessage(publicCommand, reconciled.transactionHash, reconciled.tokenAddress, reconciled.claimedDisplay, reconciled.tradeOutputDisplay, claimIncludesOtherLaunches, reconciled.tradeOutputTokenAddress, reconciled.valueWei)}${warning}`);
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
@@ -5914,31 +5886,8 @@ export const executeCommand = internalAction({
           registry.pairs,
         );
         if (command.kind === "launch") {
-          try {
-            await enableHolderFeeSharing(
-              ctx,
-              wallet,
-              args.xUserId,
-              args.sourcePostId,
-              requestId,
-              command,
-              result.tokenAddress!,
-              registry,
-            );
-          } catch (error) {
-            const message = `${await transactionMessage(publicCommand, result.transactionHash, result.tokenAddress)}\n⚠️ The token launched, but holder fee sharing was not enabled. ${safeFailure(error)}`;
-            await ctx.runMutation(internal.wallets.updateWalletRequest, {
-              requestId,
-              status: "confirmed",
-              transactionHash: result.transactionHash,
-              finalMessage: message,
-            });
-            return {
-              ok: false,
-              transactionHash: result.transactionHash,
-              message,
-            };
-          }
+          await attemptHolderFeeSharingAfterLaunch(ctx, wallet, args.xUserId, args.sourcePostId,
+            requestId, command, result.tokenAddress!, registry);
           const message = `${await transactionMessage(publicCommand, result.transactionHash, result.tokenAddress)}${warning}`;
           await ctx.runMutation(internal.wallets.updateWalletRequest, {
             requestId,
@@ -7696,6 +7645,35 @@ async function waitForConfirmedRequest(ctx: ActionCtx, requestId: string) {
     await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
   throw new Error("transaction confirmation timed out");
+}
+
+async function attemptHolderFeeSharingAfterLaunch(
+  ctx: ActionCtx,
+  wallet: Doc<"cryptoWallets">,
+  xUserId: string,
+  sourcePostId: string,
+  requestId: string,
+  command: Extract<WalletCommand, { kind: "launch" }>,
+  tokenAddress: string,
+  registry: RuntimeRegistry,
+) {
+  if (!command.holderFeeSharing) return;
+  try {
+    await enableHolderFeeSharing(ctx, wallet, xUserId, sourcePostId, requestId,
+      command, tokenAddress, registry);
+  } catch (error) {
+    // The launch is already confirmed onchain. Preserve its normal success
+    // response and leave holder sharing to the scheduled recovery path.
+    try {
+      await ctx.runMutation(internal.wallets.recordInitialHolderFeeSharingFailure, {
+        requestId,
+        safeError: error instanceof Error ? error.message : "holder fee sharing setup failed",
+      });
+    } catch {
+      // recordConfirmedExecution has already scheduled recovery; diagnostics
+      // must never turn a successful launch into a user-visible failure.
+    }
+  }
 }
 
 async function enableHolderFeeSharing(
