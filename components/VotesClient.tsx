@@ -4,7 +4,7 @@ import Link from 'next/link';
 import type { FunctionReturnType } from 'convex/server';
 import { internal } from '@/convex/_generated/api';
 import { formatUnits } from 'viem';
-import { pollPercent, type PollSpec } from '@/lib/polls';
+import { pollPercent, pollTokenLabel, type PollSpec } from '@/lib/polls';
 import styles from '@/app/votes/votes.module.css';
 import { VoteWalletConnect } from './VoteWalletConnect';
 type Poll = NonNullable<FunctionReturnType<typeof internal.polls.get>>;
@@ -14,8 +14,8 @@ const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;
 export function VotesClient({ code }: { code?: string }) {
   const [auth, setAuth] = useState<Auth>({ authenticated: false });
   const [externalWallet, setVotingWallet] = useState<string | null>(null);
-  const [walletSource, setWalletSource] = useState<'pons' | 'external'>('external');
-  const votingWallet = walletSource === 'pons' ? auth.walletAddress ?? null : externalWallet;
+  const walletSource = externalWallet ? 'external' : 'pons';
+  const votingWallet = externalWallet ?? auth.walletAddress ?? null;
   const [poll, setPoll] = useState<Poll | null>(null), [items, setItems] = useState<Poll[]>([]), [closed, setClosed] = useState(false), [next, setNext] = useState<number | null>(null);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [loadError, setLoadError] = useState('');
   const [token, setToken] = useState(''), [question, setQuestion] = useState(''), [options, setOptions] = useState('Yes, No'), [duration, setDuration] = useState('24'), [durationUnit, setDurationUnit] = useState<'hours' | 'days'>('hours'), [minimum, setMinimum] = useState('0.1');
@@ -76,8 +76,7 @@ export function VotesClient({ code }: { code?: string }) {
   const winners = poll?.options.filter((_, i) => BigInt(poll.totals[i]) === largestTotal) ?? [];
   return <section className={styles.page}>
     <header className={styles.heading}><div><Link href='/votes'>Community voting</Link><h1>{code ? 'Token-holder vote' : 'Token-Gated Voting'}</h1><p>Create a poll, give holders a voice, and follow the results.</p>{!code && <button onClick={() => setCreating(x => !x)}>{creating ? 'Browse polls' : 'Create a vote'}</button>}</div><div className={styles.walletConnect}><VoteWalletConnect csrf={auth.csrfToken} onChange={setVotingWallet} disabled={busy} />
-      <label>Use for voting<select value={walletSource} disabled={busy} onChange={e => setWalletSource(e.target.value as 'pons' | 'external')}><option value='external'>External wallet{externalWallet ? ` (${short(externalWallet)})` : ''}</option><option value='pons'>Pons Bot wallet{auth.walletAddress ? ` (${short(auth.walletAddress)})` : ''}</option></select></label>
-      <div className={styles.officialNotice}>{!code ? <><strong>You are creating a Community vote by default.</strong><p>Use the Pons Bot or external wallet that launched the token or holds its rights to create an Official vote. Eligibility is checked on-chain when you create it.</p></> : <p>The launcher or current rights holder can use their Pons Bot or external wallet to make a Community vote Official.</p>}</div>
+      <div className={styles.officialNotice}>{!code ? <><strong>You are creating a Community vote by default.</strong><p>Use the Pons Bot or external wallet that launched the token or holds its rights to create an Official vote.</p></> : <p>The launcher or current rights holder can use their Pons Bot or external wallet to make a Community vote Official.</p>}</div>
     </div></header>
     {!auth.authenticated && <p className={styles.notice}><a href={signIn}>Sign in with X</a> to access the voting preview.</p>}
     {loadError && <p role='alert' className={styles.notice}>{loadError} <button onClick={() => void load()}>Retry</button></p>}
@@ -88,15 +87,14 @@ export function VotesClient({ code }: { code?: string }) {
       <label>Question<textarea required maxLength={400} value={question} onChange={e => setQuestion(e.target.value)} /></label>
       <label>Options, separated by commas (2–8)<textarea required value={options} maxLength={648} onChange={e => setOptions(e.target.value)} rows={3} placeholder='Yes, No, Abstain' /></label>
       <div className={styles.fields}><label>Voting duration (1 hour to 7 days)<input type='number' required min={durationUnit === 'days' ? 0.5 : 1} max={durationUnit === 'days' ? 7 : 168} step={0.5} value={duration} onChange={e => setDuration(e.target.value)} /><select aria-label='Duration unit' value={durationUnit} onChange={e => { const unit = e.target.value as 'hours' | 'days'; setDuration(unit === 'days' ? '1' : '24'); setDurationUnit(unit); }}><option value='hours'>Hours</option><option value='days'>Days</option></select></label><label>Minimum holding, % of total supply<input type='number' required min={0} max={100} step={0.000001} value={minimum} onChange={e => setMinimum(e.target.value)} /></label></div>
-      <p>0% allows any positive directly held balance. Voting power is fixed at the snapshot. Liquidity, locker, and burn exclusions are listed on the finished poll.</p>
       <button disabled={busy || !votingWallet}>{busy ? 'Preparing…' : 'Create vote'}</button>
     </form>}
     {!code && !creating && <><div className={styles.tabs}><button aria-pressed={!closed} onClick={() => setClosed(false)}>Ongoing</button><button aria-pressed={closed} onClick={() => setClosed(true)}>Completed</button></div><div className={styles.grid}>
-      {items.map(p => <Link href={`/votes/${p.code}`} key={p.code} className={styles.card}><div className={styles.badges}><span>{p.official ? 'Official' : 'Community'}</span><span>${p.snapshot?.symbol}</span></div><h2>{p.question}</h2><p>{p.voterCount} wallets · {p.turnout.toFixed(2)}% participation</p><p>{p.endsAt ? new Date(p.endsAt).toLocaleString() : ''}</p></Link>)}
+      {items.map(p => <Link href={`/votes/${p.code}`} key={p.code} className={styles.card}><div className={styles.badges}><span>{p.official ? 'Official' : 'Community'}</span><span>{pollTokenLabel(p.snapshot?.symbol ?? 'TOKEN', p.tokenAddress)}</span></div><h2>{p.question}</h2><p>{p.voterCount} wallets · {p.turnout.toFixed(2)}% participation</p><p>{p.endsAt ? new Date(p.endsAt).toLocaleString() : ''}</p></Link>)}
     </div>{!items.length && !loadError && <p>No {closed ? 'completed' : 'ongoing'} polls yet.</p>}{next && <button onClick={() => void load(next)}>More polls</button>}</>}
     {code && poll && <article className={styles.detail}>
-      <div className={styles.badges}><span>{poll.official ? 'Official' : 'Community'}</span><span>{poll.status}</span><span>{poll.code}</span></div>
-      <h2>{poll.question}</h2><p>{poll.tokenAddress && <><strong>${poll.snapshot?.symbol ?? 'TOKEN'}</strong> · <a href={`https://robinhoodchain.blockscout.com/token/${poll.tokenAddress}`} target='_blank' rel='noreferrer'>{short(poll.tokenAddress)}</a></>}</p>
+      <div className={styles.badges}><span>{poll.official ? 'Official' : 'Community'}</span><span>{poll.status.charAt(0).toUpperCase() + poll.status.slice(1).replaceAll('_', ' ')}</span><span>{poll.code}</span></div>
+      <h2>{poll.question}</h2><p>{poll.tokenAddress && <a href={`https://robinhoodchain.blockscout.com/token/${poll.tokenAddress}`} target='_blank' rel='noreferrer'><strong>{pollTokenLabel(poll.snapshot?.symbol ?? 'TOKEN', poll.tokenAddress)}</strong></a>}</p>
       <p>Created by: <span title={poll.creatorWallet}>{poll.creatorXUsername ? `@${poll.creatorXUsername}` : short(poll.creatorWallet)}</span></p>
       {poll.status === 'preparing' && <p role='status'>Preparing and verifying the fixed-block holder snapshot… This page updates automatically.</p>}
       {poll.status === 'failed' && <p>The snapshot could not be verified. Voting was not opened. Please create a new poll.</p>}
@@ -104,14 +102,14 @@ export function VotesClient({ code }: { code?: string }) {
       {poll.snapshot && <>
         <p>{poll.status === 'closed' ? 'Closed' : 'Closes'}: {poll.endsAt && new Date(poll.endsAt).toLocaleString()}</p>
         {poll.status === 'closed' && <p className={styles.notice}>{largestTotal === 0n ? 'No votes were cast.' : `${winners.length > 1 ? 'Tie' : 'Winning option'}: ${winners.join(', ')}`}</p>}
-        <div className={styles.stats}><div><small>Active voting supply</small><strong>{amount(poll.snapshot.activeSupply, poll.snapshot.decimals)}</strong></div><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Participation</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Voting wallets</small><strong>{poll.voterCount}</strong></div></div>
+        <div className={styles.stats}><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Supply Participated</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Holders Voted</small><strong>{poll.voterCount}</strong></div></div>
         <div className={styles.options}>{poll.options.map((o, i) => <label key={i} className={styles.option}>
           <span>{poll.status === 'open' && <input type='radio' name='vote' value={i + 1} checked={choice === String(i + 1)} onChange={e => setChoice(e.target.value)} disabled={busy} />}{i + 1}. {o}</span>
           <strong>{pollPercent(poll.totals[i], poll.votedWeight).toFixed(2)}%</strong><progress value={pollPercent(poll.totals[i], poll.votedWeight)} max={100} /><small>{amount(poll.totals[i], poll.snapshot!.decimals)} tokens</small>
         </label>)}</div>
-        {poll.status === 'open' && <button disabled={busy || !choice || !votingWallet} onClick={() => void act('vote')}>{busy ? 'Checking…' : 'Cast / update vote'}</button>}
-        <p>Your latest vote replaces your earlier choice. No gas or token approval is required. Minimum holding: {poll.minimumHoldingPercent}% of total supply at the snapshot{poll.minimumHoldingPercent === 0 ? ' (positive balance required)' : ''}.</p>
-        <details><summary>Snapshot and voting rules</summary><p>Block {poll.snapshot.block} · {new Date(poll.snapshot.timestamp).toLocaleString()}</p><p>{poll.snapshot.policy}</p><p>Total supply: {amount(poll.snapshot.supply, poll.snapshot.decimals)}. Turnout is measured against active voting supply, which can include holders below the minimum threshold.</p><ul>{poll.snapshot.exclusions.map(x => <li key={x.address}>{x.label} ({short(x.address)}): {amount(x.balance, poll.snapshot!.decimals)}</li>)}</ul></details>
+        {poll.status === 'open' && <button disabled={busy || !choice || !votingWallet} onClick={() => void act('vote')}>{busy ? 'Checking…' : 'Cast vote'}</button>}
+        <p>Holder snapshot taken {new Date(poll.snapshot.timestamp).toLocaleString()}.</p>
+        <p>Minimum holding: {poll.minimumHoldingPercent}% of total supply. Votes cannot be changed.</p>
         {poll.official && <p>Official endorsement verified for {short(poll.officialBy ?? poll.creatorWallet)}{poll.officialAt ? ` on ${new Date(poll.officialAt).toLocaleString()}` : ''}. This is not a binding governance action.</p>}
         {!poll.official && poll.status === 'open' && <div className={styles.notice}><p>The launcher or current fee-rights holder can endorse this Community poll without changing existing votes.</p><button disabled={busy || !votingWallet} onClick={() => void act('endorse')}>Verify rights and make Official</button></div>}
         {poll.xPostId && <p><a href={`https://x.com/Ponsbotfamily/status/${poll.xPostId}`} target='_blank' rel='noreferrer'>View the X voting post</a></p>}

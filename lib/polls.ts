@@ -153,6 +153,10 @@ export function updatePollTotals(totals: string[], old: { option: number; weight
   return result.map(String);
 }
 export const pollUrl = (code: string) => `${(process.env.NEXT_PUBLIC_SITE_URL || 'https://www.ponsbot.family').replace(/\/$/, '')}/votes/${code}`;
-export function pollCreatedText(p: { code: string; symbol: string; question: string; options: string[]; official: boolean; endsAt: number; minimumHoldingPercent: number }) {
-  return `🗳️ Vote created: ${p.code}\n${p.official ? 'Official' : 'Community'} $${pollDisplayText(p.symbol)} poll\n\n${pollDisplayText(p.question)}\n\n${p.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}`).join('\n')}\n\nMinimum holding: ${p.minimumHoldingPercent}% of total supply at the snapshot.\nCloses: ${new Date(p.endsAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}\nReply “vote 1” to this post, or vote on the website. Voting power uses your token balance at the snapshot.\n${pollUrl(p.code)}`;
+export function pollTokenLabel(symbol: string, address?: string) {
+  const suffix = address && /^0x[0-9a-f]{40}$/i.test(address) ? ` (${address.slice(0, 6)}...${address.slice(-4)})` : '';
+  return `$${pollDisplayText(symbol)}${suffix}`;
+}
+export function pollCreatedText(p: { code: string; symbol: string; tokenAddress?: string; question: string; options: string[]; official: boolean; endsAt: number; minimumHoldingPercent: number }) {
+  return `🗳️ Vote created: ${p.code}\n${p.official ? 'Official' : 'Community'} ${pollTokenLabel(p.symbol, p.tokenAddress)} poll\n\n${pollDisplayText(p.question)}\n\n${p.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}`).join('\n')}\n\nMinimum holding: ${p.minimumHoldingPercent}% of total supply at the snapshot.\nCloses: ${new Date(p.endsAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}\nReply to this post with the option number or option text to vote using your Pons Bot wallet, or vote on the website. Votes cannot be changed.\n${pollUrl(p.code)}`;
 }

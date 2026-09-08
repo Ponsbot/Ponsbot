@@ -17,7 +17,8 @@ describe('poll commands and immutable settings', () => {
   it('rejects duplicate normalized options', () => expect(() => parsePollCreate(command.replace('Yes, No', 'YES, yes'))).toThrow());
   it('rejects an excessive custom threshold', () => expect(() => parsePollCreate(`${command}\nMinimum holding: 101%`)).toThrow());
   it('rejects control characters in questions', () => expect(() => validatePollSpec({ ...parsePollCreate(command)!, question: 'Hello\u0000' })).toThrow());
-  it.each(['vote 1', '1!', 'Yes.', 'vote POLL-1234567890ABCDEF option 1'])('recognizes %s', text => expect(pollChoice(text, ['Yes', 'No'])).toBe(0));
+  it.each(['1', 'vote 1', '1!', 'Yes', 'yes', 'YES', 'Yes.', 'vote POLL-1234567890ABCDEF option 1'])('recognizes %s', text => expect(pollChoice(text, ['Yes', 'No'])).toBe(0));
+  it('accepts the full text of a custom option', () => expect(pollChoice('Increase the rewards', ['Keep rewards', 'Increase the rewards'])).toBe(1));
   it('does not mistake a transaction for a vote', () => expect(pollChoice('buy $20 of YES', ['Yes', 'No'])).toBe(-1));
   it('retallies choice changes without doubling weight', () => expect(updatePollTotals(['100', '50'], { option: 0, weight: '100' }, 1, '100')).toEqual(['0', '150']));
   it('uses bigint arithmetic for large holdings', () => expect(pollPercent('1000000000000000000000000', '1000000000000000000000000000')).toBe(0.1));
@@ -52,13 +53,14 @@ describe('atomic wallet voting', () => {
     expect(await f.cast({ event: 'repeat2', eventOrder: '102' })).toMatchObject({ duplicate: true, duplicateNotice: false });
     expect(await f.cast({ event: 'repeat1', eventOrder: '101' })).toMatchObject({ duplicateNotice: true });
     expect(f.tables.pollDuplicateNotices).toHaveLength(1); expect(f.p.voterCount).toBe(1);
-    expect(await f.cast({ event: 'change', eventOrder: '103', option: 1 })).toMatchObject({ changed: true });
-    expect(f.p.totals).toEqual(['0', '1000']);
+    expect(await f.cast({ event: 'change', eventOrder: '103', option: 1 })).toMatchObject({ duplicate: true, duplicateNotice: false });
+    expect(f.p.totals).toEqual(['1000', '0']);
   });
   it('closes once and enqueues one results reply to the bot creation post', async () => { const f = fixture(); f.p.xPostId = 'created-post'; f.p.endsAt = Date.now() - 1; f.p.snapshot.symbol = 'TEST'; await invoke(close, f.ctx, { code: f.p.code }); await invoke(close, f.ctx, { code: f.p.code }); expect(f.p.status).toBe('closed'); expect(f.ctx.runMutation).toHaveBeenCalledTimes(1); expect(f.ctx.runMutation.mock.calls[0][1]).toMatchObject({ replyTargetPostId: 'created-post', kind: 'poll_result', allowLong: true }); });
   it('does not close early', async () => { const f = fixture(); await invoke(close, f.ctx, { code: f.p.code }); expect(f.p.status).toBe('open'); expect(f.ctx.runMutation).not.toHaveBeenCalled(); });
   it('deduplicates the same X event', async () => { const f = fixture(); await f.cast(); await f.cast(); expect(f.p.voterCount).toBe(1); expect(f.p.votedWeight).toBe('1000'); });
-  it('does not count the same wallet twice across website and X', async () => { const f = fixture(); await f.cast(); await f.cast({ wallet: '0xabcd', source: 'web', event: 'web:second', eventOrder: '101', option: 1 }); expect(f.p.totals).toEqual(['0', '1000']); expect(f.p.voterCount).toBe(1); expect(f.tables.pollVotes).toHaveLength(1); });
+  it('prevents changing a vote from X through the website', async () => { const f = fixture(); await f.cast(); await expect(f.cast({ wallet: '0xabcd', source: 'web', event: 'web:second', eventOrder: '101', option: 1 })).rejects.toThrow('cannot be changed'); expect(f.p.totals).toEqual(['1000', '0']); expect(f.p.voterCount).toBe(1); expect(f.tables.pollVotes).toHaveLength(1); });
+  it('prevents changing a website vote through X', async () => { const f = fixture(); await f.cast({ source: 'web' }); expect(await f.cast({ event: 'x:change', eventOrder: '101', option: 1 })).toMatchObject({ duplicate: true }); expect(f.p.totals).toEqual(['1000', '0']); });
   it('rejects reuse of an event with a different choice', async () => { const f = fixture(); await f.cast(); await expect(f.cast({ option: 1 })).rejects.toThrow('mismatch'); });
   it('rejects an older delayed vote from the other channel', async () => { const f = fixture(); await f.cast(); await expect(f.cast({ source: 'web', event: 'older', eventOrder: '99', option: 1 })).rejects.toThrow('newer vote'); });
   it('rejects a vote at the deadline', async () => { const f = fixture(); f.p.endsAt = Date.now(); await expect(f.cast()).rejects.toThrow('closed'); });

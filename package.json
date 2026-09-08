@@ -42,6 +42,8 @@
   },
   "dependencies": {
     "@coinbase/cdp-sdk": "^1.54.0",
+    "@reown/appkit": "^1.8.23",
+    "@walletconnect/ethereum-provider": "^2.24.0",
     "@x402/core": "^2.19.0",
     "@x402/evm": "^2.19.0",
     "@x402/extensions": "^2.19.0",
@@ -63,5 +65,9 @@
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   },
-  "overrides": { "axios": "^1.18.0", "postcss": "^8.5.18", "sharp": "^0.35.0" }
+  "overrides": {
+    "axios": "^1.18.0",
+    "postcss": "^8.5.18",
+    "sharp": "^0.35.0"
+  }
 }

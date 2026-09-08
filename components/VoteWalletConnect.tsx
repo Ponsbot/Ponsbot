@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAddress, stringToHex } from 'viem';
 import { parseSiweMessage } from 'viem/siwe';
 import { bindVotingProvider, type VotingProvider as Provider } from '../lib/vote-wallet-provider';
+import { mobileVotingProvider, MOBILE_VOTING_PROVIDER_ID, type MobileVotingProvider } from '../lib/vote-wallet-mobile';
 const PROVIDER_KEY = 'pons-voting-provider';
 const CLEANUP_KEY = 'pons-voting-cleanup-required';
 type Wallet = { id: string; name: string; provider: Provider };
@@ -13,6 +14,7 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
   const releaseProvider = useRef<(() => void) | null>(null);
   const pending = useRef(false);
   const generation = useRef(0);
+  const mobile = useRef<MobileVotingProvider | null>(null);
   const apply = useCallback((value: Verified) => { setVerified(value); onChange(value.address ?? null); }, [onChange]);
   const call = useCallback(async (body: Record<string, string>) => {
     const r = await fetch('/api/votes/wallet', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pons-csrf': csrf ?? '' }, body: JSON.stringify(body) });
@@ -35,6 +37,17 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
       .finally(() => { pending.current = false; setBusy(false); });
   }, [detach, apply, revoke]);
   useEffect(() => detach, [detach]);
+  useEffect(() => {
+    let live = true;
+    if (sessionStorage.getItem(PROVIDER_KEY) === MOBILE_VOTING_PROVIDER_ID) {
+      void mobileVotingProvider().then(provider => {
+        if (!live) return;
+        mobile.current = provider;
+        setWallets(old => old.some(w => w.id === MOBILE_VOTING_PROVIDER_ID) ? old : [...old, { id: MOBILE_VOTING_PROVIDER_ID, name: 'Mobile wallet / WalletConnect', provider }]);
+      }).catch(() => { if (live) setError('Reconnect your mobile wallet to verify your voting identity.'); });
+    }
+    return () => { live = false; };
+  }, []);
   useEffect(() => {
     // Wallet-supplied names are text only. Never execute or embed provider icons.
     const announce = (event: Event) => {
@@ -91,14 +104,22 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
     const timer = setTimeout(() => { apply({}); setError('Your verification expired. Connect and sign again.'); }, Math.max(0, verified.expiresAt - Date.now()));
     return () => clearTimeout(timer);
   }, [verified.expiresAt, apply]);
-  async function connect() {
+  async function connect(useMobile = false) {
     if (pending.current || disabled || !csrf) return;
-    const wallet = wallets.find(x => x.id === selected) ?? wallets[0];
-    if (!wallet) { setError('Open this page in a wallet browser, or install a browser wallet such as MetaMask.'); return; }
+    let wallet = wallets.find(x => x.id === selected) ?? wallets[0];
+    if (!wallet && !useMobile) { setError('Choose Mobile wallet to connect a wallet app, or use a browser wallet.'); return; }
     pending.current = true; setBusy(true); setError(''); detach(); apply({});
     const attempt = ++generation.current;
     try {
       await revoke();
+      if (useMobile || wallet?.id === MOBILE_VOTING_PROVIDER_ID) {
+        const provider = await mobileVotingProvider();
+        mobile.current = provider;
+        await provider.connect();
+        wallet = { id: MOBILE_VOTING_PROVIDER_ID, name: 'Mobile wallet / WalletConnect', provider };
+        setWallets(old => old.some(w => w.id === wallet!.id) ? old : [...old, wallet!]);
+      }
+      if (!wallet) throw new Error('Choose a wallet to continue.');
       const provider = wallet.provider;
       const accounts = await provider.request({ method: 'eth_requestAccounts' });
       const address = Array.isArray(accounts) ? accounts[0] : undefined;
@@ -134,14 +155,15 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
     if (pending.current) return;
     pending.current = true; setBusy(true); generation.current++;
     detach(); apply({});
-    try { await revoke(); setError(''); } catch { setError('Could not disconnect the server session. Please reconnect to retry cleanup.'); }
+    try { await revoke(); await mobile.current?.disconnect(); setError(''); } catch { setError('Could not finish disconnecting. Reconnect to retry cleanup.'); }
     finally { pending.current = false; setBusy(false); }
   }
   return <div>
     {!verified.address && wallets.length > 1 && <label>Wallet <select value={selected || wallets[0]?.id} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>{wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>}
-    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect external wallet' : 'Connect external wallet'}</button>
+    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect' : 'Connect external wallet'}</button>
+    {!verified.address && <button disabled={busy || disabled || !csrf} onClick={() => void connect(true)}>Mobile wallet / QR code</button>}
     {verified.address && <p>Verified voting wallet: <strong title={verified.address}>{verified.address.slice(0, 6)}…{verified.address.slice(-4)}</strong></p>}
-    <p><small>Sign-in only. No gas, token approvals, or transactions. Voting eligibility is checked separately against the poll snapshot.</small></p>
+    <p><small>Sign-in only. No gas, token approvals, or transactions.</small></p>
     {error && <p role='alert'>{error}</p>}
   </div>;
 }

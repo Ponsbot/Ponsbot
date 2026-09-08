@@ -47,7 +47,7 @@ describe('restored voting provider binding', () => {
   });
   it('guards server-session creation and cleans every failed connect', () => {
     const source = readFileSync(new URL('../components/VoteWalletConnect.tsx', import.meta.url), 'utf8');
-    const connect = source.slice(source.indexOf('async function connect()'), source.indexOf('async function disconnect()'));
+    const connect = source.slice(source.indexOf('async function connect('), source.indexOf('async function disconnect()'));
     expect(connect.indexOf("sessionStorage.setItem(CLEANUP_KEY, '1')")).toBeLessThan(connect.indexOf("operation: 'verify'"));
     expect(connect).toMatch(/catch \(e\) \{[\s\S]*?detach\(\); apply\(\{\}\);[\s\S]*?await revoke\(\)/);
     expect(source).toContain('if (sessionStorage.getItem(CLEANUP_KEY)) { await revoke(); return; }');
