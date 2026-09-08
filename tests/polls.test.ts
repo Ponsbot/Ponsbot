@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('../lib/voting-access', async original => ({ ...await original<typeof import('../lib/voting-access')>(), X_VOTING_ENABLED: true }));
 import { parsePollCreate, pollTokenIdentity, pollChoice, updatePollTotals, validatePollSpec, pollPercent } from '../lib/polls';
 import { saveVote, correctToken, close } from '../convex/polls';
 

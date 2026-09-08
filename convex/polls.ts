@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import { formatUnits, isAddress } from 'viem';
-import { action, query, internalAction, internalMutation, internalQuery, type ActionCtx } from './_generated/server';
+import { action, internalAction, internalMutation, internalQuery, type ActionCtx } from './_generated/server';
+import { votingPreviewAllowed, X_VOTING_ENABLED } from '../lib/voting-access';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { pollSpecValidator, pollSnapshotValidator } from './lib/pollSchema';
@@ -17,11 +18,17 @@ function publicPoll(_ctx: import('./_generated/server').QueryCtx, p: Doc<'polls'
     votedWeight: p.votedWeight, voterCount: p.voterCount, xPostId: p.xPostId, resultPostId: p.resultPostId,
     turnout: p.snapshot ? pollPercent(p.votedWeight, p.snapshot.activeSupply) : 0 };
 }
-export const list = query({ args: { closed: v.optional(v.boolean()), cursor: v.optional(v.number()) }, handler: async (ctx, args) => {
+export const list = internalQuery({ args: { closed: v.optional(v.boolean()), cursor: v.optional(v.number()) }, handler: async (ctx, args) => {
   const rows = await ctx.db.query('polls').withIndex('by_status_created', q => q.eq('status', args.closed ? 'closed' : 'open').lt('createdAt', args.cursor ?? Number.MAX_SAFE_INTEGER)).order('desc').take(31);
   return { items: rows.slice(0, 30).map(p => publicPoll(ctx, p)), next: rows.length > 30 ? rows[29].createdAt : null };
 } });
-export const get = query({ args: { code: v.string() }, handler: async (ctx, { code }) => { const p = await find(ctx, code); return p ? publicPoll(ctx, p) : null; } });
+export const get = internalQuery({ args: { code: v.string() }, handler: async (ctx, { code }) => { const p = await find(ctx, code); return p ? publicPoll(ctx, p) : null; } });
+export const browse = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), code: v.optional(v.string()), closed: v.optional(v.boolean()), cursor: v.optional(v.number()) }, handler: async (ctx, a): Promise<{ poll: ReturnType<typeof publicPoll> | null } | { items: ReturnType<typeof publicPoll>[]; next: number | null }> => {
+  if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)) throw new Error('Unauthorized');
+  if (!await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId })) throw new Error('Unauthorized');
+  if (a.code) return { poll: await ctx.runQuery(internal.polls.get, { code: a.code }) };
+  return ctx.runQuery(internal.polls.list, { closed: a.closed, cursor: a.cursor });
+} });
 export const record = internalQuery({ args: { code: v.string() }, handler: (ctx, { code }) => find(ctx, code) });
 export const context = internalQuery({ args: { parentPostId: v.optional(v.string()) }, handler: async (ctx, { parentPostId }) => {
   if (!parentPostId) return null;
@@ -46,6 +53,7 @@ export const gate = internalMutation({ args: { key: v.string(), limit: v.number(
 } });
 export const request = internalMutation({ args: { requestKey: v.string(), ownerXUserId: v.string(), creatorWallet: v.string(), source: v.union(v.literal('x'), v.literal('web')),
   sourcePostId: v.optional(v.string()), spec: pollSpecValidator, anchor: v.object({ block: v.string(), blockHash: v.string(), timestamp: v.number() }) }, handler: async (ctx, a): Promise<string> => {
+  if (!votingPreviewAllowed(a.ownerXUserId) || (a.source === 'x' && !X_VOTING_ENABLED)) throw new Error('Voting preview is website-only');
   const existing = await ctx.db.query('polls').withIndex('by_request', q => q.eq('requestKey', a.requestKey)).unique();
   if (existing) { if (existing.ownerXUserId !== a.ownerXUserId || JSON.stringify(existing.spec) !== JSON.stringify(validatePollSpec(a.spec))) throw new Error('Request owner or details mismatch'); return existing.code; }
   const spec = validatePollSpec(a.spec);
@@ -73,7 +81,7 @@ export const prepared = internalMutation({ args: { code: v.string(), lease: v.st
   await ctx.db.patch(p._id, { status: 'open', tokenAddress: a.tokenAddress.toLowerCase(), snapshot: a.snapshot, endsAt, nextAttemptAt: endsAt, official: a.official,
     ...(a.official ? { officialBy: p.creatorWallet, officialAt: Date.now() } : {}), lease: undefined, leaseUntil: undefined, diagnostic: undefined });
   await ctx.scheduler.runAfter(p.spec.durationMinutes * 60000, internal.polls.close, { code: p.code });
-  if (p.sourcePostId) {
+  if (X_VOTING_ENABLED && p.sourcePostId) {
     await ctx.runMutation(internal.xReplies.updateInteraction, { postId: p.sourcePostId, status: 'processing', commandKind: 'poll' });
     await ctx.runMutation(internal.xReplyQueue.enqueue, { key: `poll-created:${p.code}`, postId: p.sourcePostId, pollId: p._id, kind: 'poll_created', ok: true, allowLong: true,
       text: pollCreatedText({ ...p, symbol: a.snapshot.symbol, options: p.spec.options, question: p.spec.question, minimumHoldingPercent: p.spec.minimumHoldingPercent, endsAt, official: a.official }) });
@@ -84,7 +92,7 @@ export const prepareFailed = internalMutation({ args: { code: v.string(), lease:
   const terminal = a.needsToken || p.attempts >= 3;
   await ctx.db.patch(p._id, { status: a.needsToken ? 'needs_token' : terminal ? 'failed' : 'preparing', diagnostic: a.message, lease: undefined, leaseUntil: undefined, nextAttemptAt: Date.now() + 60000 });
   if (!terminal) { await ctx.scheduler.runAfter(60000, internal.polls.prepare, { code: p.code }); return; }
-  if (p.sourcePostId) {
+  if (X_VOTING_ENABLED && p.sourcePostId) {
     await ctx.runMutation(internal.xReplies.updateInteraction, { postId: p.sourcePostId, status: 'processing', commandKind: 'poll' });
     await ctx.runMutation(internal.xReplyQueue.enqueue, { key: `poll-setup:${p.code}:${p.sourcePostId}:${p.attempts}`, postId: p.sourcePostId, text: a.needsToken
       ? `⚠️ I couldn't identify one matching token. Double-check the ticker and reply with its contract address to continue this poll. ${p.code}`
@@ -176,7 +184,7 @@ async function endorse(ctx: ActionCtx, code: string, wallet: string): Promise<Re
 export const close = internalMutation({ args: { code: v.string() }, handler: async (ctx, { code }) => {
   const p = await find(ctx, code); if (!p || !p.endsAt || p.endsAt > Date.now() || !['open', 'closed'].includes(p.status)) return;
   if (p.status === 'open') await ctx.db.patch(p._id, { status: 'closed', nextAttemptAt: Date.now() });
-  if (!p.xPostId || p.resultPublication || !p.snapshot) return;
+  if (!X_VOTING_ENABLED || !p.xPostId || p.resultPublication || !p.snapshot) return;
   const total = BigInt(p.votedWeight);
   const max = p.totals.reduce((m, x) => BigInt(x) > m ? BigInt(x) : m, 0n);
   const winners = p.spec.options.filter((_, i) => BigInt(p.totals[i]) === max);
@@ -193,6 +201,7 @@ export const recover = internalMutation({ args: {}, handler: async ctx => {
 } });
 export const handleX = internalAction({ args: { postId: v.string(), owner: v.string(), text: v.string(), parentPostId: v.optional(v.string()) }, handler: async (ctx, a): Promise<{ handled: boolean; result?: Result }> => {
   const parent = await ctx.runQuery(internal.polls.context, { parentPostId: a.parentPostId });
+  if (!X_VOTING_ENABLED) return { handled: isPollCommand(a.text) || Boolean(parent) };
   if (!isPollCommand(a.text) && !parent) return { handled: false };
   // Polls are public threads. Their replies never enter another user's wallet workflow.
   if (parent && !isPollCommand(a.text) && !/^\s*(?:[1-8][.!]?|0x[0-9a-f]{40})\s*$/i.test(a.text)) {
@@ -225,7 +234,7 @@ function safePollError(e: unknown) {
   return /^(?:🗳️|⚠️|👛|This |Your |Only |Please |You can|Poll not found|A newer vote|Vote request mismatch)/.test(m) ? m : '⚠️ The voting check could not be completed. No new vote was recorded. Please try again.';
 }
 export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
-  if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET) throw new Error('Unauthorized');
+  if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)) throw new Error('Unauthorized');
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(a.eventId)) throw new Error('Invalid request identifier');
   const valid = await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId });
   if (!valid) throw new Error('Unauthorized');

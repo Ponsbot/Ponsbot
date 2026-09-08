@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readWebWalletSession, terminalReauthAt, webWalletCsrfToken, WEB_WALLET_SESSION_COOKIE } from "@/lib/web-wallet-session";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@/convex/_generated/api";
+import { votingPreviewAllowed } from "@/lib/voting-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
     reauthAt: terminalReauthAt(session.authenticatedAt),
     csrfToken: webWalletCsrfToken(session.sessionId, secret!),
     houdiniPreviewEnabled: true,
+    votingPreviewEnabled: votingPreviewAllowed(session.xUserId),
   } : { authenticated: false }, { headers: { "cache-control": "no-store" } });
 }
 

@@ -2,6 +2,12 @@
 
 ## Rollout
 
+Current rollout is a private website preview for @ponsboyfamily (immutable X
+account ID). `/votes`, its API, and Convex read/write actions require that
+account's active session. Navigation is hidden for everybody else. Raw poll
+queries are internal only. X creation, voting and result publication are disabled
+in `lib/voting-access.ts`; the command examples below describe future rollout.
+
 Deploy Convex (the existing `npx convex dev` workflow) and the website together.
 No additional secrets are required. Uses existing X publication credentials,
 `WEB_AUTH_SECRET`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_CONVEX_URL`, and the

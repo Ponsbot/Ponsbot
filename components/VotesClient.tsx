@@ -2,11 +2,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { FunctionReturnType } from 'convex/server';
-import { api } from '@/convex/_generated/api';
+import { internal } from '@/convex/_generated/api';
 import { formatUnits } from 'viem';
 import { pollPercent, type PollSpec } from '@/lib/polls';
 import styles from '@/app/votes/votes.module.css';
-type Poll = NonNullable<FunctionReturnType<typeof api.polls.get>>;
+type Poll = NonNullable<FunctionReturnType<typeof internal.polls.get>>;
 type Auth = { authenticated: boolean; csrfToken?: string; walletAddress?: string; username?: string };
 const amount = (raw: string, decimals: number) => Number(formatUnits(BigInt(raw), decimals)).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;

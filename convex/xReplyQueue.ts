@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { X_VOTING_ENABLED } from '../lib/voting-access';
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
@@ -116,6 +117,7 @@ export const enqueue = internalMutation({
     pollId: v.optional(v.id("polls")), replyTargetPostId: v.optional(v.string()),
     allowLong: v.optional(v.boolean()), houdiniQuoteId: v.optional(v.id("xHoudiniQuotes")), launchId: v.optional(v.id("tokenLaunches")) },
   handler: async (ctx, args): Promise<{ status: string; responsePostId?: string }> => {
+    if (!X_VOTING_ENABLED && (args.kind === 'poll_created' || args.kind === 'poll_result')) return { status: 'cancelled' };
     const existing = await ctx.db.query("xReplyQueue").withIndex("by_key", q => q.eq("key", args.key)).unique();
     if (existing) return { status: existing.status, ...(existing.responsePostId ? { responsePostId: existing.responsePostId } : {}) };
     if (args.kind === "poll_result" || args.kind === "poll_created") {

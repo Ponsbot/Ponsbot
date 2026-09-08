@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from 'next/link';
 
-type WalletSession = { authenticated: true; username: string; walletAddress: string } | { authenticated: false };
+type WalletSession = { authenticated: true; username: string; walletAddress: string; votingPreviewEnabled?: boolean } | { authenticated: false };
 
 export function WalletAccountMenu() {
   const [session, setSession] = useState<WalletSession | null>(null);
@@ -23,12 +24,12 @@ export function WalletAccountMenu() {
     if (response?.ok) window.location.reload();
   };
 
-  return <details className="wallet-account-menu">
+  return <>{session.votingPreviewEnabled && <Link href="/votes">VOTES</Link>}<details className="wallet-account-menu">
     <summary className="header-wallet-button">My Wallet</summary>
     <div className="wallet-account-dropdown">
       <strong>@{session.username}</strong>
       <a href={`/wallet/${session.walletAddress}`}>View Wallet</a>
       <button type="button" onClick={signOut}>Sign out</button>
     </div>
-  </details>;
+  </details></>;
 }

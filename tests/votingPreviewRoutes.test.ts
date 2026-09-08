@@ -1,0 +1,17 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { NextRequest } from 'next/server';
+import { createWebWalletSession, WEB_WALLET_SESSION_COOKIE } from '../lib/web-wallet-session';
+import { VOTING_PREVIEW_X_ID } from '../lib/voting-access';
+const action = vi.hoisted(() => vi.fn());
+vi.mock('convex/browser', () => ({ ConvexHttpClient: class { action = action; } }));
+import { GET, POST } from '../app/api/votes/route';
+const secret = 'test-preview-secret';
+const address = '0x1111111111111111111111111111111111111111';
+const request = (cookie?: string, method = 'GET') => new NextRequest('https://example.com/api/votes', { method, headers: cookie ? { cookie: `${WEB_WALLET_SESSION_COOKIE}=${cookie}` } : {} });
+beforeEach(() => { vi.stubEnv('WEB_AUTH_SECRET', secret); vi.stubEnv('NEXT_PUBLIC_CONVEX_URL', 'https://test.convex.cloud'); vi.stubEnv('NEXT_PUBLIC_SITE_URL', 'https://example.com'); action.mockReset().mockResolvedValue({ items: [], next: null }); });
+afterEach(() => vi.unstubAllEnvs());
+it('does not expose voting data without a session', async () => { expect((await GET(request())).status).toBe(404); expect(action).not.toHaveBeenCalled(); });
+it('does not authorize a different account named Ponsboyfamily', async () => { const cookie = createWebWalletSession(address, '123', 'Ponsboyfamily', secret); expect((await GET(request(cookie))).status).toBe(404); expect((await POST(request(cookie, 'POST'))).status).toBe(404); expect(action).not.toHaveBeenCalled(); });
+it('passes only signed owner identity to the protected Convex browser action', async () => { const cookie = createWebWalletSession(address, VOTING_PREVIEW_X_ID, 'Ponsboyfamily', secret); expect((await GET(request(cookie))).status).toBe(200); expect(action.mock.calls[0][1]).toMatchObject({ owner: VOTING_PREVIEW_X_ID }); });
+it('does not expose data when Convex rejects a revoked session', async () => { action.mockRejectedValue(new Error('Unauthorized')); const cookie = createWebWalletSession(address, VOTING_PREVIEW_X_ID, 'Ponsboyfamily', secret); const response = await GET(request(cookie)); expect(response.status).toBe(503); expect(await response.text()).not.toContain('items'); });
+it('requires origin and CSRF for the preview owner too', async () => { const cookie = createWebWalletSession(address, VOTING_PREVIEW_X_ID, 'Ponsboyfamily', secret); expect((await POST(request(cookie, 'POST'))).status).toBe(403); expect(action).not.toHaveBeenCalled(); });
