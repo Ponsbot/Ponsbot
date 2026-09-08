@@ -3,7 +3,8 @@ export type PollMinimum = { unit: 'usd' | 'tokens'; amount: string };
 export type ResolvedPollMinimum = { balance: string; percent: number; pricedAt?: number; marketCapUsd?: string };
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 export function parsePollMinimum(input: string): { minimumHoldingPercent: number; minimumHolding?: PollMinimum } {
-  const text = input.trim().replace(/[.!]$/, '').replace(/^(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holding|holders?)\s*[:=]?\s*/i, '');
+  const text = input.trim().replace(/[.!]$/, '').replace(/^(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holding|holders?)\s*[:=]?\s*/i, '')
+    .replace(/\s+(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holdings?)$/i, '').trim();
   const match = text.match(/^(\$)?((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)([km])?\s*(%|tokens?|usd|dollars?)?$/i);
   if (!match || (match[1] && match[4] && !/usd|dollars?/i.test(match[4]))) throw Error('Use a percentage, dollar amount, or token amount.');
   let amount = match[2].replaceAll(',', '');

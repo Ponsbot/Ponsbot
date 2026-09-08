@@ -48,6 +48,13 @@ export function parsePollDraft(text: string): PollDraft | null {
       if (!token) throw new Error('⚠️ Provide a ticker, a contract, or both for the same token.');
     }
     const draft: PollDraft = { ...(token ? { token } : {}), minimumHoldingPercent: 0.1 };
+    // Accept value-first settings after a duration, without interpreting
+    // minimum-related wording inside the question or an option as a setting.
+    const valueFirstHolder = input.match(/(?:[,;\n]\s*|\s+)(\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?[km]?\s*(?:%|tokens?|usd|dollars?)?)\s+(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holdings?)[.!]?\s*$/i);
+    if (valueFirstHolder && durationTail.test(input.slice(0, valueFirstHolder.index).trim())) {
+      Object.assign(draft, parsePollMinimum(valueFirstHolder[1]));
+      input = input.slice(0, valueFirstHolder.index).trim();
+    }
     const customHolder = input.match(/(?:[,;\n]\s*|\s+)(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holding|holders?)\s*[:=]?\s*(\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?[km]?\s*(?:%|tokens?|usd|dollars?)?)[.!]?\s*$/i);
     if (customHolder) { Object.assign(draft, parsePollMinimum(customHolder[1])); input = input.slice(0, customHolder.index).trim(); }
     const amountTail = !customHolder && input.match(/(?:[,;\n]\s*|\s+)(\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?[km]?\s*(?:tokens?|usd|dollars?)?)[.!]?\s*$/i);
