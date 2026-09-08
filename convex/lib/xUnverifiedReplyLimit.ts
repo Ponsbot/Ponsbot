@@ -31,6 +31,13 @@ export async function admitUnverifiedContinuation(ctx: MutationCtx, interaction:
 }
 
 async function continuationExpiry(ctx: MutationCtx, interaction: Doc<"xReplyInteractions">, text: string, kind: string) {
+  if (interaction.commandKind === 'poll') {
+    const draft = await ctx.db.query('pollDraftTurns').withIndex('by_post', q => q.eq('postId', interaction.postId)).unique();
+    if (draft?.owner === interaction.authorXUserId && draft.state !== 'cancelled' && draft.expiresAt > Date.now()) return draft.expiresAt;
+    const poll = await ctx.db.query('polls').withIndex('by_source_post', q => q.eq('sourcePostId', interaction.postId)).unique();
+    if (poll?.ownerXUserId === interaction.authorXUserId && poll.status === 'needs_token' && poll.createdAt + 600000 > Date.now()) return poll.createdAt + 600000;
+    return undefined;
+  }
   if (isGuidedHelpCompletion(text) || /^✅/.test(text.trim())) return undefined;
   if (kind === "liquidity") {
     const turn = await ctx.db.query("liquidityTurns").withIndex("by_request", q => q.eq("requestKey", `x:${interaction.postId}`)).unique();

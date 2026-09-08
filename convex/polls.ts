@@ -7,16 +7,18 @@ import { verifyVotingContractSignature } from '../lib/poll-wallet-chain';
 import { internal } from './_generated/api';
 import type { Doc } from './_generated/dataModel';
 import { pollSpecValidator, pollSnapshotValidator } from './lib/pollSchema';
-import { isPollCommand, parsePollCreate, pollChoice, pollCreatedText, pollPercent, pollTokenIdentity, pollUrl, updatePollTotals, validatePollSpec } from '../lib/polls';
+import { isPollCommand, parsePollDraft, pollChoice, pollCreatedText, pollDisplayText, pollInputText, pollPercent, pollTokenIdentity, pollUrl, updatePollTotals, validatePollSpec, type PollSpec } from '../lib/polls';
+import { advancePollDraft, nextPollStep, pollPrompt } from '../lib/poll-workflow';
+import { pollDiagnostic } from '../lib/poll-diagnostics';
 import { assertPollBlock, buildPollSnapshot, pollAnchor, pollOfficial, pollVotingBalance } from '../lib/poll-chain';
 
-type Result = { message: string; code?: string; pending?: boolean; ok: boolean };
+type Result = { message: string; code?: string; pending?: boolean; ok: boolean; silent?: boolean };
 const find = (ctx: Parameters<typeof publicPoll>[0], code: string) => ctx.db.query('polls').withIndex('by_code', q => q.eq('code', code.toUpperCase())).unique();
 function publicPoll(_ctx: import('./_generated/server').QueryCtx, p: Doc<'polls'>) {
   return { code: p.code, status: p.status === 'open' && (p.endsAt ?? 0) <= Date.now() ? 'closed' : p.status,
     tokenAddress: p.tokenAddress, question: p.spec.question, options: p.spec.options, minimumHoldingPercent: p.spec.minimumHoldingPercent,
     durationMinutes: p.spec.durationMinutes, official: p.official, officialBy: p.officialBy, officialAt: p.officialAt,
-    creatorWallet: p.creatorWallet, creatorXUsername: p.source === 'x' ? p.creatorXUsername : undefined, createdAt: p.createdAt, endsAt: p.endsAt, snapshot: p.snapshot, totals: p.totals,
+    creatorWallet: p.creatorWallet, creatorXUsername: p.creatorXUsername, createdAt: p.createdAt, endsAt: p.endsAt, snapshot: p.snapshot, totals: p.totals,
     votedWeight: p.votedWeight, voterCount: p.voterCount, xPostId: p.xPostId, resultPostId: p.resultPostId,
     turnout: p.snapshot ? pollPercent(p.votedWeight, p.snapshot.activeSupply) : 0 };
 }
@@ -32,14 +34,46 @@ export const browse = action({ args: { secret: v.string(), owner: v.string(), se
   return ctx.runQuery(internal.polls.list, { closed: a.closed, cursor: a.cursor });
 } });
 export const record = internalQuery({ args: { code: v.string() }, handler: (ctx, { code }) => find(ctx, code) });
-export const context = internalQuery({ args: { parentPostId: v.optional(v.string()) }, handler: async (ctx, { parentPostId }) => {
+export const context = internalQuery({ args: { parentPostId: v.optional(v.string()) }, handler: async (ctx, { parentPostId }): Promise<{ code: string; correction: boolean; owner: string; draftPostId?: string } | null> => {
   if (!parentPostId) return null;
   const poll = await ctx.db.query('polls').withIndex('by_x_post', q => q.eq('xPostId', parentPostId)).unique();
   if (poll) return { code: poll.code, correction: false, owner: poll.ownerXUserId };
   const parent = await ctx.db.query('xReplyInteractions').withIndex('by_response_post_id', q => q.eq('responsePostId', parentPostId)).unique();
   if (!parent || parent.commandKind !== 'poll') return null;
   const pending = await ctx.db.query('polls').withIndex('by_source_post', q => q.eq('sourcePostId', parent.postId)).unique();
-  return pending?.status === 'needs_token' ? { code: pending.code, correction: true, owner: pending.ownerXUserId } : null;
+  if (pending?.status === 'needs_token') return { code: pending.code, correction: true, owner: pending.ownerXUserId };
+  const draft = await ctx.db.query('pollDraftTurns').withIndex('by_post', q => q.eq('postId', parent.postId)).unique();
+  return draft ? { code: '', correction: false, owner: draft.owner, draftPostId: draft.postId } : null;
+} });
+export const draftTurn = internalMutation({ args: { postId: v.string(), owner: v.string(), text: v.string(), parentDraftPostId: v.optional(v.string()) }, handler: async (ctx, a) => {
+  if (!X_VOTING_ENABLED) throw new Error('X voting is disabled');
+  const existing = await ctx.db.query('pollDraftTurns').withIndex('by_post', q => q.eq('postId', a.postId)).unique();
+  if (existing) return existing.owner === a.owner ? existing : null;
+  let expiresAt = Date.now() + 600000;
+  let creationPostId: string | undefined;
+  let result;
+  if (a.parentDraftPostId) {
+    const parent = await ctx.db.query('pollDraftTurns').withIndex('by_post', q => q.eq('postId', a.parentDraftPostId!)).unique();
+    if (!parent || parent.owner !== a.owner) return null;
+    if (parent.consumedBy) return null; // Only one sibling can advance a step.
+    expiresAt = parent.expiresAt;
+    creationPostId = parent.creationPostId ?? (parent.state === 'ready' ? parent.postId : undefined);
+    result = parent.state === 'cancelled' || expiresAt <= Date.now()
+      ? { draft: parent.draft, step: parent.step, state: 'cancelled' as const, message: 'This request has expired. Please make a new post to create a vote.' }
+      : creationPostId
+        ? { draft: parent.draft, step: 'confirm' as const, state: 'ready' as const, message: 'Reply retry to finish creating the same poll.' }
+        : advancePollDraft(parent.draft, parent.step, a.text);
+    if (creationPostId && result.state === 'ready' && !/^(?:retry|refresh|resume|confirm|yes|go ahead)(?: please)?[.!?]*$/i.test(pollInputText(a.text))) return null;
+    await ctx.db.patch(parent._id, { consumedBy: a.postId });
+  } else {
+    const draft = parsePollDraft(a.text); if (!draft) return null;
+    const step = nextPollStep(draft);
+    result = { draft, step, state: 'active' as const, message: pollPrompt(step, draft) };
+  }
+  const row = { ...result, expiresAt, postId: a.postId, owner: a.owner,
+    ...(result.state === 'ready' ? { creationPostId: creationPostId ?? a.postId } : {}) };
+  await ctx.db.insert('pollDraftTurns', row);
+  return row;
 } });
 export const hints = internalQuery({ args: { token: v.string() }, handler: async (ctx, { token }) => {
   const program = await ctx.db.query('automatedFeePrograms').withIndex('by_token', q => q.eq('normalizedTokenAddress', token.toLowerCase())).unique();
@@ -59,8 +93,10 @@ export const request = internalMutation({ args: { requestKey: v.string(), ownerX
   const existing = await ctx.db.query('polls').withIndex('by_request', q => q.eq('requestKey', a.requestKey)).unique();
   if (existing) { if (existing.ownerXUserId !== a.ownerXUserId || existing.creatorWallet !== a.creatorWallet.toLowerCase() || JSON.stringify(existing.spec) !== JSON.stringify(validatePollSpec(a.spec))) throw new Error('Request owner or details mismatch'); return existing.code; }
   const spec = validatePollSpec(a.spec);
-  const recent = await ctx.db.query('polls').withIndex('by_owner_created', q => q.eq('ownerXUserId', a.ownerXUserId).gte('createdAt', Date.now() - 86400000)).take(10);
-  if (recent.length >= 10) throw new Error('You can create up to 10 polls per day.');
+  const since = Date.now() - 86400000;
+  const recent = await ctx.db.query('polls').withIndex('by_owner_created', q => q.eq('ownerXUserId', a.ownerXUserId).gte('createdAt', since)).take(5);
+  const walletRecent = await ctx.db.query('polls').withIndex('by_wallet_created', q => q.eq('creatorWallet', a.creatorWallet.toLowerCase()).gte('createdAt', since)).take(5);
+  if (recent.length >= 5 || walletRecent.length >= 5) throw new Error('You can create up to 5 polls per X account and wallet in a rolling 24-hour period.');
   const code = `POLL-${crypto.randomUUID().replace(/-/g, '').slice(0, 16).toUpperCase()}`;
   if (await find(ctx, code)) throw new Error('Please retry creating your poll.');
   await ctx.db.insert('polls', { ...a, spec, code, creatorWallet: a.creatorWallet.toLowerCase(), status: 'preparing', createdAt: Date.now(), official: false,
@@ -103,6 +139,7 @@ export const prepareFailed = internalMutation({ args: { code: v.string(), lease:
 } });
 export const prepare = internalAction({ args: { code: v.string() }, handler: async (ctx, { code }): Promise<void> => {
   const p = await ctx.runMutation(internal.polls.reserve, { code }); if (!p) return;
+  let stage = 'token-resolution';
   try {
     const identity = pollTokenIdentity(p.spec.token);
     let address = p.tokenAddress ?? identity.address;
@@ -117,12 +154,15 @@ export const prepare = internalAction({ args: { code: v.string() }, handler: asy
       }
     }
     if (!address || !isAddress(address, { strict: false })) throw new Error('TOKEN_MISMATCH');
+    stage = 'snapshot';
     const snapshot = await buildPollSnapshot(address, p.spec.token, p.anchor);
+    stage = 'rights';
     const hints = await ctx.runQuery(internal.polls.hints, { token: address });
     const official = await pollOfficial(address, p.creatorWallet, hints, p.anchor);
+    stage = 'persist';
     await ctx.runMutation(internal.polls.prepared, { code, lease: p.lease, tokenAddress: address, snapshot, official });
   } catch (e) {
-    await ctx.runMutation(internal.polls.prepareFailed, { code, lease: p.lease, needsToken: e instanceof Error && e.message === 'TOKEN_MISMATCH', message: 'Snapshot verification failed' });
+    await ctx.runMutation(internal.polls.prepareFailed, { code, lease: p.lease, needsToken: e instanceof Error && e.message === 'TOKEN_MISMATCH', message: pollDiagnostic(stage, e) });
   }
 } });
 export const correctToken = internalMutation({ args: { code: v.string(), owner: v.string(), address: v.string(), creatorWallet: v.optional(v.string()), sourcePostId: v.optional(v.string()) }, handler: async (ctx, a) => {
@@ -139,11 +179,11 @@ export const ballot = internalQuery({ args: { code: v.string(), wallet: v.string
   const event = a.event ? await ctx.db.query('pollVoteEvents').withIndex('by_key', q => q.eq('key', a.event!)).unique() : null;
   return { poll: p, vote, event };
 } });
-export const saveVote = internalMutation({ args: { code: v.string(), wallet: v.string(), option: v.number(), weight: v.string(), event: v.string(), source: v.union(v.literal('x'), v.literal('web')), eventOrder: v.string() }, handler: async (ctx, a) => {
+export const saveVote = internalMutation({ args: { code: v.string(), wallet: v.string(), option: v.number(), weight: v.string(), event: v.string(), source: v.union(v.literal('x'), v.literal('web')), eventOrder: v.string(), xOwner: v.optional(v.string()) }, handler: async (ctx, a) => {
   const p = await find(ctx, a.code); if (!p) throw new Error('Poll not found.');
   const wallet = a.wallet.toLowerCase();
   const event = await ctx.db.query('pollVoteEvents').withIndex('by_key', q => q.eq('key', a.event)).unique();
-  if (event) { if (event.pollId !== p._id || event.wallet !== wallet || event.option !== a.option) throw new Error('Vote request mismatch'); return { changed: false, weight: event.weight }; }
+  if (event) { if (event.pollId !== p._id || event.wallet !== wallet || event.option !== a.option) throw new Error('Vote request mismatch'); return { changed: false, weight: event.weight, duplicate: event.duplicate, duplicateNotice: event.duplicateNotice }; }
   if (p.status !== 'open' || !p.endsAt || p.endsAt <= Date.now() || !p.snapshot) throw new Error('This poll has closed.');
   if (!/^[0-9]+$/.test(a.weight) || BigInt(a.weight) <= 0n || BigInt(a.weight) > BigInt(p.snapshot.activeSupply)) throw new Error('This wallet has no eligible voting balance.');
   if (p.snapshot.exclusions.some(x => x.address === wallet)) throw new Error('This address is excluded from voting.');
@@ -152,6 +192,14 @@ export const saveVote = internalMutation({ args: { code: v.string(), wallet: v.s
   const old = await ctx.db.query('pollVotes').withIndex('by_poll_wallet', q => q.eq('pollId', p._id).eq('wallet', wallet)).unique();
   if (old && old.weight !== a.weight) throw new Error('Snapshot voting weight mismatch');
   if (old && BigInt(a.eventOrder) < BigInt(old.eventOrder)) throw new Error('A newer vote from this wallet was already recorded.');
+  if (old && old.option === a.option && a.source === 'x') {
+    if (!a.xOwner) throw new Error('Missing X voter identity');
+    const notice = await ctx.db.query('pollDuplicateNotices').withIndex('by_poll_owner', q => q.eq('pollId', p._id).eq('owner', a.xOwner!)).unique();
+    if (!notice) await ctx.db.insert('pollDuplicateNotices', { pollId: p._id, owner: a.xOwner });
+    await ctx.db.patch(old._id, { eventOrder: a.eventOrder });
+    await ctx.db.insert('pollVoteEvents', { key: a.event, pollId: p._id, wallet, option: a.option, weight: old.weight, createdAt: Date.now(), duplicate: true, duplicateNotice: !notice });
+    return { changed: false, weight: old.weight, duplicate: true, duplicateNotice: !notice };
+  }
   const totals = updatePollTotals(p.totals, old, a.option, a.weight);
   const votedWeight = (BigInt(p.votedWeight) + (old ? 0n : BigInt(a.weight))).toString();
   if (BigInt(votedWeight) > BigInt(p.snapshot.activeSupply)) throw new Error('Voting supply reconciliation failed');
@@ -161,17 +209,18 @@ export const saveVote = internalMutation({ args: { code: v.string(), wallet: v.s
   await ctx.db.insert('pollVoteEvents', { key: a.event, pollId: p._id, wallet, option: a.option, weight: a.weight, createdAt: Date.now() });
   return { changed: !!old, weight: a.weight };
 } });
-async function vote(ctx: ActionCtx, code: string, wallet: string, choice: string, source: 'x' | 'web', event: string, order: string): Promise<Result> {
+async function vote(ctx: ActionCtx, code: string, wallet: string, choice: string, source: 'x' | 'web', event: string, order: string, xOwner?: string): Promise<Result> {
   const c = await ctx.runQuery(internal.polls.ballot, { code, wallet, event });
   if (!c?.poll.snapshot || !c.poll.tokenAddress) throw new Error('This poll is not ready for voting.');
   const option = pollChoice(choice, c.poll.spec.options);
-  if (option < 0) throw new Error(`🗳️ Choose one option:\n${c.poll.spec.options.map((x, i) => `${i + 1}. ${x}`).join('\n')}`);
+  if (option < 0) throw new Error(`🗳️ Choose one option:\n${c.poll.spec.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}`).join('\n')}`);
   if (!c.event && (c.poll.status !== 'open' || (c.poll.endsAt ?? 0) <= Date.now())) throw new Error('This poll has closed.');
   if (c.poll.snapshot.exclusions.some(x => x.address === wallet.toLowerCase())) throw new Error('This address is excluded from voting.');
   const weight = c.vote?.weight ?? await pollVotingBalance(c.poll.tokenAddress, wallet, c.poll.snapshot);
   if (c.vote) await assertPollBlock(c.poll.snapshot);
-  const saved = await ctx.runMutation(internal.polls.saveVote, { code, wallet, option, weight, event, source, eventOrder: order });
-  return { ok: true, code, message: `🗳️ ${saved.changed ? 'Vote updated' : 'Vote recorded'} for ${code}: ${c.poll.spec.options[option]}\nVoting power: ${Number(formatUnits(BigInt(saved.weight), c.poll.snapshot.decimals)).toLocaleString('en-US', { maximumFractionDigits: 2 })} $${c.poll.snapshot.symbol}\n${pollUrl(code)}` };
+  const saved = await ctx.runMutation(internal.polls.saveVote, { code, wallet, option, weight, event, source, eventOrder: order, ...(xOwner ? { xOwner } : {}) });
+  if (saved.duplicate) return { ok: true, code, silent: !saved.duplicateNotice, message: `ℹ️ You have already voted for this option in ${code}.` };
+  return { ok: true, code, message: `🗳️ ${saved.changed ? 'Vote updated' : 'Vote recorded'} for ${code}: ${pollDisplayText(c.poll.spec.options[option])}\nVoting power: ${Number(formatUnits(BigInt(saved.weight), c.poll.snapshot.decimals)).toLocaleString('en-US', { maximumFractionDigits: 2 })} $${pollDisplayText(c.poll.snapshot.symbol)}\n${pollUrl(code)}` };
 }
 export const markOfficial = internalMutation({ args: { code: v.string(), wallet: v.string() }, handler: async (ctx, a) => {
   const p = await find(ctx, a.code); if (!p || p.status !== 'open' || (p.endsAt ?? 0) <= Date.now()) throw new Error('Only open polls can be endorsed.');
@@ -192,8 +241,8 @@ export const close = internalMutation({ args: { code: v.string() }, handler: asy
   const total = BigInt(p.votedWeight);
   const max = p.totals.reduce((m, x) => BigInt(x) > m ? BigInt(x) : m, 0n);
   const winners = p.spec.options.filter((_, i) => BigInt(p.totals[i]) === max);
-  const title = total === 0n ? 'No votes were cast.' : `${winners.length > 1 ? 'Tie' : 'Leading option'}: ${winners.join(', ')}`;
-  const text = `🗳️ Voting closed: ${p.code}\n${p.official ? 'Official' : 'Community'} $${p.snapshot.symbol} poll\n\n${p.spec.question}\n\n${p.spec.options.map((x, i) => `${i + 1}. ${x}: ${pollPercent(p.totals[i], p.votedWeight).toFixed(2)}%`).join('\n')}\n\n${title}\n${p.voterCount} wallets voted. ${pollPercent(p.votedWeight, p.snapshot.activeSupply).toFixed(2)}% of active voting supply participated.\nAdvisory result; no automatic transactions.\n${pollUrl(code)}`;
+  const title = total === 0n ? 'No votes were cast.' : `${winners.length > 1 ? 'Tie' : 'Leading option'}: ${winners.map(pollDisplayText).join(', ')}`;
+  const text = `🗳️ Voting closed: ${p.code}\n${p.official ? 'Official' : 'Community'} $${pollDisplayText(p.snapshot.symbol)} poll\n\n${pollDisplayText(p.spec.question)}\n\n${p.spec.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}: ${pollPercent(p.totals[i], p.votedWeight).toFixed(2)}%`).join('\n')}\n\n${title}\n${p.voterCount} wallets voted. ${pollPercent(p.votedWeight, p.snapshot.activeSupply).toFixed(2)}% of active voting supply participated.\nAdvisory result; no automatic transactions.\n${pollUrl(code)}`;
   const queued = await ctx.runMutation(internal.xReplyQueue.enqueue, { key: `poll-result:${code}`, pollId: p._id, replyTargetPostId: p.xPostId, text, kind: 'poll_result', ok: true, allowLong: true });
   await ctx.db.patch(p._id, { resultPublication: queued.status });
 } });
@@ -204,60 +253,93 @@ export const recover = internalMutation({ args: {}, handler: async ctx => {
   for (const p of due) await ctx.runMutation(internal.polls.close, { code: p.code });
 } });
 export const handleX = internalAction({ args: { postId: v.string(), owner: v.string(), text: v.string(), parentPostId: v.optional(v.string()) }, handler: async (ctx, a): Promise<{ handled: boolean; result?: Result }> => {
+  a = { ...a, text: pollInputText(a.text) };
   const parent = await ctx.runQuery(internal.polls.context, { parentPostId: a.parentPostId });
   if (!X_VOTING_ENABLED) return { handled: isPollCommand(a.text) || Boolean(parent) };
   if (!isPollCommand(a.text) && !parent) return { handled: false };
   // Polls are public threads. Their replies never enter another user's wallet workflow.
-  if (parent && !isPollCommand(a.text) && !/^\s*(?:[1-8][.!]?|0x[0-9a-f]{40})\s*$/i.test(a.text)) {
+  if (parent && !parent.draftPostId && !parent.correction && !isPollCommand(a.text) && !/^\s*(?:[1-8][.!]?|0x[0-9a-f]{40})\s*$/i.test(a.text)) {
     const p = await ctx.runQuery(internal.polls.record, { code: parent.code });
     if (!p || pollChoice(a.text, p.spec.options) < 0) return { handled: true };
   }
   try {
+    if ((parent?.draftPostId || parent?.correction) && parent.owner !== a.owner) return { handled: true };
     const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: a.owner });
     if (!who?.wallet || who.wallet.status !== 'active' || who.wallet.chainId !== 4663) throw new Error('👛 Ask for your Pons Bot wallet first, or vote on the website with your Pons Bot account.');
     const wallet = who.wallet.address;
+    if (parent?.draftPostId) {
+      const turn = await ctx.runMutation(internal.polls.draftTurn, { postId: a.postId, owner: a.owner, text: a.text, parentDraftPostId: parent.draftPostId });
+      if (!turn) return { handled: true };
+      if (turn.state !== 'ready') return { handled: true, result: { ok: true, message: turn.message } };
+      try {
+        const code = await ctx.runMutation(internal.polls.request, { requestKey: `x:${turn.creationPostId ?? a.postId}`, ownerXUserId: a.owner, creatorWallet: wallet, creatorXUsername: who.user.username, source: 'x', sourcePostId: a.postId, spec: validatePollSpec(turn.draft as PollSpec), anchor: await pollAnchor() });
+        return { handled: true, result: { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' } };
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('You can create up to 5 polls')) throw error;
+        return { handled: true, result: { ok: false, message: '⚠️ I couldn’t finish starting your poll. Your confirmed settings are saved. Reply retry to continue the same request.' } };
+      }
+    }
     if (parent?.correction && !isPollCommand(a.text)) {
       if (parent.owner !== a.owner) return { handled: true };
       await ctx.runMutation(internal.polls.correctToken, { code: parent.code, owner: a.owner, address: a.text.trim(), sourcePostId: a.postId });
       return { handled: true, result: { ok: true, pending: true, code: parent.code, message: 'Preparing the holder snapshot.' } };
     }
-    const spec = parsePollCreate(a.text);
-    if (spec) {
+    const draft = parsePollDraft(a.text);
+    if (draft && (!draft.token || !draft.question || !draft.options || !draft.durationMinutes)) {
+      const turn = await ctx.runMutation(internal.polls.draftTurn, { postId: a.postId, owner: a.owner, text: a.text });
+      return { handled: true, ...(turn ? { result: { ok: true, message: turn.message } } : {}) };
+    }
+    if (draft) {
+      const spec = validatePollSpec(draft as PollSpec);
       const code = await ctx.runMutation(internal.polls.request, { requestKey: `x:${a.postId}`, ownerXUserId: a.owner, creatorWallet: wallet, creatorXUsername: who.user.username, source: 'x', sourcePostId: a.postId, spec, anchor: await pollAnchor() });
       return { handled: true, result: { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' } };
     }
     const code = a.text.match(/\bPOLL-[a-f0-9]{16}\b/i)?.[0].toUpperCase() ?? parent?.code;
     if (!code) throw new Error('🗳️ Reply to a Vote created post with “vote 1”, or say “vote POLL-ID 1”.');
     if (!await ctx.runMutation(internal.polls.gate, { key: `vote:${a.owner}`, limit: 30, window: 60000 })) throw new Error('Please wait a minute before another voting request.');
-    const result = /^(?:make|upgrade|endorse)\b/i.test(a.text) ? await endorse(ctx, code, wallet) : await vote(ctx, code, wallet, a.text, 'x', `x:${a.postId}`, ((BigInt(a.postId) >> 22n) + 1288834974657n).toString());
-    return { handled: true, result };
+    const result = /^(?:make|upgrade|endorse)\b/i.test(a.text) ? await endorse(ctx, code, wallet) : await vote(ctx, code, wallet, a.text, 'x', `x:${a.postId}`, ((BigInt(a.postId) >> 22n) + 1288834974657n).toString(), a.owner);
+    return result.silent ? { handled: true } : { handled: true, result };
   } catch (e) { return { handled: true, result: { ok: false, message: safePollError(e) } }; }
 } });
 function safePollError(e: unknown) {
   const m = e instanceof Error ? e.message : '';
   return /^(?:🗳️|⚠️|👛|This |Your |Only |Please |You can|Poll not found|A newer vote|Vote request mismatch)/.test(m) ? m : '⚠️ The voting check could not be completed. No new vote was recorded. Please try again.';
 }
-export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), walletToken: v.string(), expectedWallet: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
+export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), walletToken: v.optional(v.string()), walletSource: v.optional(v.union(v.literal('pons'), v.literal('external'))), expectedWallet: v.string(), eventId: v.string(), operation: v.union(v.literal('create'), v.literal('vote'), v.literal('endorse'), v.literal('correct')), spec: v.optional(pollSpecValidator), code: v.optional(v.string()), choice: v.optional(v.string()) }, handler: async (ctx, a): Promise<Result> => {
   if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)) throw new Error('Unauthorized');
   if (!/^[a-zA-Z0-9_-]{12,100}$/.test(a.eventId)) throw new Error('Invalid request identifier');
   const valid = await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId });
   if (!valid) throw new Error('Unauthorized');
-  if (!/^[a-f0-9]{64}$/.test(a.walletToken)) throw new Error('Connect and verify your voting wallet.');
+  let wallet: string;
+  let creatorXUsername: string | undefined;
+  if (a.walletSource === 'pons') {
+    const who = await ctx.runQuery(internal.wallets.getXUserAndWallet, { xUserId: a.owner });
+    if (!who?.wallet || who.wallet.status !== 'active' || who.wallet.chainId !== 4663) throw new Error('Your Pons Bot wallet is not available.');
+    wallet = who.wallet.address.toLowerCase();
+    creatorXUsername = who.user.username;
+  } else {
+  if (!a.walletToken || !/^[a-f0-9]{64}$/.test(a.walletToken)) throw new Error('Connect and verify your voting wallet.');
   const verifiedWallet = await ctx.runQuery(internal.pollWalletAuth.session, { hash: await voteAuthHash(a.walletToken), binding: await voteAuthHash(`${a.owner}:${a.sessionId}`) });
   if (!verifiedWallet) throw new Error('Connect and verify your voting wallet.');
-  const wallet = verifiedWallet.address;
-  if (a.expectedWallet.toLowerCase() !== wallet) throw new Error('Your connected wallet changed. Refresh and verify the intended wallet.');
+  wallet = verifiedWallet.address;
   // Smart-account ownership can change during a session. Revalidate ERC-1271
   // before each write rather than treating an old owner signature as permanent.
-  if (verifiedWallet.contractProof && !await verifyVotingContractSignature(wallet as Hex, hashMessage(verifiedWallet.contractProof.message), verifiedWallet.contractProof.signature as Hex)) {
-    await ctx.runMutation(internal.pollWalletAuth.revoke, { hash: await voteAuthHash(a.walletToken), binding: await voteAuthHash(`${a.owner}:${a.sessionId}`) });
-    throw new Error('Your wallet authorization changed. Connect and sign again.');
+  if (verifiedWallet.contractProof) {
+    let authorized: boolean;
+    try { authorized = await verifyVotingContractSignature(wallet as Hex, hashMessage(verifiedWallet.contractProof.message), verifiedWallet.contractProof.signature as Hex); }
+    catch { return { ok: false, message: 'Your wallet verification is temporarily unavailable. Please retry. No vote was recorded.' }; }
+    if (!authorized) {
+      await ctx.runMutation(internal.pollWalletAuth.revoke, { hash: await voteAuthHash(a.walletToken), binding: await voteAuthHash(`${a.owner}:${a.sessionId}`) });
+      throw new Error('Your wallet authorization changed. Connect and sign again.');
+    }
   }
+  }
+  if (a.expectedWallet.toLowerCase() !== wallet) throw new Error('Your connected wallet changed. Refresh and verify the intended wallet.');
   if (!await ctx.runMutation(internal.polls.gate, { key: `vote:${a.owner}`, limit: 30, window: 60000 })) return { ok: false, message: 'Please wait a minute before another voting request.' };
   try {
     if (a.operation === 'create') {
       if (!a.spec) throw new Error('Provide the poll details.');
-      const code = await ctx.runMutation(internal.polls.request, { requestKey: `web:${a.owner}:${wallet}:${a.eventId}`, ownerXUserId: a.owner, creatorWallet: wallet, source: 'web', spec: validatePollSpec(a.spec), anchor: await pollAnchor() });
+      const code = await ctx.runMutation(internal.polls.request, { requestKey: `web:${a.owner}:${wallet}:${a.eventId}`, ownerXUserId: a.owner, creatorWallet: wallet, ...(creatorXUsername ? { creatorXUsername } : {}), source: 'web', spec: validatePollSpec(a.spec), anchor: await pollAnchor() });
       return { ok: true, pending: true, code, message: 'Preparing the holder snapshot.' };
     }
     if (!a.code) throw new Error('Poll not found.');

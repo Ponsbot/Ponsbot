@@ -8,6 +8,6 @@ it('accepts only the ERC-1271 success magic value', async () => {
   expect(await verifyVotingContractSignature(address, '0x1234', '0x5678')).toBe(true);
   client.readContract.mockResolvedValue('0xffffffff'); expect(await verifyVotingContractSignature(address, '0x1234', '0x5678')).toBe(false);
 });
-it('fails closed on another chain', async () => { client.getChainId.mockResolvedValue(1); expect(await verifyVotingContractSignature(address, '0x1234', '0x5678')).toBe(false); expect(client.readContract).not.toHaveBeenCalled(); });
+it('treats another RPC chain as unavailable rather than revoked ownership', async () => { client.getChainId.mockResolvedValue(1); await expect(verifyVotingContractSignature(address, '0x1234', '0x5678')).rejects.toThrow('temporarily unavailable'); expect(client.readContract).not.toHaveBeenCalled(); });
 it('does not attempt to deploy counterfactual accounts', async () => { client.getCode.mockResolvedValue('0x'); expect(await verifyVotingContractSignature(address, '0x1234', '0x5678')).toBe(false); expect(client.readContract).not.toHaveBeenCalled(); });
-it('fails closed on RPC errors', async () => { client.readContract.mockRejectedValue(new Error('RPC')); expect(await verifyVotingContractSignature(address, '0x1234', '0x5678')).toBe(false); });
+it('fails closed without declaring invalid ownership on RPC errors', async () => { client.readContract.mockRejectedValue(new Error('RPC')); await expect(verifyVotingContractSignature(address, '0x1234', '0x5678')).rejects.toThrow('temporarily unavailable'); });

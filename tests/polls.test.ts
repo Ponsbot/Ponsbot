@@ -30,7 +30,7 @@ function fixture() {
   const p: Row = { _id: 'poll', code: 'POLL-1234567890ABCDEF', ownerXUserId: 'owner', status: 'open', createdAt: Date.now(), endsAt: Date.now() + 60000,
     spec: parsePollCreate(command), totals: ['0', '0'], votedWeight: '0', voterCount: 0,
     snapshot: { supply: '1000000', activeSupply: '900000', exclusions: [{ address: ca, balance: '100000' }] } };
-  const tables: Record<string, Row[]> = { polls: [p], pollVotes: [], pollVoteEvents: [] };
+  const tables: Record<string, Row[]> = { polls: [p], pollVotes: [], pollVoteEvents: [], pollDuplicateNotices: [] };
   const db = {
     query(name: string) {
       const filters: ((r: Row) => boolean)[] = [];
@@ -42,10 +42,19 @@ function fixture() {
     async patch(id: string, data: Row) { Object.assign(Object.values(tables).flat().find(r => r._id === id)!, data); },
   };
   const ctx = { db, scheduler: { runAfter: vi.fn() }, runMutation: vi.fn(async (_ref: unknown, _args: unknown) => ({ status: 'queued' })) };
-  const cast = (overrides: Row = {}) => invoke(saveVote, ctx, { code: p.code, wallet: '0xAbCd', option: 0, weight: '1000', event: 'x:first', source: 'x', eventOrder: '100', ...overrides });
+  const cast = (overrides: Row = {}) => invoke(saveVote, ctx, { code: p.code, wallet: '0xAbCd', xOwner: 'owner', option: 0, weight: '1000', event: 'x:first', source: 'x', eventOrder: '100', ...overrides });
   return { p, tables, ctx, cast };
 }
 describe('atomic wallet voting', () => {
+  it('permits only one duplicate-vote notice per X person and poll', async () => {
+    const f = fixture(); await f.cast();
+    expect(await f.cast({ event: 'repeat1', eventOrder: '101' })).toMatchObject({ duplicate: true, duplicateNotice: true });
+    expect(await f.cast({ event: 'repeat2', eventOrder: '102' })).toMatchObject({ duplicate: true, duplicateNotice: false });
+    expect(await f.cast({ event: 'repeat1', eventOrder: '101' })).toMatchObject({ duplicateNotice: true });
+    expect(f.tables.pollDuplicateNotices).toHaveLength(1); expect(f.p.voterCount).toBe(1);
+    expect(await f.cast({ event: 'change', eventOrder: '103', option: 1 })).toMatchObject({ changed: true });
+    expect(f.p.totals).toEqual(['0', '1000']);
+  });
   it('closes once and enqueues one results reply to the bot creation post', async () => { const f = fixture(); f.p.xPostId = 'created-post'; f.p.endsAt = Date.now() - 1; f.p.snapshot.symbol = 'TEST'; await invoke(close, f.ctx, { code: f.p.code }); await invoke(close, f.ctx, { code: f.p.code }); expect(f.p.status).toBe('closed'); expect(f.ctx.runMutation).toHaveBeenCalledTimes(1); expect(f.ctx.runMutation.mock.calls[0][1]).toMatchObject({ replyTargetPostId: 'created-post', kind: 'poll_result', allowLong: true }); });
   it('does not close early', async () => { const f = fixture(); await invoke(close, f.ctx, { code: f.p.code }); expect(f.p.status).toBe('open'); expect(f.ctx.runMutation).not.toHaveBeenCalled(); });
   it('deduplicates the same X event', async () => { const f = fixture(); await f.cast(); await f.cast(); expect(f.p.voterCount).toBe(1); expect(f.p.votedWeight).toBe('1000'); });

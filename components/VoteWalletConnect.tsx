@@ -2,13 +2,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isAddress, stringToHex } from 'viem';
 import { parseSiweMessage } from 'viem/siwe';
-type Provider = { request: (args: { method: string; params?: unknown[] }) => Promise<unknown>; on?: (event: string, fn: () => void) => void; removeListener?: (event: string, fn: () => void) => void };
+import { bindVotingProvider, type VotingProvider as Provider } from '../lib/vote-wallet-provider';
+const PROVIDER_KEY = 'pons-voting-provider';
+const CLEANUP_KEY = 'pons-voting-cleanup-required';
 type Wallet = { id: string; name: string; provider: Provider };
 type Verified = { address?: string; expiresAt?: number };
 export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string; onChange: (address: string | null) => void; disabled: boolean }) {
   const [wallets, setWallets] = useState<Wallet[]>([]), [selected, setSelected] = useState('');
   const [verified, setVerified] = useState<Verified>({}), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const selectedProvider = useRef<Provider | null>(null);
+  const releaseProvider = useRef<(() => void) | null>(null);
   const pending = useRef(false);
   const generation = useRef(0);
   const apply = useCallback((value: Verified) => { setVerified(value); onChange(value.address ?? null); }, [onChange]);
@@ -16,12 +18,29 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
     const r = await fetch('/api/votes/wallet', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pons-csrf': csrf ?? '' }, body: JSON.stringify(body) });
     const data = await r.json(); if (!r.ok) throw new Error(data.error || 'Wallet verification failed.'); return data;
   }, [csrf]);
+  const detach = useCallback(() => { releaseProvider.current?.(); releaseProvider.current = null; }, []);
+  const revoke = useCallback(async () => {
+    sessionStorage.setItem(CLEANUP_KEY, '1');
+    sessionStorage.removeItem(PROVIDER_KEY);
+    await call({ operation: 'disconnect' });
+    sessionStorage.removeItem(CLEANUP_KEY);
+  }, [call]);
+  const changed = useCallback(() => {
+    generation.current++; detach(); apply({});
+    // An in-flight connect owns cleanup and must keep the UI locked until done.
+    if (pending.current) return;
+    pending.current = true; setBusy(true);
+    setError('Wallet changed. Connect and sign again.');
+    void revoke().catch(() => setError('Wallet changed. Session cleanup failed. Reconnect to retry cleanup.'))
+      .finally(() => { pending.current = false; setBusy(false); });
+  }, [detach, apply, revoke]);
+  useEffect(() => detach, [detach]);
   useEffect(() => {
     // Wallet-supplied names are text only. Never execute or embed provider icons.
     const announce = (event: Event) => {
       const d = (event as CustomEvent).detail;
       if (!d || typeof d.info?.uuid !== 'string' || typeof d.info?.name !== 'string' || typeof d.provider?.request !== 'function') return;
-      setWallets(old => old.some(x => x.provider === d.provider) || old.length >= 20 ? old : [...old, { id: d.info.uuid.slice(0, 100), name: d.info.name.slice(0, 80), provider: d.provider }]);
+      setWallets(old => old.some(x => x.provider === d.provider) || old.length >= 20 ? old : [...old, { id: typeof d.info.rdns === 'string' ? d.info.rdns.slice(0, 100) : d.info.uuid.slice(0, 100), name: d.info.name.slice(0, 80), provider: d.provider }]);
     };
     window.addEventListener('eip6963:announceProvider', announce);
     window.dispatchEvent(new Event('eip6963:requestProvider'));
@@ -30,36 +49,56 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
     return () => window.removeEventListener('eip6963:announceProvider', announce);
   }, []);
   useEffect(() => {
-    // Restore the signed identity, not an unverified provider address.
+    // Never expose a restored identity until its original provider is monitored
+    // and its current account/chain have been checked without prompting.
     let live = true;
     const version = generation.current;
-    if (csrf) fetch('/api/votes/wallet', { cache: 'no-store' }).then(r => r.ok ? r.json() : {}).then(d => { if (live && !pending.current && generation.current === version) apply(d); }).catch(() => {});
-    return () => { live = false; };
-  }, [csrf, apply]);
+    let timer: ReturnType<typeof setTimeout>;
+    const restore = () => { void (async () => {
+      if (!csrf || !live || releaseProvider.current) return;
+      if (pending.current) { timer = setTimeout(restore, 250); return; }
+      const matches = wallets.filter(w => w.id === sessionStorage.getItem(PROVIDER_KEY));
+      // Provider discovery may be delayed. Do not revoke a valid session just
+      // because its extension has not announced itself yet; retry on discovery.
+      if (!sessionStorage.getItem(CLEANUP_KEY) && matches.length !== 1) return;
+      pending.current = true; setBusy(true);
+      const current = () => live && generation.current === version;
+      try {
+        if (sessionStorage.getItem(CLEANUP_KEY)) { await revoke(); return; }
+        const r = await fetch('/api/votes/wallet', { cache: 'no-store' });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (!current() || !d.address) return;
+        const release = await bindVotingProvider(matches[0].provider, d.address, changed);
+        if (!current()) {
+          release();
+          if (generation.current !== version) await revoke();
+          return;
+        }
+        releaseProvider.current = release; apply(d);
+      } catch (e) {
+        if (live) { apply({}); setError(e instanceof Error ? e.message : 'Reconnect your voting wallet.'); }
+        try { await revoke(); } catch { setError('Session cleanup failed. Reconnect to retry cleanup.'); }
+      } finally {
+        pending.current = false; setBusy(false);
+      }
+    })(); };
+    timer = setTimeout(restore, 0);
+    return () => { live = false; clearTimeout(timer); };
+  }, [csrf, apply, wallets, changed, revoke]);
   useEffect(() => {
     if (!verified.expiresAt) return;
     const timer = setTimeout(() => { apply({}); setError('Your verification expired. Connect and sign again.'); }, Math.max(0, verified.expiresAt - Date.now()));
     return () => clearTimeout(timer);
   }, [verified.expiresAt, apply]);
-  useEffect(() => {
-    const provider = selectedProvider.current;
-    if (!provider) return;
-    const changed = () => {
-      generation.current++; apply({}); pending.current = true; setBusy(true);
-      void call({ operation: 'disconnect' }).catch(() => {}).finally(() => { pending.current = false; setBusy(false); });
-      setError('Wallet changed. Connect and sign again.');
-    };
-    provider.on?.('accountsChanged', changed); provider.on?.('chainChanged', changed); provider.on?.('disconnect', changed);
-    return () => { provider.removeListener?.('accountsChanged', changed); provider.removeListener?.('chainChanged', changed); provider.removeListener?.('disconnect', changed); };
-  }, [verified.address, apply, call]);
   async function connect() {
     if (pending.current || disabled || !csrf) return;
     const wallet = wallets.find(x => x.id === selected) ?? wallets[0];
     if (!wallet) { setError('Open this page in a wallet browser, or install a browser wallet such as MetaMask.'); return; }
-    pending.current = true; setBusy(true); setError(''); selectedProvider.current = null; apply({});
+    pending.current = true; setBusy(true); setError(''); detach(); apply({});
     const attempt = ++generation.current;
     try {
-      await call({ operation: 'disconnect' });
+      await revoke();
       const provider = wallet.provider;
       const accounts = await provider.request({ method: 'eth_requestAccounts' });
       const address = Array.isArray(accounts) ? accounts[0] : undefined;
@@ -75,25 +114,33 @@ export function VoteWalletConnect({ csrf, onChange, disabled }: { csrf?: string;
       const current = await provider.request({ method: 'eth_accounts' });
       if (attempt !== generation.current || !Array.isArray(current) || current[0]?.toLowerCase() !== address.toLowerCase() || await provider.request({ method: 'eth_chainId' }) !== '0x1237') throw new Error('Wallet changed while signing. Please reconnect.');
       if (typeof signature !== 'string') throw new Error('No signature returned.');
+      // Also covers an uncertain verify response or reload during final checks.
+      sessionStorage.setItem(CLEANUP_KEY, '1');
       const result = await call({ operation: 'verify', nonce: challenge.nonce, signature });
-      const finalAccounts = await provider.request({ method: 'eth_accounts' });
-      if (attempt !== generation.current || !Array.isArray(finalAccounts) || finalAccounts[0]?.toLowerCase() !== address.toLowerCase() || await provider.request({ method: 'eth_chainId' }) !== '0x1237') {
-        await call({ operation: 'disconnect' }); throw new Error('Wallet changed while verifying. Please reconnect.');
-      }
-      selectedProvider.current = provider; apply(result);
-    } catch (e) { setError(e instanceof Error && !('code' in e) ? e.message : 'Signing was cancelled or unavailable. No transaction was submitted.'); }
+      const release = await bindVotingProvider(provider, address, changed);
+      if (attempt !== generation.current) { release(); throw new Error('Wallet changed while verifying. Please reconnect.'); }
+      releaseProvider.current = release;
+      sessionStorage.setItem(PROVIDER_KEY, wallet.id);
+      sessionStorage.removeItem(CLEANUP_KEY);
+      apply(result);
+    } catch (e) {
+      detach(); apply({});
+      setError(e instanceof Error && !('code' in e) ? e.message : 'Signing was cancelled or unavailable. No transaction was submitted.');
+      try { await revoke(); } catch { setError('Verification failed and session cleanup could not finish. Reconnect to retry cleanup.'); }
+    }
     finally { pending.current = false; setBusy(false); }
   }
   async function disconnect() {
     if (pending.current) return;
     pending.current = true; setBusy(true); generation.current++;
-    try { await call({ operation: 'disconnect' }); apply({}); selectedProvider.current = null; setError(''); } catch { setError('Could not disconnect the server session. Please retry disconnecting.'); }
+    detach(); apply({});
+    try { await revoke(); setError(''); } catch { setError('Could not disconnect the server session. Please reconnect to retry cleanup.'); }
     finally { pending.current = false; setBusy(false); }
   }
   return <div>
-    <p>{verified.address ? <>Verified voting wallet: <strong title={verified.address}>{verified.address.slice(0, 6)}…{verified.address.slice(-4)}</strong></> : 'Connect Wallet and sign to create a vote or vote with your token holdings.'}</p>
     {!verified.address && wallets.length > 1 && <label>Wallet <select value={selected || wallets[0]?.id} disabled={busy || disabled} onChange={e => setSelected(e.target.value)}>{wallets.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}</select></label>}
-    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect wallet' : 'Connect Wallet'}</button>
+    <button disabled={busy || disabled || !csrf} onClick={() => void (verified.address ? disconnect() : connect())}>{busy ? 'Verifying…' : verified.address ? 'Disconnect external wallet' : 'Connect external wallet'}</button>
+    {verified.address && <p>Verified voting wallet: <strong title={verified.address}>{verified.address.slice(0, 6)}…{verified.address.slice(-4)}</strong></p>}
     <p><small>Sign-in only. No gas, token approvals, or transactions. Voting eligibility is checked separately against the poll snapshot.</small></p>
     {error && <p role='alert'>{error}</p>}
   </div>;

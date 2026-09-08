@@ -5,6 +5,7 @@ import { voteSignInMessage, validVoteSignIn, verifyVoteSignature, voteAuthHash, 
 import * as authFunctions from '../convex/pollWalletAuth';
 import { web as pollWeb, correctToken } from '../convex/polls';
 import { VOTING_PREVIEW_X_ID } from '../lib/voting-access';
+import * as contractVerification from '../lib/poll-wallet-chain';
 const invoke = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
 const account = privateKeyToAccount(`0x${'1'.repeat(64)}`);
 const other = privateKeyToAccount(`0x${'2'.repeat(64)}`);
@@ -14,7 +15,7 @@ const token = 'c'.repeat(64);
 const common = { secret: 'local-test', owner: VOTING_PREVIEW_X_ID, sessionId: 'web_test', origin };
 vi.mock('../lib/poll-chain', async original => ({ ...await original<typeof import('../lib/poll-chain')>(), pollAnchor: vi.fn(async () => ({ block: '123', blockHash: '0x123', timestamp: Date.now() })) }));
 beforeEach(() => vi.stubEnv('WEB_AUTH_SECRET', common.secret));
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 describe('voting SIWE messages', () => {
   it('signs only the voting purpose with a nonce and expiry', async () => {
     const now = Date.now(), message = voteSignInMessage(account.address, origin, nonce, now);
@@ -93,6 +94,16 @@ describe('single-use and scoped voting authentication', () => {
   });
 });
 describe('website vote authorization', () => {
+  it('resolves a selected Pons wallet from the authenticated owner, never the supplied address', async () => {
+    const ctx = { runAction: vi.fn(async () => true), runQuery: vi.fn(async () => ({ user: { username: 'Ponsboyfamily' }, wallet: { address: account.address, status: 'active', chainId: 4663 } })),
+      runMutation: vi.fn(async (ref: any, _args: any) => getFunctionName(ref) === 'polls:gate' ? true : 'POLL-1234567890ABCDEF') };
+    const args = { ...common, eventId: 'valid_event_123', operation: 'create', walletSource: 'pons', expectedWallet: account.address,
+      spec: { token: '$TEST', question: 'Proceed?', options: ['Yes', 'No'], durationMinutes: 60, minimumHoldingPercent: 0.1 } };
+    expect((await invoke(pollWeb, ctx, args)).ok).toBe(true);
+    expect(ctx.runQuery.mock.calls[0]).toHaveLength(2);
+    expect(ctx.runMutation.mock.calls[1][1]).toMatchObject({ creatorWallet: account.address.toLowerCase(), creatorXUsername: 'Ponsboyfamily' });
+    await expect(invoke(pollWeb, ctx, { ...args, expectedWallet: other.address })).rejects.toThrow('changed');
+  });
   it('creates using the signed external wallet, without selecting the X custodial wallet', async () => {
     const ctx = { runAction: vi.fn(async () => true), runQuery: vi.fn(async (_ref: any, _args: any) => ({ address: account.address.toLowerCase() })),
       runMutation: vi.fn(async (ref: any, _args: any) => getFunctionName(ref) === 'polls:gate' ? true : 'POLL-1234567890ABCDEF') };
@@ -104,9 +115,15 @@ describe('website vote authorization', () => {
   });
   it('revokes a smart-account session when its old signature is no longer valid', async () => {
     const ctx = { runAction: vi.fn(async () => true), runQuery: vi.fn(async () => ({ address: account.address.toLowerCase(), contractProof: { message: 'test', signature: '0x1234' } })), runMutation: vi.fn() };
-    vi.stubEnv('ROBINHOOD_RPC_URL', '');
+    vi.spyOn(contractVerification, 'verifyVotingContractSignature').mockResolvedValue(false);
     await expect(invoke(pollWeb, ctx, { ...common, eventId: 'valid_event_123', operation: 'vote', walletToken: token, expectedWallet: account.address })).rejects.toThrow('authorization changed');
     expect(getFunctionName(ctx.runMutation.mock.calls[0][0])).toBe('pollWalletAuth:revoke');
+  });
+  it('preserves a smart-account session when its RPC check is unavailable', async () => {
+    const ctx = { runAction: vi.fn(async () => true), runQuery: vi.fn(async () => ({ address: account.address.toLowerCase(), contractProof: { message: 'test', signature: '0x1234' } })), runMutation: vi.fn() };
+    vi.spyOn(contractVerification, 'verifyVotingContractSignature').mockRejectedValue(new Error('Your wallet verification is temporarily unavailable. Please retry.'));
+    expect(await invoke(pollWeb, ctx, { ...common, eventId: 'valid_event_123', operation: 'vote', walletToken: token, expectedWallet: account.address })).toMatchObject({ ok: false, message: expect.stringContaining('temporarily unavailable') });
+    expect(ctx.runMutation).not.toHaveBeenCalled();
   });
   it.each(['create', 'vote', 'endorse', 'correct'])('requires a verified wallet for %s', async operation => {
     const ctx = { runAction: vi.fn(async () => true), runQuery: vi.fn(async () => null), runMutation: vi.fn() };

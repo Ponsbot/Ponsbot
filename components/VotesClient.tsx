@@ -13,38 +13,56 @@ const amount = (raw: string, decimals: number) => Number(formatUnits(BigInt(raw)
 const short = (s: string) => `${s.slice(0, 6)}…${s.slice(-4)}`;
 export function VotesClient({ code }: { code?: string }) {
   const [auth, setAuth] = useState<Auth>({ authenticated: false });
-  const [votingWallet, setVotingWallet] = useState<string | null>(null);
+  const [externalWallet, setVotingWallet] = useState<string | null>(null);
+  const [walletSource, setWalletSource] = useState<'pons' | 'external'>('external');
+  const votingWallet = walletSource === 'pons' ? auth.walletAddress ?? null : externalWallet;
   const [poll, setPoll] = useState<Poll | null>(null), [items, setItems] = useState<Poll[]>([]), [closed, setClosed] = useState(false), [next, setNext] = useState<number | null>(null);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState(''), [loadError, setLoadError] = useState('');
-  const [token, setToken] = useState(''), [question, setQuestion] = useState(''), [options, setOptions] = useState('Yes\nNo'), [hours, setHours] = useState('24'), [minimum, setMinimum] = useState('0.1');
+  const [token, setToken] = useState(''), [question, setQuestion] = useState(''), [options, setOptions] = useState('Yes, No'), [duration, setDuration] = useState('24'), [durationUnit, setDurationUnit] = useState<'hours' | 'days'>('hours'), [minimum, setMinimum] = useState('0.1');
   const [choice, setChoice] = useState(''), [ca, setCa] = useState('');
   const [creating, setCreating] = useState(false);
   const request = useRef<{ payload: string; id: string } | null>(null);
   const activeLoad = useRef(0);
-  const expandedList = useRef(false);
+  const loadedPages = useRef(1);
+  const loadPending = useRef(false);
   const load = useCallback(async (cursor?: number) => {
+    if (loadPending.current) return;
+    loadPending.current = true;
     const sequence = ++activeLoad.current;
     try {
-      const r = await fetch(`/api/votes?${code ? `code=${encodeURIComponent(code)}` : `closed=${closed}${cursor ? `&cursor=${cursor}` : ''}`}`, { cache: 'no-store' });
-      const d = await r.json(); if (!r.ok) throw new Error(d.error || 'Could not load polls.');
+      let d: { poll?: Poll; items?: Poll[]; next?: number | null } = {};
+      const refreshed: Poll[] = [];
+      let pageCursor = cursor;
+      for (let page = 0; page < (code || cursor ? 1 : loadedPages.current); page++) {
+        const r = await fetch(`/api/votes?${code ? `code=${encodeURIComponent(code)}` : `closed=${closed}${pageCursor ? `&cursor=${pageCursor}` : ''}`}`, { cache: 'no-store' });
+        const response = await r.json(); if (!r.ok) throw new Error(response.error || 'Could not load polls.');
+        d = response; refreshed.push(...(d.items ?? [])); pageCursor = d.next ?? undefined;
+        if (!pageCursor) break;
+      }
       if (sequence !== activeLoad.current) return;
-      if (code) setPoll(d.poll); else { if (cursor) expandedList.current = true; setItems(old => cursor ? [...old, ...d.items] : d.items); setNext(d.next); }
+      if (code) setPoll(d.poll ?? null); else {
+        if (cursor) loadedPages.current++;
+        setItems(old => [...new Map((cursor ? [...old, ...refreshed] : refreshed).map(p => [p.code, p])).values()]); setNext(d.next ?? null);
+      }
       setLoadError('');
     } catch (e) { if (sequence === activeLoad.current) setLoadError(e instanceof Error ? e.message : 'Could not load polls.'); }
+    finally { loadPending.current = false; }
   }, [code, closed]);
   useEffect(() => {
     const loadState = activeLoad;
-    expandedList.current = false;
-    void load(); const until = Date.now() + 300000;
-    const timer = setInterval(() => { if (!document.hidden && !expandedList.current && Date.now() < until) void load(); }, 15000);
-    return () => { clearInterval(timer); loadState.current++; };
+    loadedPages.current = 1;
+    void load();
+    const refresh = () => { if (!document.hidden) void load(); };
+    const timer = setInterval(refresh, 10000);
+    window.addEventListener('focus', refresh); document.addEventListener('visibilitychange', refresh);
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); loadState.current++; };
   }, [load]);
   useEffect(() => { let live = true; fetch('/api/auth/x/session', { cache: 'no-store' }).then(r => r.json()).then(d => { if (live) setAuth(d); }).catch(() => {}); return () => { live = false; }; }, []);
   async function act(operation: 'create' | 'vote' | 'endorse' | 'correct', spec?: PollSpec) {
     if (busy) return;
-    if (!votingWallet) { setMessage('Connect Wallet and sign to verify it before continuing.'); return; }
+    if (!votingWallet) { setMessage(walletSource === 'pons' ? 'Sign in with X to use your Pons Bot wallet.' : 'Connect external wallet and sign to verify it before continuing.'); return; }
     setBusy(true); setMessage('');
-    const payload = JSON.stringify({ operation, code, expectedWallet: votingWallet, ...(spec ? { spec } : {}), ...(operation === 'vote' ? { choice } : operation === 'correct' ? { choice: ca } : {}) });
+    const payload = JSON.stringify({ operation, code, walletSource, expectedWallet: votingWallet, ...(spec ? { spec } : {}), ...(operation === 'vote' ? { choice } : operation === 'correct' ? { choice: ca } : {}) });
     if (request.current?.payload !== payload) request.current = { payload, id: crypto.randomUUID() };
     try {
       const r = await fetch('/api/votes', { method: 'POST', headers: { 'content-type': 'application/json', 'x-pons-csrf': auth.csrfToken ?? '' }, body: JSON.stringify({ ...JSON.parse(payload), eventId: request.current.id }) });
@@ -56,18 +74,20 @@ export function VotesClient({ code }: { code?: string }) {
   const signIn = `/api/auth/x/start?returnTo=${encodeURIComponent(code ? `/votes/${code}` : '/votes')}`;
   const largestTotal = poll?.totals.reduce((n, x) => BigInt(x) > n ? BigInt(x) : n, 0n) ?? 0n;
   const winners = poll?.options.filter((_, i) => BigInt(poll.totals[i]) === largestTotal) ?? [];
-  const signInNotice = <div className={styles.notice}>{!auth.authenticated && <p><a href={signIn}>Sign in with X</a> to access the voting preview.</p>}<VoteWalletConnect csrf={auth.csrfToken} onChange={setVotingWallet} disabled={busy} /></div>;
   return <section className={styles.page}>
-    <header className={styles.heading}><div><Link href='/votes'>Community voting</Link><h1>{code ? 'Token-holder vote' : 'Pons Bot Voting'}</h1><p>Create a poll, give holders a voice, and follow the results.</p></div>{!code && <button onClick={() => setCreating(x => !x)}>{creating ? 'Browse polls' : 'Create a vote'}</button>}</header>
-    {signInNotice}
+    <header className={styles.heading}><div><Link href='/votes'>Community voting</Link><h1>{code ? 'Token-holder vote' : 'Token-Gated Voting'}</h1><p>Create a poll, give holders a voice, and follow the results.</p>{!code && <button onClick={() => setCreating(x => !x)}>{creating ? 'Browse polls' : 'Create a vote'}</button>}</div><div className={styles.walletConnect}><VoteWalletConnect csrf={auth.csrfToken} onChange={setVotingWallet} disabled={busy} />
+      <label>Use for voting<select value={walletSource} disabled={busy} onChange={e => setWalletSource(e.target.value as 'pons' | 'external')}><option value='external'>External wallet{externalWallet ? ` (${short(externalWallet)})` : ''}</option><option value='pons'>Pons Bot wallet{auth.walletAddress ? ` (${short(auth.walletAddress)})` : ''}</option></select></label>
+      <div className={styles.officialNotice}>{!code ? <><strong>You are creating a Community vote by default.</strong><p>Use the Pons Bot or external wallet that launched the token or holds its rights to create an Official vote. Eligibility is checked on-chain when you create it.</p></> : <p>The launcher or current rights holder can use their Pons Bot or external wallet to make a Community vote Official.</p>}</div>
+    </div></header>
+    {!auth.authenticated && <p className={styles.notice}><a href={signIn}>Sign in with X</a> to access the voting preview.</p>}
     {loadError && <p role='alert' className={styles.notice}>{loadError} <button onClick={() => void load()}>Retry</button></p>}
     {message && <p role='status' className={styles.message}>{message}</p>}
-    {!code && creating && <form className={styles.form} onSubmit={e => { e.preventDefault(); void act('create', { token, question, options: options.split('\n').map(x => x.trim()).filter(Boolean), durationMinutes: Number(hours) * 60, minimumHoldingPercent: Number(minimum) }); }}>
-      <h2>Create a vote</h2><p>Anyone can create a Community poll. A verified token launcher or fee-rights holder creates an Official poll. Polls are advisory and never move funds.</p>
+    {!code && creating && <form className={styles.form} onSubmit={e => { e.preventDefault(); void act('create', { token, question, options: options.split(/[,\n]/).map(x => x.trim()).filter(Boolean), durationMinutes: Number(duration) * (durationUnit === 'days' ? 1440 : 60), minimumHoldingPercent: Number(minimum) }); }}>
+      <h2>Create a vote</h2><p>Anyone can create a Community poll. A verified token launcher, fee-rights holder, or supported contract owner creates an Official poll. Tokens do not need to be launched through Pons Bot. Polls are advisory and never move funds.</p>
       <label>Token ticker, contract, or both<input required maxLength={160} value={token} onChange={e => setToken(e.target.value)} placeholder='$PONSBOT or 0x…' /></label>
       <label>Question<textarea required maxLength={400} value={question} onChange={e => setQuestion(e.target.value)} /></label>
-      <label>Options, one per line (2–8)<textarea required value={options} maxLength={648} onChange={e => setOptions(e.target.value)} rows={4} /></label>
-      <div className={styles.fields}><label>Duration in hours (1–168)<input type='number' required min={1} max={168} step={0.5} value={hours} onChange={e => setHours(e.target.value)} /></label><label>Minimum holding, % of total supply<input type='number' required min={0} max={100} step={0.000001} value={minimum} onChange={e => setMinimum(e.target.value)} /></label></div>
+      <label>Options, separated by commas (2–8)<textarea required value={options} maxLength={648} onChange={e => setOptions(e.target.value)} rows={3} placeholder='Yes, No, Abstain' /></label>
+      <div className={styles.fields}><label>Voting duration (1 hour to 7 days)<input type='number' required min={durationUnit === 'days' ? 0.5 : 1} max={durationUnit === 'days' ? 7 : 168} step={0.5} value={duration} onChange={e => setDuration(e.target.value)} /><select aria-label='Duration unit' value={durationUnit} onChange={e => { const unit = e.target.value as 'hours' | 'days'; setDuration(unit === 'days' ? '1' : '24'); setDurationUnit(unit); }}><option value='hours'>Hours</option><option value='days'>Days</option></select></label><label>Minimum holding, % of total supply<input type='number' required min={0} max={100} step={0.000001} value={minimum} onChange={e => setMinimum(e.target.value)} /></label></div>
       <p>0% allows any positive directly held balance. Voting power is fixed at the snapshot. Liquidity, locker, and burn exclusions are listed on the finished poll.</p>
       <button disabled={busy || !votingWallet}>{busy ? 'Preparing…' : 'Create vote'}</button>
     </form>}

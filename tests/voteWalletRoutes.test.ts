@@ -60,3 +60,10 @@ it('passes the cookie proof, not a caller-provided token, to voting', async () =
   const response = await vote(request({ operation: 'vote', eventId: 'valid-event-123', expectedWallet: address, choice: '1', walletToken: 'forged' }, { cookie: `${headers.cookie}; ${VOTE_WALLET_COOKIE}=${token}` }));
   expect(response.status).toBe(200); expect(action.mock.calls[0][1]).toMatchObject({ walletToken: token, expectedWallet: address });
 });
+it('permits an explicit Pons wallet selection through the authenticated server session', async () => {
+  action.mockResolvedValue({ ok: true });
+  const response = await vote(request({ operation: 'vote', eventId: 'valid-event-123', expectedWallet: address, choice: '1', walletSource: 'pons' }));
+  expect(response.status).toBe(200);
+  expect(action.mock.calls[0][1]).toMatchObject({ owner: VOTING_PREVIEW_X_ID, sessionId: session.sessionId, walletSource: 'pons' });
+  expect(action.mock.calls[0][1].walletToken).toBeUndefined();
+});
