@@ -1,5 +1,5 @@
 import { createPublicClient, decodeEventLog, erc20Abi, fallback, http, formatUnits, keccak256, parseAbiItem, stringToHex, zeroAddress, type Address, type Hex } from "viem";
-import { reliableHttp } from "./rpc-http";
+import { reliableHttp, resilientRobinhoodHttp } from "./rpc-http";
 import { geckoSharedFetch } from "./gecko-shared";
 import { DELTA_LIQUIDITY, type LiquidityCandidate, type LiquidityDraft, type LiquidityFields } from "./liquidity-workflow";
 import { liquidityPoolId, liquidityPoolKey, liquidityReadAbi } from "./liquidity-contracts";
@@ -23,8 +23,10 @@ const GECKO_LIVE_RESPONSE_MAX_AGE_MS = 10 * 60_000;
 // authorize a position: its descriptor, live liquidity and price are checked
 // against canonical contracts at the current block before use.
 const GECKO_INTERACTIVE_FALLBACK_MAX_AGE_MS = Number.POSITIVE_INFINITY;
-export function liquidityRpc() {
-  return createPublicClient({ transport: reliableHttp("https://rpc.mainnet.chain.robinhood.com", { batch: true, timeout: 15_000 }) });
+export function liquidityRpc(quotePreparation = false) {
+  return createPublicClient({ transport: quotePreparation
+    ? resilientRobinhoodHttp(undefined, { batch: true, timeout: 10_000 })
+    : reliableHttp("https://rpc.mainnet.chain.robinhood.com", { batch: true, timeout: 15_000 }) });
 }
 /** Analysis only: bounded individual reads use the configured RPC (Alchemy),
  * then the public RPC. Execution transport and wallet authorization are unchanged. */

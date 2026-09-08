@@ -1,5 +1,28 @@
 import { describe, expect, it } from "vitest";
 import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
+import { retryLiquidityQuote } from "../lib/liquidity-recovery";
+
+describe('read-only quote retries', () => {
+  it('recovers an intermittent internal quote failure without a manual refresh', async () => {
+    let calls = 0;
+    const result = await retryLiquidityQuote(async () => { if (++calls < 3) throw Error('SIGNER_INTERNAL_FAILURE'); return 'quote'; }, () => 0, async () => {});
+    expect(result).toBe('quote'); expect(calls).toBe(3);
+  });
+  it.each(['INSUFFICIENT_FUNDS', 'SIMULATION_OR_REVERT', 'LP_INVALID_POOL_SPACING', 'LP_SIGNER_HTTP_401', 'LP_QUOTE_SIGNING_NOT_CONFIGURED'])('does not retry a deterministic rejection: %s', code => {
+    let calls = 0;
+    return expect(retryLiquidityQuote(async () => { calls++; throw Error(code); }, () => 0, async () => {})).rejects.toThrow(code).then(() => expect(calls).toBe(1));
+  });
+  it('stops at three attempts on a persistent provider failure', async () => {
+    let calls = 0;
+    await expect(retryLiquidityQuote(async () => { calls++; throw Error('LP_SIGNER_RPC_UNAVAILABLE'); }, () => 0, async () => {})).rejects.toThrow('LP_SIGNER_RPC_UNAVAILABLE');
+    expect(calls).toBe(3);
+  });
+  it('shares one two-minute deadline instead of multiplying timeouts', async () => {
+    let time = 0, calls = 0;
+    await expect(retryLiquidityQuote(async remaining => { expect(remaining).toBe(120000); calls++; time += 115000; throw Error('SIGNER_INTERNAL_FAILURE'); }, () => time, async () => {})).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+});
 
 describe("liquidity execution windows and private diagnostics", () => {
   it("leaves time for inclusion and rejects missing or non-finite deadlines", () => {

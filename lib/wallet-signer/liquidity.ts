@@ -302,7 +302,9 @@ export async function quoteLiquidity(raw: unknown): Promise<LiquidityQuotePlan> 
   const input = liquiditySignerRequest.parse(raw), d = input.draft, f = d.fields;
   if (input.walletRef.toLowerCase() !== input.expectedFrom.toLowerCase()) throw new Error("Wallet mismatch");
   const owner = input.expectedFrom.toLowerCase() as Address;
-  const c = liquidityRpc();
+  // Quote reads use the configured provider with a read-only public fallback.
+  // A public endpoint interruption must not be the sole quote failure point.
+  const c = liquidityRpc(true);
   if (input.claimPositions) {
     if (d.operation !== "claim") throw new Error("LP_INVALID_CLAIM_BATCH");
     const seen = new Set<string>();

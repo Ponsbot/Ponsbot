@@ -29,7 +29,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-function errorResponse(error: unknown) {
+function errorResponse(error: unknown, liquidityQuote = false) {
   if (error instanceof ZodError) {
     const diagnosticDetail = redactSignerDiagnostic(error.issues.slice(0, 8).map((issue) => `${issue.path.join(".") || "request"}: ${issue.message}`).join("; "));
     console.error("wallet_signer_zod_error", { diagnosticCode: "INVALID_SIGNER_REQUEST", diagnosticDetail });
@@ -46,7 +46,7 @@ function errorResponse(error: unknown) {
       ? error.message
       : String(error);
 
-  const diagnosticCode = message === "nothing to sweep" ? "EMPTY_CURVE_SWEEP" : /^(?:LP_|LIQUIDITY_|DELTA_|V3_ROUTE_)[A-Z0-9_]+/.exec(message)?.[0] || (/insufficient|exceeds the balance/i.test(message) ? "INSUFFICIENT_FUNDS"
+  const diagnosticCode = liquidityQuote && /timeout|timed out|fetch failed|socket|ECONNRESET|ETIMEDOUT|network request|HTTP request failed|429|503|502|header not found|block not found/i.test(message) ? "LP_SIGNER_RPC_UNAVAILABLE" : message === "nothing to sweep" ? "EMPTY_CURVE_SWEEP" : /^(?:LP_|LIQUIDITY_|DELTA_|V3_ROUTE_)[A-Z0-9_]+/.exec(message)?.[0] || (/insufficient|exceeds the balance/i.test(message) ? "INSUFFICIENT_FUNDS"
     : /no claimable creator fees/i.test(message) ? "NO_CLAIMABLE_CREATOR_FEES"
       : /creator fee recipient|fee beneficiary/i.test(message) ? "CREATOR_FEE_AUTHORIZATION_FAILED"
         : /simulation|revert/i.test(message) ? "SIMULATION_OR_REVERT"
@@ -341,7 +341,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     return NextResponse.json({ error: "not found" }, { status: 404 });
   } catch (error) {
     if (error instanceof RequestBodyError) return NextResponse.json({ error: error.message }, { status: error.status });
-    return errorResponse(error);
+    return errorResponse(error, (await context.params).path.join("/") === "v1/liquidity/quote");
   }
 }
 

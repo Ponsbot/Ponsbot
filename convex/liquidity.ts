@@ -17,6 +17,7 @@ import { liquidityNftLines } from "../lib/liquidity-nfts";
 import { formatLiquidityMarketCap } from "../lib/liquidity-market-cap";
 import { decodeFunctionData, keccak256, stringToHex, TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
 import { liquidityDiagnostic, liquidityExecutionWindowOpen, liquidityFundedRetryPrefix, liquidityRecoveryDue, liquidityRecoveryStopped, liquiditySignerResponse, liquidityStepIdempotencyKey, LIQUIDITY_WRITE_ATTEMPTS, LIQUIDITY_TOTAL_ATTEMPTS } from "../lib/liquidity-recovery";
+import { retryLiquidityQuote } from "../lib/liquidity-recovery";
 import { validateLiquidityQuote, validateLiquidityEnvelope, validateLiquiditySignature, validateLiquidityFinalReceipt, validateLiquidityOpenRefresh } from "../lib/liquidity-wire";
 import { withGuidedHelpCompletion } from "../lib/guided-help-workflow";
 import { liquidityClaimTotalLine, mergeLiquidityClaimedFees, parseLiquidityClaimedFee, type LiquidityClaimedFee } from "../lib/liquidity-claimed-fees";
@@ -370,8 +371,11 @@ export const hasClaimableLpFees = internalAction({
 async function signer<T>(path: string, body: unknown, timeout = 120_000): Promise<T> {
   const base = process.env.WALLET_SIGNER_URL?.trim() || `${process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "")}/api/wallet-signer`;
   if (!base.startsWith("https://") || !process.env.WALLET_SIGNER_TOKEN) throw new Error("Signer not configured");
-  const response = await fetch(`${base.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
-  return liquiditySignerResponse<T>(response);
+  const read = async (remaining: number) => {
+    const response = await fetch(`${base.replace(/\/$/, "")}${path}`, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(Math.min(timeout, remaining)) });
+    return liquiditySignerResponse<T>(response);
+  };
+  return path === "/v1/liquidity/quote" ? retryLiquidityQuote(read) : read(timeout);
 }
 async function positionStatusPages(ctx: ActionCtx, ownerXUserId: string, source: "x" | "terminal" | "telegram", position?: string, cursor?: string, view?: "nfts", token?: string) {
   if (view === "nfts" && !position) return { pages: ["Tell me one position's LP ID to see its NFTs. Example: Show me the NFTs for position LP-1234ABCD"], cursor: undefined };

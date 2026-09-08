@@ -65,3 +65,19 @@ export async function liquiditySignerResponse<T>(response: Response): Promise<T>
   if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("LP_SIGNER_INVALID_RESPONSE");
   return result as T;
 }
+
+/** Quote preparation has no blockchain writes. Never apply these retries to
+ * signing, funding, broadcasting, or execution endpoints. */
+export async function retryLiquidityQuote<T>(read: (remainingMs: number) => Promise<T>, now = Date.now, pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))) {
+  const deadline = now() + 120_000;
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(Math.max(1, deadline - now())); }
+    catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      const transient = /^(?:SIGNER_INTERNAL_FAILURE|LP_SIGNER_RPC_UNAVAILABLE|LP_SIGNER_HTTP_(?:408|425|429|500|502|503|504)(?:_INVALID_JSON)?)$/.test(code)
+        || (error instanceof Error && (/^(?:TimeoutError|AbortError)$/.test(error.name) || /^(?:fetch failed|Failed to fetch)$/.test(code)));
+      if (!transient || attempt >= 2 || deadline - now() < 10_000) throw error;
+      await pause(1000 * (attempt + 1));
+    }
+  }
+}
