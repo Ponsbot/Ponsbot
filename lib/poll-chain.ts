@@ -1,4 +1,4 @@
-import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, createPublicClient, http, parseAbi, type Address, zeroAddress } from 'viem';
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError, createPublicClient, http, parseAbi, formatUnits, type Address, zeroAddress } from 'viem';
 import { geckoSharedFetch } from './gecko-shared';
 import { PollPreparationError } from './poll-diagnostics';
 import { DEFAULT_PONS_V2_FACTORY } from './pons-runtime-defaults';
@@ -144,4 +144,15 @@ export async function pollVotingBalance(token: string, wallet: string, a: PollAn
   await assertPollBlock(a);
   const balance = await pollRpc().readContract({ address: token as Address, abi: pollTokenAbi, functionName: 'balanceOf', args: [wallet as Address], blockNumber: BigInt(a.block) });
   return balance.toString();
+}
+export async function pollCurrentMarketCap(token: string, supply: string, decimals: number): Promise<string> {
+  const response = await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/${token.toLowerCase()}`, 60_000, 8000, false, false, Date.now() - 60_000, 'interactive');
+  if (!response.ok) throw Error('Current market cap unavailable');
+  const payload = await response.json() as { data?: { attributes?: { address?: string; market_cap_usd?: string; price_usd?: string } } };
+  const a = payload.data?.attributes;
+  if (a?.address?.toLowerCase() !== token.toLowerCase()) throw Error('Current market cap unavailable');
+  const suppliedCap = Number(a.market_cap_usd);
+  const cap = suppliedCap > 0 && Number.isFinite(suppliedCap) ? suppliedCap : Number(a.price_usd) * Number(formatUnits(BigInt(supply), decimals));
+  if (!Number.isFinite(cap) || cap <= 0) throw Error('Current market cap unavailable');
+  return cap.toLocaleString('en-US', { useGrouping: false, maximumFractionDigits: 20 });
 }

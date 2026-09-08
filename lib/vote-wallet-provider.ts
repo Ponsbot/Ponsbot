@@ -4,6 +4,10 @@ export type VotingProvider = {
   removeListener?: (event: string, fn: () => void) => void;
 };
 
+export function votingIdentity(external: string | null, pons: string | undefined, allowPons: boolean, busy: boolean) {
+  return { source: allowPons ? 'pons' as const : 'external' as const, address: busy ? null : allowPons ? pons ?? null : external };
+}
+
 // Subscribe before checking the account, so a change during either RPC is not lost.
 export async function bindVotingProvider(provider: VotingProvider, address: string, changed: () => void) {
   if (!provider.on || !provider.removeListener) throw new Error('This wallet cannot monitor account changes. Use another browser wallet.');

@@ -81,14 +81,14 @@ describe('flexible vote creation', () => {
   });
 });
 describe('guided creation', () => {
-  it('collects each setting and confirms with the default threshold', () => {
+  it('collects each setting and creates immediately after the minimum answer', () => {
     let draft = parsePollDraft('create a vote')!;
     let step = nextPollStep(draft);
-    for (const input of [`$TOKEN ${ca}`, 'What should we do?', 'Yes, No, Abstain', '2 days', 'default']) {
+    for (const input of [`$TOKEN ${ca}`, 'What should we do?', 'Yes, No, Abstain', '2 days']) {
       const next = advancePollDraft(draft, step, input); expect(next.state).toBe('active'); draft = next.draft; step = next.step;
     }
-    expect(step).toBe('confirm');
-    const result = advancePollDraft(draft, step, '@Ponsbotfamily confirm!');
+    expect(step).toBe('minimum');
+    const result = advancePollDraft(draft, step, '@Ponsbotfamily yes!');
     expect(result.state).toBe('ready'); expect(result.draft).toMatchObject({ minimumHoldingPercent: 0.1, options: ['Yes', 'No', 'Abstain'], durationMinutes: 2880 });
   });
   it('preserves prefilled fields and validates a custom threshold', () => {

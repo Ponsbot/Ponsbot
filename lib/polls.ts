@@ -1,4 +1,5 @@
-export type PollSpec = { token: string; question: string; options: string[]; durationMinutes: number; minimumHoldingPercent: number };
+import { parsePollMinimum, validatePollMinimum, type PollMinimum } from './poll-minimum';
+export type PollSpec = { token: string; question: string; options: string[]; durationMinutes: number; minimumHoldingPercent: number; minimumHolding?: PollMinimum };
 export type PollDraft = Partial<PollSpec>;
 // User-authored question/option text must not create mentions, hashtags, or
 // cashtags in the bot's posts. Keep raw metadata separate from display text.
@@ -47,6 +48,10 @@ export function parsePollDraft(text: string): PollDraft | null {
       if (!token) throw new Error('⚠️ Provide a ticker, a contract, or both for the same token.');
     }
     const draft: PollDraft = { ...(token ? { token } : {}), minimumHoldingPercent: 0.1 };
+    const customHolder = input.match(/(?:[,;\n]\s*|\s+)(?:minimum(?:\s+(?:token\s+)?holdings?)?|min\s+holding|holders?)\s*[:=]?\s*(\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?[km]?\s*(?:%|tokens?|usd|dollars?)?)[.!]?\s*$/i);
+    if (customHolder) { Object.assign(draft, parsePollMinimum(customHolder[1])); input = input.slice(0, customHolder.index).trim(); }
+    const amountTail = !customHolder && input.match(/(?:[,;\n]\s*|\s+)(\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?[km]?\s*(?:tokens?|usd|dollars?)?)[.!]?\s*$/i);
+    if (amountTail && durationTail.test(input.slice(0, amountTail.index).trim())) { Object.assign(draft, parsePollMinimum(amountTail[1])); input = input.slice(0, amountTail.index).trim(); }
     const holder = input.match(/(?:[,;\n]\s*|\s+)((?:(?:minimum\s+holding|min\s+holding|holder\s*%|holders?|minimum)\s*[:=]?\s*)?)(\d+(?:\.\d+)?)\s*%[.!]?\s*$/i);
     if (holder && (holder[1].trim() || durationTail.test(input.slice(0, holder.index).trim()))) {
       draft.minimumHoldingPercent = Number(holder[2]); input = input.slice(0, holder.index).trim();
@@ -99,14 +104,15 @@ export function parsePollDraft(text: string): PollDraft | null {
       draft.options = (ending ? value.slice(0, ending.index) : value).split(/[,;\n|]/).map(x => x.trim()).filter(Boolean);
     }
     else if (key === 'durationMinutes') { if (draft.durationMinutes !== undefined) throw new Error('Provide only one duration.'); draft.durationMinutes = pollDuration(value); }
-    else { if (!/^\d+(?:\.\d+)?\s*%[.!]?$/.test(value)) throw new Error('Provide the minimum holding as a percentage.'); draft.minimumHoldingPercent = Number(value.replace(/\s*%[.!]?$/, '')); }
+    else Object.assign(draft, parsePollMinimum(value));
   }
   // Validate supplied values even when the rest will be collected interactively.
   validatePollSpec({ token: 'TOKEN', question: 'Question', options: ['Yes', 'No'], durationMinutes: 60, ...draft } as PollSpec);
   return draft;
 }
-export const POLL_EXAMPLE = '🗳️ Create a vote for $TOKEN Your question? Options: Yes, No, 1 day\n\nUse one line or several. “Options” is optional; separate choices with commas. You can supply a ticker, contract, or both. Use 2–8 options and a duration of 1 hour to 7 days. Minimum holding defaults to 0.1% of total supply. Add “Minimum holding: 0.05%” at the end to set your own.';
+export const POLL_EXAMPLE = '🗳️ Create a vote for $TOKEN Your question? Options: Yes, No, 1 day\n\nUse one line or several. “Options” is optional; separate choices with commas. You can supply a ticker, contract, or both. Use 2–8 options and a duration of 1 hour to 7 days. Minimum holding defaults to 0.1% of total supply. Add “Minimum holding: 0.05%”, “Minimum holding: $100”, or “Minimum holding: 10,000 tokens”. Dollar amounts are converted to a fixed token amount when the poll is created.';
 export function validatePollSpec(value: PollSpec): PollSpec {
+  validatePollMinimum(value.minimumHolding);
   const token = value.token.trim(), question = value.question.trim();
   const options = value.options.map(x => x.trim());
   if (!token || token.length > 160 || !question || question.length > 400 || /[\u0000-\u001f]/.test(question)
@@ -138,9 +144,21 @@ export function pollTokenIdentity(text: string) {
   return { address: addresses[0]?.toLowerCase(), ticker: ticker || undefined };
 }
 export function pollChoice(text: string, options: string[]) {
+  const input = pollInputText(text);
+  if (/^[1-8][.!]*$/.test(input) && Number(input.replace(/[.!]/g, '')) <= options.length) return Number(input.replace(/[.!]/g, '')) - 1;
+  const normalized = pollDisplayText(input).toLowerCase();
+  const exact = options.findIndex(x => pollDisplayText(x).toLowerCase() === normalized);
+  if (exact >= 0) return exact;
+  const punctuated = options.findIndex(x => pollDisplayText(x).toLowerCase().replace(/[.!?]+$/, '') === normalized.replace(/[.!?]+$/, ''));
+  if (punctuated >= 0) return punctuated;
   const choice = text.trim().replace(/^(?:vote|cast\s+(?:my\s+)?vote)\s*/i, '').replace(/^POLL-[a-f0-9]+\s*/i, '').replace(/^(?:for\s+|option\s*)/i, '').replace(/[.!]+$/, '').trim();
   if (/^[1-8]$/.test(choice) && Number(choice) <= options.length) return Number(choice) - 1;
   return options.findIndex(x => pollDisplayText(x).toLowerCase() === pollDisplayText(choice).toLowerCase());
+}
+export function pollCorrectionAddress(text: string): string {
+  const value = pollInputText(text).replace(/^(?:(?:ca|contract(?:\s+address)?|address)\s*:?\s*)+/i, '').replace(/[.!?,;]+$/, '').trim();
+  if (!/^0x[0-9a-f]{40}$/i.test(value)) throw new Error('Please supply a full contract address.');
+  return value;
 }
 export function pollPercent(part: string, whole: string) {
   return BigInt(whole) > 0n ? Number(BigInt(part) * 1_000_000n / BigInt(whole)) / 10_000 : 0;
@@ -164,6 +182,6 @@ export function pollTokenLabel(symbol: string, address?: string) {
   const suffix = address && /^0x[0-9a-f]{40}$/i.test(address) ? ` (${address.slice(0, 6)}...${address.slice(-4)})` : '';
   return `$${pollDisplayText(symbol)}${suffix}`;
 }
-export function pollCreatedText(p: { code: string; symbol: string; tokenAddress?: string; question: string; options: string[]; official: boolean; endsAt: number; minimumHoldingPercent: number }) {
-  return `🗳️ Vote created: ${p.code}\n${p.official ? 'Official' : 'Community'} ${pollTokenLabel(p.symbol, p.tokenAddress)} poll\n\n${pollDisplayText(p.question)}\n\n${p.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}`).join('\n')}\n\nMinimum holding: ${p.minimumHoldingPercent}% of total supply at the snapshot.\nCloses: ${new Date(p.endsAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}\nReply to this post with the option number or option text to vote using your Pons Bot wallet, or vote on the website. Votes cannot be changed.\n${pollUrl(p.code)}`;
+export function pollCreatedText(p: { code: string; symbol: string; tokenAddress?: string; question: string; options: string[]; official: boolean; endsAt: number; minimumHoldingPercent: number; minimumHoldingText?: string }) {
+  return `🗳️ Vote created: ${p.code}\n${p.official ? 'Official' : 'Community'} ${pollTokenLabel(p.symbol, p.tokenAddress)} poll\n\n${pollDisplayText(p.question)}\n\n${p.options.map((x, i) => `${i + 1}. ${pollDisplayText(x)}`).join('\n')}\n\nMinimum holding: ${p.minimumHoldingText ?? `${p.minimumHoldingPercent}% of total supply at the snapshot`}.\nCloses: ${new Date(p.endsAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}\n\nReply to this post with the option number or option text to vote using your Pons Bot wallet, or vote using an external wallet on the website.\n\nCheck results or vote on the website here:\n${pollUrl(p.code)}`;
 }

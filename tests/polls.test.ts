@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../lib/voting-access', async original => ({ ...await original<typeof import('../lib/voting-access')>(), X_VOTING_ENABLED: true }));
 import { parsePollCreate, pollTokenIdentity, pollChoice, updatePollTotals, validatePollSpec, pollPercent, isPollCancel } from '../lib/polls';
-import { saveVote, correctToken, close, cancel } from '../convex/polls';
+import { saveVote, correctToken, close, cancel, list } from '../convex/polls';
 
 const ca = '0x1111111111111111111111111111111111111111';
 const command = 'Create a vote for $PONSBOT\nQuestion: Make a change?\nOptions: Yes, No\nTime: 1 day';
@@ -35,8 +35,8 @@ function fixture() {
   const db = {
     query(name: string) {
       const filters: ((r: Row) => boolean)[] = [];
-      const index = { eq(k: string, v: unknown) { filters.push(r => r[k] === v); return index; } };
-      const q = { withIndex(_name: string, f: any) { f(index); return q; }, unique: async () => tables[name].find(r => filters.every(f => f(r))) ?? null };
+      const index = { eq(k: string, v: unknown) { filters.push(r => r[k] === v); return index; }, lt(k: string, v: number) { filters.push(r => r[k] < v); return index; } };
+      const q = { withIndex(_name: string, f: any) { f(index); return q; }, order: () => q, take: async (n: number) => tables[name].filter(r => filters.every(f => f(r))).sort((a, b) => b.createdAt - a.createdAt).slice(0, n), unique: async () => tables[name].find(r => filters.every(f => f(r))) ?? null };
       return q;
     },
     async insert(name: string, data: Row) { const id = `${name}-${tables[name].length}`; tables[name].push({ ...data, _id: id }); return id; },
@@ -46,6 +46,36 @@ function fixture() {
   const cast = (overrides: Row = {}) => invoke(saveVote, ctx, { code: p.code, wallet: '0xAbCd', xOwner: 'owner', option: 0, weight: '1000', event: 'x:first', source: 'x', eventOrder: '100', ...overrides });
   return { p, tables, ctx, cast };
 }
+
+describe('completed poll listing', () => {
+  it('publishes the winning option first without advisory boilerplate', async () => {
+    const f = fixture();
+    Object.assign(f.p, { xPostId: 'created-post', endsAt: Date.now() - 1, totals: ['100', '900'], votedWeight: '1000', voterCount: 2 });
+    f.p.snapshot.symbol = 'TEST';
+    await invoke(close, f.ctx, { code: f.p.code });
+    const text = (f.ctx.runMutation.mock.calls[0][1] as { text: string }).text;
+    expect(text).toContain('Winning option: No');
+    expect(text.indexOf('2. No: 90.00%')).toBeLessThan(text.indexOf('1. Yes: 10.00%'));
+    expect(text).not.toMatch(/Leading option|Advisory result/);
+  });
+  it('merges closed and cancelled polls newest first, without ongoing polls', async () => {
+    const f = fixture();
+    f.tables.polls.push({ ...f.p, code: 'closed', status: 'closed', createdAt: 10 }, { ...f.p, code: 'cancelled', status: 'cancelled', createdAt: 20 });
+    const result = await invoke(list, f.ctx, { closed: true });
+    expect(result.items.map((p: Row) => [p.code, p.status])).toEqual([['cancelled', 'cancelled'], ['closed', 'closed']]);
+    expect((await invoke(list, f.ctx, {})).items.map((p: Row) => p.code)).toEqual([f.p.code]);
+  });
+  it('paginates the combined completed list', async () => {
+    const f = fixture();
+    f.tables.polls = Array.from({ length: 45 }, (_, i) => ({ ...f.p, code: String(i), createdAt: i + 1, status: i % 2 ? 'closed' : 'cancelled' }));
+    const first = await invoke(list, f.ctx, { closed: true });
+    const second = await invoke(list, f.ctx, { closed: true, cursor: first.next });
+    expect(first.items).toHaveLength(30);
+    expect(second.items).toHaveLength(15);
+    expect(new Set([...first.items, ...second.items].map((p: Row) => p.code)).size).toBe(45);
+    expect(second.next).toBeNull();
+  });
+});
 describe('atomic wallet voting', () => {
   it.each(['cancel', 'cancel poll', 'Cancel votes!', 'please cancel this poll', '@Ponsbotfamily cancel vote'])('recognizes poll cancellation: %s', text => expect(isPollCancel(text)).toBe(true));
   it('does not interpret a discussion of cancellation as a command', () => expect(isPollCancel('Should we cancel this poll?')).toBe(false));
@@ -92,6 +122,6 @@ describe('atomic wallet voting', () => {
   it('still requires a positive balance when the custom threshold is zero', async () => { const f = fixture(); f.p.spec.minimumHoldingPercent = 0; await expect(f.cast({ weight: '0' })).rejects.toThrow('balance'); });
   it('rejects changed historical weight', async () => { const f = fixture(); await f.cast(); await expect(f.cast({ event: 'new', weight: '2000' })).rejects.toThrow('weight mismatch'); });
   it('rejects invalid option indexes', async () => { const f = fixture(); await expect(f.cast({ option: 8 })).rejects.toThrow('Invalid vote'); });
-  it('does not allow another user to correct a poll token', async () => { const f = fixture(); f.p.status = 'needs_token'; await expect(invoke(correctToken, f.ctx, { code: f.p.code, owner: 'outsider', address: ca })).rejects.toThrow('not waiting'); });
+  it('does not allow another user to correct a poll token', async () => { const f = fixture(); f.p.status = 'needs_token'; await expect(invoke(correctToken, f.ctx, { code: f.p.code, owner: 'outsider', address: ca })).rejects.toThrow('Only the creating wallet'); });
   it('expires token clarification after ten minutes', async () => { const f = fixture(); f.p.status = 'needs_token'; f.p.createdAt = Date.now() - 600001; await expect(invoke(correctToken, f.ctx, { code: f.p.code, owner: 'owner', address: ca })).rejects.toThrow('expired'); });
 });

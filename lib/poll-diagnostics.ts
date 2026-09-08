@@ -22,7 +22,7 @@ export function pollDiagnostic(stage: string, error: unknown): string {
     : /block|historical|archive/i.test(text) ? 'historical-block'
     : /network|fetch|RPC|503|502/i.test(text) ? 'provider-unavailable'
     : 'unclassified';
-  const known = ['token-resolution', 'metadata', 'main-pool', 'exclusion-balances', 'snapshot', 'rights', 'persist'];
+  const known = ['token-resolution', 'metadata', 'main-pool', 'exclusion-balances', 'snapshot', 'minimum-holdings', 'rights', 'persist'];
   const actual = error instanceof PollPreparationError ? error.stage : stage;
   return `stage=${known.includes(actual) ? actual : 'snapshot'}; cause=${category}`;
 }

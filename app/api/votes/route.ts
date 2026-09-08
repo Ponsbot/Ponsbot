@@ -3,9 +3,10 @@ import { ConvexHttpClient } from 'convex/browser';
 import { NextRequest, NextResponse } from 'next/server';
 import { api } from '@/convex/_generated/api';
 import { boundedJson } from '@/lib/bounded-json';
-import { readWebWalletSession, WEB_WALLET_SESSION_COOKIE, webWalletCsrfToken } from '@/lib/web-wallet-session';
+import { webWalletCsrfToken } from '@/lib/web-wallet-session';
+import { voteRequestSession } from '@/lib/vote-browser-session';
 import { validatePollSpec, type PollSpec } from '@/lib/polls';
-import { votingPreviewAllowed } from '@/lib/voting-access';
+import { votingPreviewAllowed, WEBSITE_VOTING_PUBLIC } from '@/lib/voting-access';
 import { VOTE_WALLET_COOKIE } from '@/lib/vote-wallet-auth';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,23 +14,24 @@ export const maxDuration = 60;
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status, headers: { 'cache-control': 'no-store' } });
 export async function GET(req: NextRequest) {
   const secret = process.env.WEB_AUTH_SECRET;
-  const session = secret ? readWebWalletSession(req.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, secret) : null;
-  if (!session || !votingPreviewAllowed(session.xUserId)) return json({ error: 'Not found.' }, 404);
+  const session = secret ? voteRequestSession(req, secret) : null;
+  if (!secret || (!WEBSITE_VOTING_PUBLIC && (!session || !votingPreviewAllowed(session.xUserId)))) return json({ error: 'Not found.' }, 404);
   if (!process.env.NEXT_PUBLIC_CONVEX_URL) return json({ error: 'Voting is not configured.' }, 503);
   const client = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL);
   const code = req.nextUrl.searchParams.get('code');
   if (code && !/^POLL-[A-Fa-f0-9]{16}$/.test(code)) return json({ error: 'Invalid poll identifier.' }, 400);
   try {
-    if (code) { const result = await client.action(api.polls.browse, { secret: secret!, owner: session.xUserId, sessionId: session.sessionId, code }); return 'poll' in result && result.poll ? json(result) : json({ error: 'Poll not found.' }, 404); }
+    const identity = { secret, owner: session?.xUserId ?? 'guest', sessionId: session?.sessionId ?? '0'.repeat(64) };
+    if (code) { const result = await client.action(api.polls.browse, { ...identity, code }); return 'poll' in result && result.poll ? json(result) : json({ error: 'Poll not found.' }, 404); }
     const cursorValue = req.nextUrl.searchParams.get('cursor');
     const cursor = cursorValue ? Number(cursorValue) : undefined;
     if (cursor !== undefined && (!Number.isSafeInteger(cursor) || cursor < 0)) return json({ error: 'Invalid page.' }, 400);
-    return json(await client.action(api.polls.browse, { secret: secret!, owner: session.xUserId, sessionId: session.sessionId, closed: req.nextUrl.searchParams.get('closed') === 'true', cursor }));
+    return json(await client.action(api.polls.browse, { ...identity, closed: req.nextUrl.searchParams.get('closed') === 'true', cursor }));
   } catch { return json({ error: 'Polls could not be loaded. Please retry.' }, 503); }
 }
 export async function POST(req: NextRequest) {
   const secret = process.env.WEB_AUTH_SECRET, url = process.env.NEXT_PUBLIC_CONVEX_URL, site = process.env.NEXT_PUBLIC_SITE_URL;
-  const session = secret ? readWebWalletSession(req.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, secret) : null;
+  const session = secret ? voteRequestSession(req, secret) : null;
   if (!secret || !session) return json({ error: 'Sign in with X to use your Pons Bot wallet.' }, 401);
   if (!votingPreviewAllowed(session.xUserId)) return json({ error: 'Not found.' }, 404);
   if (!url || !site) return json({ error: 'Voting is not configured.' }, 503);
@@ -39,6 +41,7 @@ export async function POST(req: NextRequest) {
   const walletToken = req.cookies.get(VOTE_WALLET_COOKIE)?.value;
   try {
     const body = await boundedJson(req, 8192) as { operation?: string; eventId?: string; code?: string; choice?: string; spec?: PollSpec; expectedWallet?: string; walletSource?: 'pons' | 'external' };
+    if (session.anonymous && body?.walletSource === 'pons') return json({ error: 'Sign in with X to use your Pons Bot wallet.' }, 401);
     if (body?.walletSource !== undefined && !['pons', 'external'].includes(body.walletSource)) return json({ error: 'Invalid wallet selection.' }, 400);
     if (body?.walletSource !== 'pons' && (!walletToken || !/^[a-f0-9]{64}$/.test(walletToken))) return json({ error: 'Connect external wallet and sign to verify it before continuing.' }, 401);
     if (!body || !['cancel', 'snapshotBalance', 'preview', 'create', 'vote', 'endorse', 'correct'].includes(body.operation ?? '') || !/^[a-zA-Z0-9_-]{12,100}$/.test(body.eventId ?? '')

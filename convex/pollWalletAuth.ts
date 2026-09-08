@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { isAddress, type Hex } from 'viem';
 import { action, internalMutation, internalQuery } from './_generated/server';
 import { internal } from './_generated/api';
-import { votingPreviewAllowed } from '../lib/voting-access';
+import { votingPreviewAllowed, anonymousVotingSession } from '../lib/voting-access';
 import { verifyVotingContractSignature } from '../lib/poll-wallet-chain';
 import { voteAuthHash, voteSignInMessage, verifyVoteSignature, validVoteSignIn, VOTE_CHALLENGE_TTL, VOTE_WALLET_TTL } from '../lib/vote-wallet-auth';
 
@@ -42,12 +42,12 @@ type AuthResult = { address?: string; expiresAt?: number; nonce?: string; messag
 export const web = action({ args: { secret: v.string(), owner: v.string(), sessionId: v.string(), operation: v.union(v.literal('challenge'), v.literal('verify'), v.literal('status'), v.literal('disconnect')),
   origin: v.string(), address: v.optional(v.string()), nonce: v.optional(v.string()), signature: v.optional(v.string()), token: v.optional(v.string()) }, handler: async (ctx, a): Promise<AuthResult> => {
   if (!process.env.WEB_AUTH_SECRET || a.secret !== process.env.WEB_AUTH_SECRET || !votingPreviewAllowed(a.owner)
-    || !await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId })) throw new Error('Unauthorized');
+    || (!anonymousVotingSession(a.owner, a.sessionId) && !await ctx.runAction(internal.polls.checkWebSession, { secret: a.secret, owner: a.owner, sessionId: a.sessionId }))) throw new Error('Unauthorized');
   const binding = await voteAuthHash(`${a.owner}:${a.sessionId}`);
   const hash = a.token && /^[a-f0-9]{64}$/.test(a.token) ? await voteAuthHash(a.token) : undefined;
   if (a.operation === 'status') { const s = hash ? await ctx.runQuery(internal.pollWalletAuth.session, { hash, binding }) : null; return s ? { address: s.address, expiresAt: s.expiresAt } : {}; }
   if (a.operation === 'disconnect') { if (hash) await ctx.runMutation(internal.pollWalletAuth.revoke, { hash, binding }); return {}; }
-  if (!await ctx.runMutation(internal.polls.gate, { key: `wallet-signin:${a.owner}`, limit: 12, window: 60000 })) throw new Error('Too many sign-in attempts');
+  if (!await ctx.runMutation(internal.polls.gate, { key: `wallet-signin:${a.owner === 'guest' ? a.sessionId : a.owner}`, limit: 12, window: 60000 })) throw new Error('Too many sign-in attempts');
   if (a.operation === 'challenge') {
     if (!a.address || !isAddress(a.address, { strict: false })) throw new Error('Invalid address');
     const nonce = crypto.randomUUID().replace(/-/g, '');

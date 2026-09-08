@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ConvexHttpClient } from 'convex/browser';
 import { api } from '@/convex/_generated/api';
 import { boundedJson } from '@/lib/bounded-json';
-import { readWebWalletSession, WEB_WALLET_SESSION_COOKIE, webWalletCsrfToken } from '@/lib/web-wallet-session';
+import { webWalletCsrfToken } from '@/lib/web-wallet-session';
+import { voteRequestSession } from '@/lib/vote-browser-session';
 import { votingPreviewAllowed } from '@/lib/voting-access';
 import { VOTE_WALLET_COOKIE, VOTE_WALLET_TTL } from '@/lib/vote-wallet-auth';
 export const runtime = 'nodejs';
@@ -12,7 +13,7 @@ export const maxDuration = 60;
 const json = (data: unknown, status = 200) => NextResponse.json(data, { status, headers: { 'cache-control': 'no-store' } });
 async function handle(req: NextRequest, write: boolean) {
   const secret = process.env.WEB_AUTH_SECRET, url = process.env.NEXT_PUBLIC_CONVEX_URL, site = process.env.NEXT_PUBLIC_SITE_URL;
-  const session = secret ? readWebWalletSession(req.cookies.get(WEB_WALLET_SESSION_COOKIE)?.value, secret) : null;
+  const session = secret ? voteRequestSession(req, secret) : null;
   if (!secret || !session || !votingPreviewAllowed(session.xUserId)) return json({ error: 'Not found.' }, 404);
   if (!url || !site) return json({ error: 'Voting sign-in is not configured.' }, 503);
   const origin = new URL(site).origin;
