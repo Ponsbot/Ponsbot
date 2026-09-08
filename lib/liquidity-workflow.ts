@@ -3,6 +3,7 @@ import { z } from "zod";
 import { keccak256, stringToHex } from "viem";
 import { liquidityMarketCapInput } from "./liquidity-market-cap";
 import { LIQUIDITY_MAX_BANDS } from "./liquidity-limits";
+import { isResumeReply } from "./x-direct-post-policy";
 
 export { LIQUIDITY_CONVERSATION_MS } from "./liquidity-timing";
 export const LIQUIDITY_TURN_LIMIT = 40;
@@ -302,6 +303,7 @@ export function liquidityControl(text: string, phase?: LiquidityPhase): { kind: 
   const clean = text.trim().replace(/^(?:@[A-Za-z0-9_]+\s+)+/, "").replace(/[.!]+$/, "").trim();
   const match = /^(confirm|approve|yes|cancel|no|back|go\s+back|previous(?:\s+step)?|continue|next|refresh|resume|retry)(?:\s+(LQ-[A-F0-9]{8}))?$/i.exec(clean);
   if (match) return { kind: /confirm|approve|yes/i.test(match[1]) ? "confirm" : /cancel|no/i.test(match[1]) ? "cancel" : /back|previous/i.test(match[1]) ? "back" : /resume/i.test(match[1]) ? "refresh" : match[1].toLowerCase() as "continue" | "next" | "refresh" | "retry", ...(match[2] ? { id: match[2].toUpperCase() } : {}) };
+  if (isResumeReply(text)) return { kind: /\b(?:retry|try again)\b/i.test(clean) ? "retry" : "refresh" };
   // Pool replies are often conversational, but remain tightly anchored to a
   // single option number. This accepts "Pool 1" and similarly explicit short
   // choices without treating trade amounts or multi-parameter edits as pool
