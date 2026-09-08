@@ -160,7 +160,7 @@ export function VotesClient({ code }: { code?: string }) {
       {poll.snapshot && <>
         {poll.status !== 'cancelled' && <p>{poll.status === 'closed' || (poll.endsAt ?? Infinity) <= now ? 'Closed' : 'Closes'}: {poll.endsAt && new Date(poll.endsAt).toLocaleString()} {poll.status === 'open' && (poll.endsAt ?? 0) > now && pollTimeRemaining(poll.status, poll.endsAt, now)}</p>}
         {poll.status === 'closed' && <p className={styles.notice}>{largestTotal === 0n ? 'No votes were cast.' : `${winners.length > 1 ? 'Tie' : 'Winning option'}: ${winners.join(', ')}`}</p>}
-        <div className={styles.stats}><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Supply Participated</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Holders Voted</small><strong>{poll.voterCount}</strong></div>
+        <div className={styles.stats}><div><small>Tokens voted</small><strong>{amount(poll.votedWeight, poll.snapshot.decimals)}</strong></div><div><small>Eligible Supply Voted</small><strong>{poll.turnout.toFixed(2)}%</strong></div><div><small>Holders Voted</small><strong>{poll.voterCount}</strong></div>
           <div><small>Your Tokens at Snapshot</small><strong>{!votingWallet ? 'Connect a wallet' : mySnapshot?.key === snapshotKey && mySnapshot.balance !== undefined
             ? `${amount(mySnapshot.balance, poll.snapshot.decimals)} $${poll.snapshot.symbol} (${pollPercent(mySnapshot.balance, poll.snapshot.supply).toLocaleString('en-US', { maximumFractionDigits: 4 })}%)`
             : mySnapshot?.key === snapshotKey && mySnapshot.error ? mySnapshot.error : 'Loading…'}</strong>
