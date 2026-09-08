@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 vi.mock('../lib/voting-access', async original => ({ ...await original<typeof import('../lib/voting-access')>(), X_VOTING_ENABLED: true }));
-import { parsePollCreate, pollTokenIdentity, pollChoice, updatePollTotals, validatePollSpec, pollPercent } from '../lib/polls';
-import { saveVote, correctToken, close } from '../convex/polls';
+import { parsePollCreate, pollTokenIdentity, pollChoice, updatePollTotals, validatePollSpec, pollPercent, isPollCancel } from '../lib/polls';
+import { saveVote, correctToken, close, cancel } from '../convex/polls';
 
 const ca = '0x1111111111111111111111111111111111111111';
 const command = 'Create a vote for $PONSBOT\nQuestion: Make a change?\nOptions: Yes, No\nTime: 1 day';
@@ -47,6 +47,27 @@ function fixture() {
   return { p, tables, ctx, cast };
 }
 describe('atomic wallet voting', () => {
+  it.each(['cancel', 'cancel poll', 'Cancel votes!', 'please cancel this poll', '@Ponsbotfamily cancel vote'])('recognizes poll cancellation: %s', text => expect(isPollCancel(text)).toBe(true));
+  it('does not interpret a discussion of cancellation as a command', () => expect(isPollCancel('Should we cancel this poll?')).toBe(false));
+  it('allows only the original wallet to cancel and stops future votes and closing', async () => {
+    const f = fixture(); f.p.creatorWallet = '0xabcd';
+    await expect(invoke(cancel, f.ctx, { code: f.p.code, wallet: ca })).rejects.toThrow('Only the poll creator');
+    await invoke(cancel, f.ctx, { code: f.p.code, wallet: '0xAbCd' });
+    expect(f.p.status).toBe('cancelled');
+    await expect(f.cast()).rejects.toThrow('closed');
+    f.p.endsAt = Date.now() - 1;
+    await invoke(close, f.ctx, { code: f.p.code }); expect(f.ctx.runMutation).not.toHaveBeenCalled();
+  });
+  it('requires the X creator and a direct reply to the original bot poll post', async () => {
+    const f = fixture(); Object.assign(f.p, { creatorWallet: ca, source: 'x', xPostId: 'botpoll' });
+    await expect(invoke(cancel, f.ctx, { code: f.p.code, xOwner: 'other', parentPostId: 'botpoll' })).rejects.toThrow('Only');
+    await expect(invoke(cancel, f.ctx, { code: f.p.code, xOwner: 'owner', parentPostId: 'other' })).rejects.toThrow('Only');
+    await invoke(cancel, f.ctx, { code: f.p.code, xOwner: 'owner', parentPostId: 'botpoll' }); expect(f.p.status).toBe('cancelled');
+  });
+  it('does not allow cancellation after the deadline', async () => {
+    const f = fixture(); f.p.creatorWallet = ca; f.p.endsAt = Date.now() - 1;
+    await expect(invoke(cancel, f.ctx, { code: f.p.code, wallet: ca })).rejects.toThrow('already ended');
+  });
   it('permits only one duplicate-vote notice per X person and poll', async () => {
     const f = fixture(); await f.cast();
     expect(await f.cast({ event: 'repeat1', eventOrder: '101' })).toMatchObject({ duplicate: true, duplicateNotice: true });

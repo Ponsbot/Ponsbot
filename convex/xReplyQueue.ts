@@ -262,6 +262,12 @@ export const takeNext = internalMutation({
         .sort((a, b) => a.readyAt - b.readyAt)[0];
       if (exempt && waitFor(exempt) < wait) { row = exempt; wait = waitFor(exempt); }
     }
+    if (row.pollId && (row.kind === 'poll_created' || row.kind === 'poll_result')) {
+      const poll = await ctx.db.get(row.pollId);
+      if (!poll || poll.status === 'cancelled') {
+        await ctx.db.patch(row._id, { status: 'cancelled', updatedAt: now }); await settleBindings(ctx, row, 'cancelled'); await wake(ctx, state); return null;
+      }
+    }
     const interaction = row.postId ? await ctx.db.query("xReplyInteractions").withIndex("by_post_id", q => q.eq("postId", row.postId!)).unique() : null;
     if (row.postId && (!interaction || interaction.commandKind === "operator_cancelled" || interaction.replySuppressedReason || interaction.walletLookupSuppressed)) {
       await ctx.db.patch(row._id, { status: "cancelled", updatedAt: now }); await settleBindings(ctx, row, "cancelled"); await wake(ctx, state); return null;
