@@ -1,5 +1,6 @@
 import { pollDisplayText, pollDuration, pollInputText, pollTokenIdentity, validatePollSpec, type PollDraft, type PollSpec } from './polls';
 import { parsePollMinimum, pollMinimumText } from './poll-minimum';
+import { pollHelpKind, POLL_CREATE_HELP, POLL_VOTE_HELP } from './polls';
 export type PollStep = 'token' | 'question' | 'options' | 'duration' | 'minimum' | 'confirm';
 export const nextPollStep = (d: PollDraft): PollStep => !d.token ? 'token' : !d.question ? 'question' : !d.options ? 'options' : !d.durationMinutes ? 'duration' : 'minimum';
 export function pollPrompt(step: PollStep, d: PollDraft): string {
@@ -13,6 +14,8 @@ export function pollPrompt(step: PollStep, d: PollDraft): string {
 export function advancePollDraft(draft: PollDraft, step: PollStep, input: string): { draft: PollDraft; step: PollStep; message: string; state: 'active' | 'cancelled' | 'ready' } {
   const text = pollInputText(input), control = text.toLowerCase().replace(/[.!?,]+$/g, '').trim();
   const d = { ...draft };
+  const help = pollHelpKind(text);
+  if (help) return { draft: d, step, state: 'active', message: `${help === 'create' ? POLL_CREATE_HELP : POLL_VOTE_HELP}\n\n${pollPrompt(step, d)}` };
   if (/^(?:cancel|stop|never mind|nevermind)(?: please)?$/.test(control)) return { draft: d, step, state: 'cancelled', message: 'Poll setup cancelled.' };
   if (/^(?:back|go back)(?: please)?$/.test(control)) {
     const steps: PollStep[] = ['token', 'question', 'options', 'duration', 'minimum', 'confirm'];

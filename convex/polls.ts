@@ -13,6 +13,7 @@ import { advancePollDraft, nextPollStep, pollPrompt } from '../lib/poll-workflow
 import { pollDiagnostic } from '../lib/poll-diagnostics';
 import { safePollError } from '../lib/poll-errors';
 import { pollTokenLabel, isPollCancel, pollCorrectionAddress } from '../lib/polls';
+import { pollHelpKind, POLL_CREATE_HELP, POLL_VOTE_HELP } from '../lib/polls';
 import { assertPollBlock, buildPollSnapshot, pollAnchor, pollMetadata, pollOfficial, pollVotingBalance, pollCurrentMarketCap } from '../lib/poll-chain';
 
 type Result = { message: string; code?: string; pending?: boolean; ok: boolean; silent?: boolean; official?: boolean; tokenAddress?: string; snapshotBalance?: string };
@@ -302,6 +303,8 @@ export const handleX = internalAction({ args: { postId: v.string(), owner: v.str
     if ((parent?.draftPostId || parent?.correction) && parent.owner !== a.owner) return { handled: true };
     const parentPoll = parent && !parent.draftPostId && !parent.correction ? await ctx.runQuery(internal.polls.record, { code: parent.code }) : null;
     const optionReply = parentPoll && pollChoice(a.text, parentPoll.spec.options) >= 0;
+    const help = !optionReply && pollHelpKind(a.text);
+    if (help && !parent?.draftPostId) return { handled: true, result: { ok: true, message: help === 'create' ? POLL_CREATE_HELP : POLL_VOTE_HELP } };
     if (parent && !parent.draftPostId && !parent.correction && !optionReply && isPollCancel(a.text)) {
       await ctx.runMutation(internal.polls.cancel, { code: parent.code, xOwner: a.owner, parentPostId: a.parentPostId });
       return { handled: true, result: { ok: true, code: parent.code, message: `🗳️ ${parent.code} has been cancelled.` } };

@@ -132,8 +132,16 @@ export function validatePollSpec(value: PollSpec): PollSpec {
   return { ...value, token, question, options };
 }
 export function isPollCommand(text: string) {
-  return isPollCreate(text) || /^(?:vote|cast\s+(?:my\s+)?vote)\b|^(?:make|upgrade|endorse)\s+(?:poll\s+)?POLL-[a-f0-9]+\s+(?:as\s+)?official\b/iu.test(pollInputText(text));
+  return Boolean(pollHelpKind(text)) || isPollCreate(text) || /^(?:vote|cast\s+(?:my\s+)?vote)\b|^(?:make|upgrade|endorse)\s+(?:poll\s+)?POLL-[a-f0-9]+\s+(?:as\s+)?official\b/iu.test(pollInputText(text));
 }
+export function pollHelpKind(input: string): 'create' | 'vote' | null {
+  const text = pollInputText(input).toLowerCase().replace(/^(?:please\s+)?/, '').replace(/[.!?]+$/, '').trim();
+  if (/^(?:how (?:do i|can i|to)|help me(?: to)?|(?:can|could) you (?:help me|explain how to)) (?:create|start|make|set up) (?:a |an |my )?(?:vote|poll)$/.test(text)) return 'create';
+  if (/^(?:how (?:do i|can i|to) (?:vote|cast (?:a |my )?vote)(?: (?:here|on x|in (?:a |this |the )?poll))?|how does (?:voting|(?:a |the )?poll) work|(?:explain|help (?:with|me with)) (?:voting|polls)|(?:vote|poll|voting) help)$/.test(text)) return 'vote';
+  return null;
+}
+export const POLL_CREATE_HELP = '🗳️ Verified X accounts can create token-holder polls. Post “@Ponsbotfamily create a vote” and I’ll ask for the details, or include them together:\n\n@Ponsbotfamily create a vote for $TICKER, YOUR QUESTION? Options: OPTION ONE, OPTION TWO, 24 hours. 0.1% minimum holding\n\nUse a ticker or contract address, 2–8 options, and 1 hour to 7 days. Minimum holdings can be a percentage, dollar value, or token amount. Dollar values convert to a fixed token amount at creation.\n\nCreate or browse polls on the website:\nhttps://www.ponsbot.family/votes';
+export const POLL_VOTE_HELP = '🗳️ Reply directly to a Pons Bot poll post with the option number or option text to vote using your Pons Bot wallet.\n\nExample: “1” or the exact option shown.\n\nYour wallet must meet the poll’s minimum holding at its holder snapshot. Buying more afterward won’t change eligibility. Each wallet can vote once.\n\nYou can also vote with your Pons Bot wallet or connect an external wallet on the website:\nhttps://www.ponsbot.family/votes';
 export function parsePollCreate(text: string): PollSpec | null {
   const draft = parsePollDraft(text);
   if (!draft) return null;
