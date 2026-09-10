@@ -15,7 +15,7 @@ describe("passive X chain filtering", () => {
       expect(isPassiveBotChainReply(text, reply)).toBe(false);
     }
     expect(hasExplicitBotMention("@alice @Ponsbotfamily @ponsbotfamily launch TEST", reply)).toBe(true);
-    expect(shouldRestrictChainReply("@Ponsbotfamily @ponsbotfamily launch TEST", reply, true)).toBe(true);
+    expect(shouldRestrictChainReply("@Ponsbotfamily @ponsbotfamily launch TEST", reply, true)).toBe(false);
   });
   it("detects any reply whose direct parent is itself a reply", () => {
     const parents = new Map([
@@ -73,7 +73,7 @@ describe("passive X chain filtering", () => {
     expect(shouldRestrictChainReply("@alice @Ponsbotfamily buy $5 of PONSBOT", reply, false)).toBe(true);
     expect(shouldRestrictChainReply("@Ponsbotfamily what can you do?", reply, false)).toBe(false);
     expect(shouldRestrictChainReply("@alice @Ponsbotfamily ask @Ponsbotfamily for help", reply, false)).toBe(false);
-    expect(shouldRestrictChainReply("@Ponsbotfamily what can you do?", reply, true)).toBe(true);
+    expect(shouldRestrictChainReply("@Ponsbotfamily what can you do?", reply, true)).toBe(false);
     expect(shouldRestrictChainReply("great launch", [{ type: "quoted", id: "123" }], false)).toBe(false);
   });
 

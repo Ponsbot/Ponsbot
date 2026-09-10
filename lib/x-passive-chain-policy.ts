@@ -54,8 +54,8 @@ export function launchPostAuthorized(
 }
 
 /**
- * Applies transaction/wallet-only reply handling to every deeper reply and to
- * any first-level reply where the bot is merely inherited from the thread.
+ * Direct invocations bypass all nesting restrictions. Otherwise apply
+ * transaction/wallet-only handling to nested or inherited-participant replies.
  */
 export function shouldRestrictChainReply(
   text: string,
@@ -63,5 +63,6 @@ export function shouldRestrictChainReply(
   parentIsReply: boolean,
   botUsername = "Ponsbotfamily",
 ) {
+  if (hasExplicitBotMention(text, references, botUsername)) return false;
   return parentIsReply || isPassiveBotChainReply(text, references, botUsername);
 }

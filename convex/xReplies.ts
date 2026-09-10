@@ -2357,7 +2357,10 @@ export const retryInteraction = internalAction({
         });
         return;
       }
-      if (current.interaction.nestedReply && intent.kind !== "command" && !guidedHelp) {
+      if (current.interaction.nestedReply && intent.kind !== "command" && !guidedHelp
+        && shouldRestrictChainReply(current.interaction.text,
+          current.interaction.parentPostId ? [{ type: "replied_to", id: current.interaction.parentPostId }] : undefined,
+          true)) {
         await ctx.runMutation(internal.xReplies.updateInteraction, {
           postId,
           status: "rejected",

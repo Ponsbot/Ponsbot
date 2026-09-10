@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { exceedsXReplyDepthLimit } from "../lib/x-reply-depth-policy";
+import { hasExplicitBotMention, shouldRestrictChainReply } from "../lib/x-passive-chain-policy";
 
 const check = (overrides: Partial<Parameters<typeof exceedsXReplyDepthLimit>[0]> = {}) =>
   exceedsXReplyDepthLimit({
@@ -16,6 +17,23 @@ const check = (overrides: Partial<Parameters<typeof exceedsXReplyDepthLimit>[0]>
   });
 
 describe("X reply-depth policy", () => {
+  it.each([
+    "@Ponsbotfamily what can you do?",
+    "please help @PONSBOTFAMILY!",
+    "@alice @Ponsbotfamily @ponsbotfamily resume",
+  ])("bypasses both nesting gates for direct invocation: %s", text => {
+    const references = [{ type: "replied_to" as const, id: "parent" }];
+    expect(shouldRestrictChainReply(text, references, true)).toBe(false);
+    expect(check({ replyDepth: 1000, explicitBotMention: hasExplicitBotMention(text, references) })).toBe(false);
+  });
+
+  it("does not exempt a lookalike handle or an inherited participant", () => {
+    for (const text of ["@Ponsbotfamily_fake help", "@alice @Ponsbotfamily help"]) {
+      const references = [{ type: "replied_to" as const, id: "parent" }];
+      expect(shouldRestrictChainReply(text, references, true)).toBe(true);
+      expect(check({ explicitBotMention: hasExplicitBotMention(text, references) })).toBe(true);
+    }
+  });
   it("stops an ordinary reply at the anti-loop depth", () => {
     expect(check()).toBe(true);
   });
