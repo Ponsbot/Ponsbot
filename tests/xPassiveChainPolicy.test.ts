@@ -1,10 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { includedReplyDepth, isReplyToReply, shouldHandleDirectedChainHelp, shouldHandlePassiveChainText } from "../convex/xReplies";
 import { hasExplicitBotMention, isPassiveBotChainReply, launchPostAuthorized, shouldRestrictChainReply } from "../lib/x-passive-chain-policy";
+import { exceedsXReplyDepthLimit } from "../lib/x-reply-depth-policy";
+import { explicitInformationalTopic } from "../convex/xWalletIntent";
 
 const reply = [{ type: "replied_to" as const, id: "123" }];
 
 describe("passive X chain filtering", () => {
+  it.each([
+    "@otherperson @ponsbotfamily what assets can I pair with",
+    "@otherperson @PONSBOTFAMILY what assets can I pair with?",
+    "@Ponsbotfamily @otherperson what assets can I pair with?",
+    "@alice @bob @ponsbotfamily which assets can I pair with?",
+  ])("admits tagged pairing questions through inherited prefixes: %s", text => {
+    const passive = isPassiveBotChainReply(text, reply);
+    const directed = shouldHandleDirectedChainHelp(text, 100, passive);
+    expect(directed).toBe(true);
+    expect(explicitInformationalTopic(text)).toBe("pairs");
+    expect(exceedsXReplyDepthLimit({ replyDepth: 100, maximumDepth: 6,
+      guidedWorkflow: false, liquidityRequest: false, contextualGasHelp: false,
+      expectedGasResumeReply: false, directedInformationalHelp: directed })).toBe(false);
+  });
+  it.each([
+    "@alice what assets can I pair with?",
+    "@alice @Ponsbotfamily_fake what assets can I pair with?",
+    "@alice @Ponsbotfamily great job",
+    "@alice @Ponsbotfamily launch TEST ticker TEST",
+    "@alice @Ponsbotfamily buy $10 of TEST",
+  ])("does not turn chatter or transactions into help: %s", text => {
+    expect(shouldHandleDirectedChainHelp(text, 100, true)).toBe(false);
+  });
   it("accepts repeated bot-only prefixes without accepting inherited multi-user prefixes", () => {
     for (const text of [
       "@Ponsbotfamily @Ponsbotfamily launch token name super ticker SPR",
@@ -100,9 +125,9 @@ describe("passive X chain filtering", () => {
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily what assets can I pair with?", 1, false)).toBe(true);
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily hello", 1, false)).toBe(false);
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily great launch", 1, false)).toBe(false);
-    expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily how do launches work?", 1, true)).toBe(false);
+    expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily how do launches work?", 1, true)).toBe(true);
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily how do launches work?", 30, false)).toBe(true);
     expect(shouldHandleDirectedChainHelp("@Ponsbotfamily what assets can you pair with", 30, false)).toBe(true);
-    expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily what assets can you pair with", 30, true)).toBe(false);
+    expect(shouldHandleDirectedChainHelp("@alice @Ponsbotfamily what assets can you pair with", 30, true)).toBe(true);
   });
 });

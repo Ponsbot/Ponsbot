@@ -3259,7 +3259,11 @@ export function shouldHandleDirectedChainHelp(
   _replyDepth: number,
   passiveBotReply: boolean,
 ) {
-  if (passiveBotReply) return false;
+  // X can put a deliberately typed bot tag in the same prefix as inherited
+  // reply participants. For a recognized informational question, its presence
+  // in this post is enough; do not require a second tag or a different order.
+  // This admits help only, not another participant's workflow or a launch.
+  if (passiveBotReply && !/(?:^|[^A-Za-z0-9_@])@ponsbotfamily(?![A-Za-z0-9_])/i.test(text)) return false;
   const direct = directPostCommandText(text);
   // Only a recognizable information request qualifies. Greetings, praise,
   // promotional chatter, and generic mentions have no help topic and remain
