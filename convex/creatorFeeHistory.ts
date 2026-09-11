@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { historicalAssetFeePrice } from "../lib/historical-asset-fee-prices";
+import { recoverHistoricalClaimAsset } from "../lib/historical-claim-asset";
 import { formatUnits } from "viem";
 import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -97,8 +98,7 @@ export const beginBatch = internalMutation({
       await ctx.db.patch(state._id, { vaultCursor: page.continueCursor, vaultDone: page.isDone });
     }
     const unsupported = await ctx.db.query("creatorFeeClaims").withIndex("by_status_due", q => q.eq("status", "unsupported").lte("nextAttemptAt", now)).take(BATCH);
-    for (const row of unsupported) await ctx.db.patch(row._id, priceableAsset(row.assetAddress)
-      ? { status: "pending", nextAttemptAt: now } : { nextAttemptAt: now + 24 * HOUR });
+    for (const row of unsupported) await ctx.db.patch(row._id, { status: "pending", nextAttemptAt: now });
     const rows = await ctx.db.query("creatorFeeClaims").withIndex("by_status_due", q => q.eq("status", "pending").lte("nextAttemptAt", now)).take(BATCH);
     return { leaseToken, rows };
   },
@@ -108,6 +108,20 @@ async function validLease(ctx: MutationCtx, leaseToken: string) {
   const state = await ctx.db.query("creatorFeeHistoryWorker").withIndex("by_key", q => q.eq("key", KEY)).unique();
   return state?.leaseToken === leaseToken && (state.leaseUntil ?? 0) > Date.now() ? state : null;
 }
+
+export const recordRecoveredAsset = internalMutation({
+  args: { leaseToken: v.string(), id: v.id("creatorFeeClaims"), assetAddress: v.optional(v.string()), rawAmount: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (!await validLease(ctx, args.leaseToken)) return;
+    const row = await ctx.db.get(args.id);
+    if (!row || row.status !== "pending" || priceableAsset(row.assetAddress) || row.assetSymbol === "ETH") return;
+    if (priceableAsset(args.assetAddress) && args.rawAmount && /^\d+$/.test(args.rawAmount)) {
+      await ctx.db.patch(row._id, {assetAddress: args.assetAddress!.toLowerCase(), rawAmount: args.rawAmount, diagnosticCode: undefined});
+    } else {
+      await ctx.db.patch(row._id, {status:"unsupported", nextAttemptAt:Date.now()+24*HOUR, diagnosticCode:"HISTORICAL_ASSET_IDENTITY_UNAVAILABLE"});
+    }
+  },
+});
 
 export const recordTime = internalMutation({
   args: { leaseToken: v.string(), id: v.id("creatorFeeClaims"), claimedAt: v.number(), blockTime: v.boolean() },
@@ -213,6 +227,14 @@ export const refresh = internalAction({
     const timed: Array<{ id: Doc<"creatorFeeClaims">["_id"]; claimedAt: number }> = [];
     const blocks = new Map<string, number>();
     try {
+      // Bounded repair of legacy rows which predate stored pair addresses.
+      let recoveries = 0;
+      for (const row of work.rows) {
+        if (row.assetSymbol === "ETH" || priceableAsset(row.assetAddress) || recoveries++ >= 2) continue;
+        const recovered = await recoverHistoricalClaimAsset(row);
+        await ctx.runMutation(internal.creatorFeeHistory.recordRecoveredAsset, {leaseToken:work.leaseToken, id:row._id, ...recovered});
+        if (recovered) Object.assign(row, recovered);
+      }
       for (const row of work.rows) {
         let claimedAt = row.claimedAt;
         if (claimedAt === undefined) {
@@ -281,4 +303,22 @@ export const status = internalQuery({
     stats: await ctx.db.query("creatorFeeStats").withIndex("by_key", q => q.eq("key", KEY)).unique(),
     worker: await ctx.db.query("creatorFeeHistoryWorker").withIndex("by_key", q => q.eq("key", KEY)).unique(),
   }),
+});
+
+/** Operator repair entry point. Does not reset priced claims or alter totals. */
+export const retryUnpricedClaims = internalMutation({
+  args: {},
+  handler: async ctx => {
+    const now=Date.now();
+    const state=await ctx.db.query("creatorFeeHistoryWorker").withIndex("by_key",q=>q.eq("key",KEY)).unique();
+    if((state?.leaseUntil ?? 0)>now) return {queued:false,reason:"worker_active"};
+    const rows=[
+      ...await ctx.db.query("creatorFeeClaims").withIndex("by_status_due",q=>q.eq("status","unsupported")).take(BATCH),
+      ...await ctx.db.query("creatorFeeClaims").withIndex("by_status_due",q=>q.eq("status","pending")).take(BATCH),
+    ].slice(0,BATCH);
+    for(const row of rows) await ctx.db.patch(row._id,{nextAttemptAt:now});
+    if(state) await ctx.db.patch(state._id,{nextRunAt:now});
+    if(rows.length) await ctx.scheduler.runAfter(0,internal.creatorFeeHistory.refresh,{});
+    return {queued:true,count:rows.length};
+  },
 });

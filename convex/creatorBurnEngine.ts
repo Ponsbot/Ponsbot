@@ -844,11 +844,37 @@ export const saveHistoryCursor = internalMutation({
       await ctx.db.patch(l._id, { historyNextBlock: a.next });
   },
 });
+export const claimHistoryScan = internalMutation({
+  args: {layerId:v.id("creatorBurnLayers"), leaseId:v.string()},
+  handler: async (ctx,a) => {
+    const layer=await ctx.db.get(a.layerId), now=Date.now();
+    if(!layer || (layer.historyLeaseUntil ?? 0)>now || (layer.historyRetryAt ?? 0)>now) return null;
+    await ctx.db.patch(layer._id,{historyLeaseId:a.leaseId,historyLeaseUntil:now+5*MINUTE});
+    return layer;
+  },
+});
+export const finishHistoryScan = internalMutation({
+  args: {layerId:v.id("creatorBurnLayers"), leaseId:v.string(), failed:v.boolean()},
+  handler: async (ctx,a) => {
+    const layer=await ctx.db.get(a.layerId);
+    if(!layer || layer.historyLeaseId!==a.leaseId) return null;
+    const failures=a.failed?(layer.historyFailures ?? 0)+1:0;
+    const delay=a.failed?Math.min(60,5*2**Math.min(failures-1,4))*MINUTE:0;
+    await ctx.db.patch(layer._id,{historyLeaseId:undefined,historyLeaseUntil:undefined,
+      historyFailures:failures,historyRetryAt:Date.now()+delay,
+      historyDiagnostic:a.failed?"CREATOR_BURN_HISTORY_READ_RETRY":undefined});
+    return delay;
+  },
+});
 export const scan = internalAction({
   args: { layerId: v.id("creatorBurnLayers") },
   handler: async (ctx, a): Promise<void> => {
-    const layer = await ctx.runQuery(internal.creatorBurnEngine.layerById, a);
+    const leaseId=crypto.randomUUID();
+    const layer = await ctx.runMutation(internal.creatorBurnEngine.claimHistoryScan, {...a,leaseId});
     if (!layer) return;
+    let failed=false;
+    let more=false;
+    try {
     const program = await ctx.runQuery(
       internal.automatedFeeEngine.enrollmentProgramStatus,
       { programId: layer.programId },
@@ -880,8 +906,15 @@ export const scan = internalAction({
       previous: layer.historyNextBlock,
       next: result.nextBlock,
     });
-    if (!result.complete)
-      await ctx.scheduler.runAfter(MINUTE, internal.creatorBurnEngine.scan, a);
+    more=!result.complete;
+    } catch {
+      // No cursor advance on incomplete reads. Ingest is receipt-idempotent, so
+      // already ingested receipts can safely be replayed after an RPC timeout.
+      failed=true;
+    } finally {
+      const delay=await ctx.runMutation(internal.creatorBurnEngine.finishHistoryScan,{...a,leaseId,failed});
+      if(delay!==null && (failed || more)) await ctx.scheduler.runAfter(delay || MINUTE,internal.creatorBurnEngine.scan,a);
+    }
   },
 });
 export const deferOwner = internalMutation({

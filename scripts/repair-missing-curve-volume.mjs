@@ -4,6 +4,11 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { createPublicClient, http, parseAbi, parseAbiItem } from "viem";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "../convex/_generated/api.js";
+import { parseEnv } from "node:util";
+
+// Never inherit another project's Convex credentials from the shell.
+Object.assign(process.env, parseEnv(await readFile(".env.local", "utf8")));
+if (process.env.NEXT_PUBLIC_CONVEX_URL !== "https://brave-puffin-339.convex.cloud") throw new Error("Wrong Pons deployment");
 
 const file = ".deployment-private/missing-curve-volume-repair.json";
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL);
@@ -30,7 +35,8 @@ const report={cutoff,endBlock:String(endBlock),entries:[]};
 const times=new Map();
 for(const {row,tx,symbol} of candidates){
   const receipt=await rpc.getTransactionReceipt({hash:tx});
-  const [pairSymbol,decimals]=await Promise.all([rpc.readContract({address:row.pairToken,abi:parseAbi(["function symbol() view returns(string)"]),functionName:"symbol"}),rpc.readContract({address:row.pairToken,abi:parseAbi(["function decimals() view returns(uint8)"]),functionName:"decimals"})]);
+  const native = /^0x0{40}$/i.test(row.pairToken);
+  const [pairSymbol,decimals]=native ? ["ETH",18] : await Promise.all([rpc.readContract({address:row.pairToken,abi:parseAbi(["function symbol() view returns(string)"]),functionName:"symbol"}),rpc.readContract({address:row.pairToken,abi:parseAbi(["function decimals() view returns(uint8)"]),functionName:"decimals"})]);
   const events=[];
   for(let start=receipt.blockNumber;start<=endBlock;start+=100000n){
     const end=start+99999n<endBlock?start+99999n:endBlock;
@@ -42,7 +48,7 @@ for(const {row,tx,symbol} of candidates){
   let candles=[];
   if(hourly.size){
     const start=Math.min(...hourly.keys());
-    const response=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(pairSymbol)}?period1=${Math.floor((start-72*HOUR)/1000)}&period2=${Math.floor((cutoff+HOUR)/1000)}&interval=1h`);
+    const response=await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(native ? "ETH-USD" : pairSymbol)}?period1=${Math.floor((start-72*HOUR)/1000)}&period2=${Math.floor((cutoff+HOUR)/1000)}&interval=1h`, {signal:AbortSignal.timeout(20000)});
     if(!response.ok)throw new Error(`Historical price HTTP ${response.status}`);
     const data=(await response.json()).chart?.result?.[0];
     const points=(data?.timestamp||[]).flatMap((t,i)=>{const price=data.indicators?.quote?.[0]?.close?.[i];return typeof price==='number'&&price>0?[[t*1000,price]]:[];});

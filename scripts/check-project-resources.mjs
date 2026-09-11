@@ -80,8 +80,10 @@ checks.push(await attempt("Vercel", async () => {
   const token = configured("VERCEL_ACCESS_TOKEN");
   const teamId = configured("VERCEL_TEAM_ID");
   const headers = { authorization: `Bearer ${token}` };
-  await request("https://api.vercel.com/v2/user", { headers });
-  await request(`https://api.vercel.com/v2/teams/${encodeURIComponent(teamId)}`, { headers });
+  // Project-scoped tokens need not have access to the personal user endpoint.
+  const { body: project } = await request(`https://api.vercel.com/v9/projects/ponsbot?teamId=${encodeURIComponent(teamId)}`, { headers });
+  if (project.name !== "ponsbot" || project.accountId !== teamId)
+    throw new Error("Vercel project identity mismatch");
 
   const now = new Date();
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -95,7 +97,8 @@ checks.push(await attempt("Vercel", async () => {
     let body;
     try { body = JSON.parse(text); } catch { body = text; }
     const detail = body?.error?.message || body?.message || "Billing usage unavailable";
-    throw new Error(`HTTP ${response.status}: ${detail}`);
+    return { source: "official", project: project.name, projectAccessible: true,
+      billingAccessible: false, billingStatus: response.status, detail };
   }
   const records = text.split(/\r?\n/).filter(Boolean).flatMap((line) => {
     try { return [JSON.parse(line)]; } catch { return []; }

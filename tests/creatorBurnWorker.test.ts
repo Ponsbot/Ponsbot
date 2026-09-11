@@ -134,6 +134,28 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
 });
+describe("history recovery", () => {
+  it("leases one scan and backs off failures without moving the cursor", async () => {
+    const f=fixture();
+    expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"first"})).not.toBeNull();
+    expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"second"})).toBeNull();
+    expect(await handler(worker.finishHistoryScan)(f.ctx,{layerId:"l",leaseId:"wrong",failed:true})).toBeNull();
+    expect(await handler(worker.finishHistoryScan)(f.ctx,{layerId:"l",leaseId:"first",failed:true})).toBe(300000);
+    expect(f.layer.historyNextBlock).toBeUndefined();
+    expect(f.layer.historyDiagnostic).toBe("CREATOR_BURN_HISTORY_READ_RETRY");
+    expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"third"})).toBeNull();
+  });
+  it("releases the scan after failure and schedules exactly one bounded retry", async () => {
+    const f=fixture(); f.ctx.runQuery=async()=>f.rows.automatedFeePrograms[0];
+    signer.mockRejectedValueOnce(new Error("secret provider URL timed out"));
+    await handler(worker.scan)(f.ctx,{layerId:"l"});
+    expect(f.layer.historyLeaseId).toBeUndefined();
+    expect(f.layer.historyFailures).toBe(1);
+    expect(f.ctx.scheduler.runAfter).toHaveBeenCalledTimes(1);
+    expect(f.ctx.scheduler.runAfter.mock.calls[0][0]).toBe(300000);
+    expect(f.mutations).not.toContain("saveHistoryCursor");
+  });
+});
 describe("creator layer durable worker", () => {
   it("makes no provider calls when disabled and no transaction exists", async () => {
     const f = fixture();

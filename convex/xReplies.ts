@@ -1805,7 +1805,9 @@ export const retryInteraction = internalAction({
             ]
           : undefined,
       ) &&
-      !shouldHandlePassiveChainText(directText) && !liquidityRequest && !guidedHelp && !ambiguousTokenIntent
+      !shouldHandlePassiveChainText(directText) &&
+      !shouldHandleDirectedChainHelp(current.interaction.text, 0, true) &&
+      !liquidityRequest && !guidedHelp && !ambiguousTokenIntent
     ) {
       await ctx.runMutation(internal.xReplies.updateInteraction, {
         postId,

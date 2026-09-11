@@ -282,7 +282,7 @@ function replyCommand(
   return command;
 }
 
-function commandSummary(command: WalletCommand) {
+export function commandSummary(command: WalletCommand) {
   if (command.kind === "send") {
     const amount =
       command.unit === "usd"
@@ -305,12 +305,13 @@ function commandSummary(command: WalletCommand) {
           : `${significantAmount(command.amount)} ${assetLabel(command.token)}`;
     return `Burned ${amount}!`;
   }
-  if (command.kind === "buy")
-    return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : command.unit === "token" ? `${command.amount} ${assetLabel(command.token)}` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)}!`;
-  if (command.kind === "buy_and_send")
-    return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : command.unit === "token" ? `${command.amount} ${assetLabel(command.token)}` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and sent the purchased tokens to ${destinationLabel(command.recipient)}!`;
-  if (command.kind === "buy_and_burn")
-    return `Bought ${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : command.unit === "token" ? `${command.amount} ${assetLabel(command.token)}` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)} and burned the purchased tokens!`;
+  if (command.kind === "buy" || command.kind === "buy_and_send" || command.kind === "buy_and_burn") {
+    const amount = command.unit === "token" ? `${command.amount} ${assetLabel(command.token)}`
+      : `${command.unit === "usd" ? `$${command.amount}` : command.unit === "eth" ? `${command.amount} ETH` : `${command.amount} ${assetLabel(command.pairAsset)}`} of ${assetLabel(command.token)}`;
+    const suffix = command.kind === "buy_and_send" ? ` and sent the purchased tokens to ${destinationLabel(command.recipient)}`
+      : command.kind === "buy_and_burn" ? " and burned the purchased tokens" : "";
+    return `Bought ${amount}${suffix}!`;
+  }
   if (command.kind === "buy_top_five")
     return `${command.burn ? "Bought and burned" : "Bought"} $${command.amount} each of the top 5 Pons Bot tokens!`;
   if (command.kind === "swap_token_for_token")

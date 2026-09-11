@@ -792,7 +792,9 @@ export async function creatorBurnHistory(input: unknown) {
         logs.map((log) => log.transactionHash).filter((h): h is Hex => !!h),
       ),
     ];
-    if (hashes.length <= 100) break;
+    // Each receipt includes historical provenance checks. Keep a page small
+    // enough to finish within the worker's two-minute read deadline.
+    if (hashes.length <= 8) break;
     if (to === from)
       throw new Error("CREATOR_BURN_HISTORY_SINGLE_BLOCK_TOO_DENSE");
     to = from + (to - from) / 2n;

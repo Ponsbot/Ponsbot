@@ -285,6 +285,8 @@ export default defineSchema({
   }).index("by_request",["requestId"]).index("by_program_status",["programId","status"]).index("by_due",["status","nextAttemptAt"]),
   creatorBurnLayers: defineTable({
     historyNextBlock:v.optional(v.string()),
+    historyLeaseId:v.optional(v.string()), historyLeaseUntil:v.optional(v.number()),
+    historyRetryAt:v.optional(v.number()), historyFailures:v.optional(v.number()), historyDiagnostic:v.optional(v.string()),
     manualReview:v.optional(v.boolean()),
     programId: v.id("automatedFeePrograms"), layerAddress: v.string(), ownerAddress: v.string(),
     bps: v.number(), active: v.boolean(), nextCheckAt: v.number(), updatedAt: v.number(),

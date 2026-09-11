@@ -8,6 +8,7 @@ const reply = [{ type: "replied_to" as const, id: "123" }];
 
 describe("passive X chain filtering", () => {
   it.each([
+    "@ponsdotfamily @ponsbotfamily what assets can I pair with?",
     "@otherperson @ponsbotfamily what assets can I pair with",
     "@otherperson @PONSBOTFAMILY what assets can I pair with?",
     "@Ponsbotfamily @otherperson what assets can I pair with?",

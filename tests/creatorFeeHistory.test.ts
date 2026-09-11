@@ -110,7 +110,8 @@ describe("deduplicated creator fee ledger", () => {
   it("keeps non-ETH assets unpriced instead of using current prices or a $1 peg", async () => {
     const f = fixture(); await f.legacy(1, { claimedDisplay: "5 USDG" }); await f.legacy(2, { claimedDisplay: "1 MSFT" });
     await f.db.insert("marketPriceCache", { key: "PAIR-USD:MSFT", value: 900, sourceTimestamp: now });
-    const work = await f.call("beginBatch"); expect(work.rows).toEqual([]);
+    const work = await f.call("beginBatch"); expect(work.rows).toHaveLength(2);
+    for (const row of work.rows) await f.call("recordRecoveredAsset", {leaseToken:work.leaseToken,id:row._id});
     expect(f.stats()).toMatchObject({ claimCount: 2, pricedCount: 0, totalUsd: 0 });
     expect(f.tables.creatorFeeClaims.every(row => row.status === "unsupported")).toBe(true);
   });

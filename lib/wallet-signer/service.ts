@@ -2241,7 +2241,7 @@ async function ethTransferValue(owner: Address, recipient: Address, amount: stri
   const gasReserve = sendAllGasReserve(gas, fees.maxFeePerGas);
   if (balance <= gasReserve) throw insufficientGasError(gas, fees.maxFeePerGas);
   const maximumTransfer = balance - gasReserve;
-  if (unit !== "percent" && requested > maximumTransfer) throw new Error("ETH transfer amount plus gas exceeds wallet balance");
+  if (unit !== "percent" && requested > maximumTransfer) throw insufficientGasError(gas, fees.maxFeePerGas);
   const value = unit === "percent" && requested > maximumTransfer ? maximumTransfer : requested;
   if (value <= 0n) throw new Error("ETH transfer amount resolves to zero after reserving gas");
   return { value, gasQuote: { estimatedGas: gas, fees } satisfies TransactionGasQuote };
