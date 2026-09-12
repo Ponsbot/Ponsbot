@@ -7,12 +7,12 @@ export const BOT_THOUGHT_INTERVAL_MS = 15 * 60_000;
 export const BOT_TRADE_INTERVAL_MS = 45 * 60_000;
 
 export type CreateBotRequest = { ok: true; name: string; description: string } | { ok: false; message: string };
-/** Deliberately not wired to the public X command router yet. */
+/** Explicit bot creation command; quoted multi-word names may end with sentence punctuation. */
 export function parseCreateBotPost(text: string): CreateBotRequest | null {
   const head = /^\s*@ponsbotfamily\s+create\s+(?:a\s+)?bot\s+named\s+/iu.exec(text);
   if (!head) return null;
   const tail = text.slice(head[0].length);
-  const match = /^(?:"([^"\r\n]+)"|“([^”\r\n]+)”|([^\s]+))(?:\s+([\s\S]*))?$/u.exec(tail);
+  const match = /^(?:"([^"\r\n]+)"|“([^”\r\n]+)”|([^\s"“”]+))[.,:;!?]*(?:\s+([\s\S]*))?$/u.exec(tail);
   if (!match) return { ok: false, message: "Give your bot a name followed by its description. Put multi-word names in quotes." };
   const name = (match[1] ?? match[2] ?? match[3]).trim();
   const description = (match[4] ?? "").trim();

@@ -11,6 +11,13 @@ describe("bot creation grammar", () => {
   });
   it.each(['"Captain Byte"', '“Captain Byte”'])("allows quoted multi-word names: %s", name =>
     expect(parseCreateBotPost(`@Ponsbotfamily CREATE A BOT NAMED ${name} A curious pirate.`)).toMatchObject({ ok: true, name: "Captain Byte", description: "A curious pirate." }));
+  it.each(['"Pons Bot Bot".', '“Pons Bot Bot”.', '"Pons Bot Bot":', '"Pons Bot Bot"'])("accepts quoted names and punctuation: %s", name => {
+    const description = "He is an inquisitive, nature-loving bot with a heart of gold. He isn't afraid to try new things and is always ready to help a friend in need.";
+    expect(parseCreateBotPost(`@Ponsbotfamily create a bot named ${name} ${description}`)).toEqual({ ok: true, name: "Pons Bot Bot", description });
+  });
+  it.each(['"Pons Bot Bot Description', '“Pons Bot Bot" Description'])("rejects unmatched quotes: %s", tail => {
+    expect(parseCreateBotPost(`@Ponsbotfamily create a bot named ${tail}`)).toMatchObject({ ok: false });
+  });
   it("retains Unicode names and descriptions", () => expect(parseCreateBotPost("@ponsbotfamily create a bot named ネコ 猫が大好きです。" )).toMatchObject({ ok: true, name: "ネコ", description: "猫が大好きです。" }));
   it.each(["create a bot named Test Hi", "Someone said @ponsbotfamily create a bot named Test Hi", "@ponsbotfamily launch a bot named Test Hi", "@other create a bot named Test Hi"])("doesn't accidentally catch another action: %s", text => expect(parseCreateBotPost(text)).toBeNull());
   it.each(["Bad<script> Hi", '"" Description', "OnlyName", `${"A".repeat(61)} Hi`, `Test ${"A".repeat(2001)}`])("rejects invalid or incomplete input %# without silently truncating", tail => expect(parseCreateBotPost(`@ponsbotfamily create a bot named ${tail}`)).toMatchObject({ ok: false }));
