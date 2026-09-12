@@ -401,7 +401,8 @@ export const startYardDraft = internalMutation({
     requirePaper();
     const agent = await ctx.db.get(agentId);
     if (!agent || !agent.schedule || agent.status !== "draft") return;
-    const schedule = initialYardSchedule(Date.now());
+    // Keep the creation-time anchor rather than restarting the initial wait.
+    const schedule = agent.schedule;
     await ctx.db.patch(agent._id, { status: "running", schedule, nextRunAt: schedule.nextThoughtAt, updatedAt: Date.now() });
   },
 });

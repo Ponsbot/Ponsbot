@@ -5,6 +5,9 @@ export { BOT_BUY_RESERVE_BPS } from "./config";
 
 export const BOT_THOUGHT_INTERVAL_MS = 15 * 60_000;
 export const BOT_TRADE_INTERVAL_MS = 45 * 60_000;
+// Leave room for the minute worker tick, wallet provisioning and model latency.
+export const BOT_FIRST_THOUGHT_DELAY_MS = 60_000;
+export const BOT_FIRST_TRADE_DELAY_MS = 2 * 60_000;
 
 export type CreateBotRequest = { ok: true; name: string; description: string } | { ok: false; message: string };
 /** Explicit bot creation command; quoted multi-word names may end with sentence punctuation. */
@@ -26,7 +29,7 @@ export function parseCreateBotPost(text: string): CreateBotRequest | null {
 
 export type YardSchedule = { anchorAt: number; nextThoughtAt: number; nextTradeAt: number };
 export function initialYardSchedule(now: number): YardSchedule {
-  return { anchorAt: now, nextThoughtAt: now + BOT_THOUGHT_INTERVAL_MS, nextTradeAt: now + BOT_TRADE_INTERVAL_MS };
+  return { anchorAt: now, nextThoughtAt: now + BOT_FIRST_THOUGHT_DELAY_MS, nextTradeAt: now + BOT_FIRST_TRADE_DELAY_MS };
 }
 export function dueYardCycle(schedule: YardSchedule, now: number): "thought" | "trade" | null {
   // Both run at 45-minute boundaries. Finish the thought before leasing the trade.

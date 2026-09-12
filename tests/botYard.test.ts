@@ -4,6 +4,16 @@ import { botYardPreviewAllowed } from "../lib/trading-agents/config";
 import { botSpriteDataUrl, createBotSprite } from "../lib/trading-agents/sprite";
 import { botWalletLinks } from "../lib/trading-agents/yard-view";
 
+it("starts within five minutes, then resumes the normal cadence", () => {
+  const initial = initialYardSchedule(1000);
+  expect(initial.nextThoughtAt).toBe(61000);
+  expect(initial.nextTradeAt).toBe(121000);
+  const thought = advanceYardSchedule(initial, "thought", 90000);
+  expect(thought.nextThoughtAt).toBe(901000);
+  expect(dueYardCycle(thought, 121000)).toBe("trade");
+  expect(advanceYardSchedule(thought, "trade", 180000).nextTradeAt).toBe(2701000);
+});
+
 describe("bot creation grammar", () => {
   it("uses the first name then retains all following text as description", () => {
     expect(parseCreateBotPost("@ponsbotfamily create a bot named SDFSDFSDF he loves trading pons bot. His personality is curious.\nHe loves green."))
@@ -29,7 +39,7 @@ describe("bot creation grammar", () => {
 });
 describe("Yard timing and balances", () => {
   it("schedules independent slots", () => {
-    const schedule = initialYardSchedule(0); expect(dueYardCycle(schedule, 899999)).toBeNull(); expect(dueYardCycle(schedule, 900000)).toBe("thought");
+    const schedule = initialYardSchedule(0); expect(dueYardCycle(schedule, 59999)).toBeNull(); expect(dueYardCycle(schedule, 60000)).toBe("thought");
     const afterThought = advanceYardSchedule(schedule, "thought", 2700000);
     expect(dueYardCycle(afterThought, 2700000)).toBe("trade");
     expect(dueYardCycle(advanceYardSchedule(afterThought, "trade", 2700000), 2700000)).toBeNull();
