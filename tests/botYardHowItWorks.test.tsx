@@ -10,14 +10,14 @@ describe("Bot Yard how it works", () => {
     expect(html).toContain("<summary>How It Works</summary>");
     expect(html).not.toMatch(/<details[^>]*\sopen[\s=>]/);
   });
-  it("explains creation, cadence, ownership and simulated versus real funds", () => {
+  it("explains creation and ownership without internal trading mechanics", () => {
     const html = renderToStaticMarkup(<BotYardHowItWorks />);
-    for (const text of ["three bots", "15 minutes", "45 minutes", "20%", "Paper bots", "dedicated wallet", "My Bot", "Robinhood ETH"]) expect(html).toContain(text);
-    expect(html).toContain("without spending real wallet funds");
+    for (const text of ["three bots", "dedicated wallet", "My Bot", "Robinhood ETH"]) expect(html).toContain(text);
+    for (const text of ["15 minutes", "45 minutes", "20%", "Paper bots", "trading mode"]) expect(html).not.toContain(text);
   });
-  it("describes real funds for live bots", () => {
-    const html = renderToStaticMarkup(<BotYardHowItWorks live />);
-    expect(html).toContain("Live bots trade using funds in their dedicated wallets");
-    expect(html).not.toContain("Automated trading currently runs in paper mode");
+  it("describes the experience in general terms", () => {
+    const html = renderToStaticMarkup(<BotYardHowItWorks />);
+    expect(html).toContain("follow its trading journey");
+    expect(html).not.toContain("simulate trades");
   });
 });

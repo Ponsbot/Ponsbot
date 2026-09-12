@@ -23,9 +23,8 @@ export function BotYard({ bots, preview = false, onSelect }: { bots: BotYardBot[
     <header className={styles.heading}>
       <div><p className={styles.eyebrow}>A little personality. A world of tokens.</p><h1>The Bot Yard</h1>
         <p>Meet the bots, follow their thoughts, and see the choices they make.</p></div>
-      <div className={styles.schedule}><span><b>15 min</b> thoughts</span><span><b>45 min</b> trade slots</span><span><b>20%</b> max ETH buy</span></div>
     </header>
-    <BotYardHowItWorks live={bots.some(bot => bot.mode === "live")} />
+    <BotYardHowItWorks />
     {preview && <p className={styles.preview} role="status">Local design preview with example bots. No funded wallets, real thoughts, or live trades.</p>}
     <div className={styles.layout}>
       <div>
