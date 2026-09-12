@@ -4,6 +4,7 @@ import { liquidityTables } from "./lib/liquiditySchema";
 import { liquidityWorkflowTables } from "./lib/liquidityWorkflowSchema";
 import { xReplyQueueTables } from "./lib/xReplyQueueSchema";
 import { pollTables } from "./lib/pollSchema";
+import { tradingAgentTables } from "./lib/tradingAgentSchema";
 
 const intakeFilterGuardState = v.object({
   recentPosts: v.array(v.object({ id: v.string(), at: v.number() })),
@@ -14,6 +15,7 @@ const intakeFilterGuardState = v.object({
 });
 
 export default defineSchema({
+  ...tradingAgentTables,
   ...pollTables,
   walletContinuations: defineTable({
     owner: v.string(), source: v.union(v.literal("terminal"), v.literal("telegram")), scope: v.string(),

@@ -1,4 +1,7 @@
 import { tokenPattern } from "../lib/token-pattern";
+import { makeFunctionReference } from "convex/server";
+import { tradingAgentCapabilities } from "../lib/trading-agents/config";
+const botYardXHandler = makeFunctionReference<"action", { postId: string }, { handled: boolean }>("tradingAgentRuntime:handleX");
 import { isPollCommand } from "../lib/polls";
 import { v } from "convex/values";
 import { parseContextualBuy, resolveContextualBuyToken } from "../lib/contextual-buy";
@@ -1665,6 +1668,7 @@ export const retryInteraction = internalAction({
     // X can prepend every participant in a reply chain. Strip only that leading
     // invocation block; never read or append parent/quoted post text.
     const directText = directPostCommandText(current.interaction.text);
+    if (tradingAgentCapabilities().publicCommands && (await ctx.runAction(botYardXHandler, { postId })).handled) return;
     const pollContext = current.interaction.parentPostId ? await ctx.runQuery(internal.polls.context, { parentPostId: current.interaction.parentPostId }) : null;
     if (isPollCommand(directText) || pollContext) await ctx.runMutation(internal.xReplies.updateInteraction, { postId, status: "processing", commandKind: "poll" });
     const poll = isPollCommand(directText) || pollContext ? await ctx.runAction(internal.polls.handleX, { postId, owner: current.user.xUserId, text: directText, parentPostId: current.interaction.parentPostId }) : null;

@@ -22,6 +22,7 @@ export async function openRouter(messages: Message[], maxTokens: number, options
   timeoutMs?: number; temperature?: number; minimumCompletionTokens?: number;
   reasoningEffort?: string; providerSort?: string;
   jsonSchema?: JsonSchemaResponseFormat;
+  signal?: AbortSignal;
 } = {}) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
@@ -46,7 +47,7 @@ export async function openRouter(messages: Message[], maxTokens: number, options
         ...(options.jsonSchema ? { require_parameters: true } : {}),
       } : undefined,
     }),
-    signal: AbortSignal.timeout(options.timeoutMs || 30_000),
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs || 30_000)]) : AbortSignal.timeout(options.timeoutMs || 30_000),
   });
   const payload = await response.json().catch(() => ({})) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } };
   if (!response.ok) throw new OpenRouterRequestError(payload.error?.message || `OpenRouter failed (${response.status})`, response.status);

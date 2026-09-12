@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { retryFeeInspection, feeSnapshotIncludesReceipt } from "../fee-inspection-retry";
 import { CdpClient } from "@coinbase/cdp-sdk";
 import { createPublicClient, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, encodePacked, formatEther, formatUnits, keccak256, parseAbi, parseAbiParameters, parseEther, parseTransaction, parseUnits, recoverTransactionAddress, serializeTransaction, TransactionNotFoundError, TransactionReceiptNotFoundError, zeroAddress, type Address, type Hex } from "viem";
@@ -2312,17 +2313,33 @@ export async function signPreparedEnvelope(request: Omit<ExecutionRequest, "oper
     signedTransaction: signature, valueWei: envelope.valueWei, nonce: envelope.nonce,
   };
 }
+const envelopeCapture = new AsyncLocalStorage<{ approval: boolean }>();
+class CapturedEnvelope extends Error {
+  constructor(readonly envelope: Awaited<ReturnType<typeof prepareUnsigned>>, readonly approval: boolean) { super("UNSIGNED_ENVELOPE_CAPTURED"); }
+}
+/** Uses the ordinary simulated trade routes but stops before transaction signing. */
+export async function prepareExecutionEnvelope(request: ExecutionRequest) {
+  return envelopeCapture.run({ approval: false }, async () => {
+    try { await executeTransaction(request); }
+    catch (error) { if (error instanceof CapturedEnvelope) return { ...error.envelope, approval: error.approval }; throw error; }
+    throw new Error("NO_EXECUTION_ENVELOPE");
+  });
+}
 export async function prepareSigned(request: Omit<ExecutionRequest, "operation">, to: Address, data: Hex, value: bigint, gasQuote?: TransactionGasQuote, launchFee?: bigint) {
   // CDP's account endpoint is case-sensitive. Reuse its exact verified address,
   // not a lowercased request address, without doing a second account lookup.
   // ETH sends reserve and sign with the same fresh quote, instead of making
   // a second estimate that can consume the entire send-all balance cushion.
   const { envelope, accountAddress } = await prepareUnsignedWithAccount(request, to, data, value, undefined, gasQuote, launchFee);
+  const capture = envelopeCapture.getStore();
+  if (capture) throw new CapturedEnvelope(envelope, capture.approval);
   const { signature } = await cdp().evm.signTransaction({ address: accountAddress, transaction: envelope.unsignedTransaction, idempotencyKey: request.idempotencyKey });
   return { transactionHash: keccak256(signature), status: "prepared" as const, toAddress: to, signedTransaction: signature, valueWei: value.toString(), nonce: envelope.nonce };
 }
 
 async function prepareApproval(request: ExecutionRequest, token: Address, spender: Address, amount: bigint, suffix: string) {
+  const capture = envelopeCapture.getStore();
+  if (capture) capture.approval = true;
   const data = encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [spender, amount] });
   return {
     ...(await prepareSigned({ ...request, idempotencyKey: `${request.idempotencyKey}:${suffix}` }, token, data, 0n)),

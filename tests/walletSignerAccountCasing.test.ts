@@ -14,7 +14,7 @@ vi.mock("@coinbase/cdp-sdk", () => ({ CdpClient: class {
 } }));
 vi.mock("viem", async original => ({ ...await original<typeof import("viem")>(), createPublicClient: () => mock.rpc }));
 vi.mock("../lib/token-market-cap", () => ({ quoteDetails: vi.fn() }));
-import { executeTransaction, prepareSigned, prepareUnsigned, signPreparedEnvelope } from "../lib/wallet-signer/service";
+import { executeTransaction, prepareExecutionEnvelope, prepareSigned, prepareUnsigned, signPreparedEnvelope } from "../lib/wallet-signer/service";
 import { sendAllGasReserve, transactionMaximumCost } from "../lib/wallet-signer/gas";
 
 const cdpAddress: Address = "0xc965ae6227d470D6862929BCb7cF57d6e2D699ad";
@@ -46,6 +46,22 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("verified CDP account address is preserved at signing", () => {
+  it("captures an agent withdrawal envelope without signing or broadcasting", async () => {
+    const envelope = await prepareExecutionEnvelope({ ...request, ownerReference: "agent:agent12345678", operation: { type: "eth_transfer", recipient: destination, amount: "0.001", unit: "eth" } });
+    expect(envelope.valueWei).toBe("1000000000000000");
+    expect(envelope.approval).toBe(false);
+    expect(parseTransaction(envelope.unsignedTransaction).chainId).toBe(4663);
+    expect(mock.signTransaction).not.toHaveBeenCalled();
+    expect(mock.rpc.sendRawTransaction).not.toHaveBeenCalled();
+  });
+  it("does not leak unsigned capture into a concurrent ordinary wallet request", async () => {
+    await Promise.all([
+      prepareExecutionEnvelope({ ...request, ownerReference: "agent:agent12345678", operation: { type: "eth_transfer", recipient: destination, amount: "0.001", unit: "eth" } }),
+      prepareSigned({ ...request, idempotencyKey: "normal-wallet-concurrent" }, destination, "0x", 1n),
+    ]);
+    expect(mock.signTransaction).toHaveBeenCalledOnce();
+    expect(mock.signTransaction.mock.calls[0][0].idempotencyKey).toBe("normal-wallet-concurrent");
+  });
   it.each([cdpAddress, cdpAddress.toLowerCase(), `0x${cdpAddress.slice(2).toUpperCase()}`])("accepts request casing %s but signs with CDP's exact address", async expectedFrom => {
     const result = await prepareSigned({ ...request, expectedFrom }, destination, "0xabcd", 123n);
     expect(result.status).toBe("prepared");

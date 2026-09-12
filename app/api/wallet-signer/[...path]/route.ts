@@ -24,6 +24,8 @@ import { creatorBurnSnapshot, discoverCreatorBurn, prepareCreatorBurn, broadcast
 import { creatorLayerLaunchPreflight, creatorNewLaunchPreflight, deployCreatorLayer,
   deployCreatorNewLaunchLayer, predictCreatorNewLaunchLayer } from "@/lib/wallet-signer/creator-burn-enrollment";
 import { prepareLiquidityEnvelope, signLiquidityEnvelope } from "@/lib/wallet-signer/liquidity";
+import { agentLiveBalances, agentLiveContext, agentMarketSnapshot, provisionAgentWallet } from "@/lib/wallet-signer/agents";
+import { executeAgentWalletJob } from "@/lib/wallet-signer/agent-execution";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,6 +75,11 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
   try {
     const path = (await context.params).path.join("/");
     const body = await boundedJson(request, path.startsWith("v1/liquidity/") ? 131_072 : 16_384);
+    if (path === "v1/agents/markets") return NextResponse.json(await agentMarketSnapshot(body), { headers: { "cache-control": "no-store" } });
+    if (path === "v1/agents/live-context") return NextResponse.json(await agentLiveContext(body), { headers: { "cache-control": "no-store" } });
+    if (path === "v1/agents/live-balances") return NextResponse.json(await agentLiveBalances(body), { headers: { "cache-control": "no-store" } });
+    if (path === "v1/agents/provision") return NextResponse.json(await provisionAgentWallet(body), { headers: { "cache-control": "no-store" } });
+    if (path === "v1/agents/execute") return NextResponse.json(await executeAgentWalletJob(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/liquidity/funding-check") return NextResponse.json(await checkLiquidityFunding(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/liquidity/quote") return NextResponse.json(await quoteLiquidity(body));
     if (path === "v1/liquidity/refresh-open") return NextResponse.json(await refreshLiquidityOpen(body), { headers: { "cache-control": "no-store" } });

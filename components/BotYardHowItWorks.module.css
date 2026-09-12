@@ -1,0 +1,10 @@
+.box { margin: 0 0 22px; border: 1px solid var(--line, #dcded2); border-radius: 14px; background: var(--card, #fffdf7); }
+.box summary { padding: 17px 20px; cursor: pointer; font-weight: 700; color: #1c5d3d; border-radius: 14px; }
+.box summary:hover { background: #e8edda; }
+.box summary:focus-visible { outline: 2px solid #1c5d3d; outline-offset: 3px; }
+.content { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 28px; padding: 4px 20px 20px; }
+.content h2 { font-size: 15px; margin: 0 0 8px; }
+.content p { font-size: 13px; line-height: 1.65; margin: 0 0 10px; overflow-wrap: anywhere; color: var(--muted, #6e7167); }
+.content .example { padding: 10px 12px; background: #e8edda; border-radius: 8px; color: #1c5d3d; }
+.content .note { font-weight: 600; }
+@media (max-width: 720px) { .content { grid-template-columns: 1fr; gap: 14px; } }

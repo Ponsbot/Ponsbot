@@ -3,12 +3,14 @@ import Link from "next/link";
 import { MobileNav } from "@/components/MobileNav";
 import { WalletAccountMenu } from "@/components/WalletAccountMenu";
 import { VotesNavLink } from "@/components/VotesNavLink";
+import { MyBotLink } from "@/components/MyBotLink";
+import { tradingAgentCapabilities } from "@/lib/trading-agents/config";
 
 export function SiteHeader() {
   return <header className="site-header">
     <div className="header-brand"><Link href="/" className="wordmark"><Image className="brand-logo" src="/ponsbot.png" alt="" width={42} height={42} priority /><span>Pons Bot</span></Link></div>
     <Link href="/launch/0xB1E9b822b81bbbdab375F7f4D86e44fA04d12b07" className="header-ca" aria-label="View the Pons Bot token page"><span className="header-ca-desktop">$PONSBOT: 0xB1E9b822b81bbbdab375F7f4D86e44fA04d12b07</span><span className="header-ca-mobile">$PONSBOT</span></Link>
-    <nav><VotesNavLink /><Link href="/stats">STATS</Link><Link href="/terminal">TERMINAL</Link><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x-logo.png" alt="" width={20} height={20} /></a><a className="tg-nav-link" href="https://t.me/The_Pons_Bot" target="_blank" rel="noreferrer" aria-label="Pons Bot on Telegram"><Image src="/telegram-logo.png" alt="" width={20} height={20} /></a><WalletAccountMenu /></nav><MobileNav />
+    <nav>{tradingAgentCapabilities().website && <><Link href="/bot-yard">BOT YARD</Link><MyBotLink /></>}<VotesNavLink /><Link href="/stats">STATS</Link><Link href="/terminal">TERMINAL</Link><Link href="/how-it-works">HOW IT WORKS</Link><Link href="/#launches">LAUNCHES</Link><a className="x-nav-link" href="https://x.com/Ponsbotfamily" target="_blank" rel="noreferrer" aria-label="Ponsbotfamily on X"><Image src="/x-logo.png" alt="" width={20} height={20} /></a><a className="tg-nav-link" href="https://t.me/The_Pons_Bot" target="_blank" rel="noreferrer" aria-label="Pons Bot on Telegram"><Image src="/telegram-logo.png" alt="" width={20} height={20} /></a><WalletAccountMenu /></nav><MobileNav botYard={tradingAgentCapabilities().website} />
   </header>;
 }
 

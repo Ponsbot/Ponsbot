@@ -4,8 +4,9 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { VotesNavLink } from './VotesNavLink';
+import { MyBotLink } from './MyBotLink';
 
-export function MobileNav() {
+export function MobileNav({ botYard = false }: { botYard?: boolean }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -23,6 +24,8 @@ export function MobileNav() {
     {open ? <div className="mobile-menu">
       <Link href="/" onClick={() => setOpen(false)}>HOME</Link>
       <VotesNavLink onNavigate={() => setOpen(false)} />
+      {botYard && <Link href="/bot-yard" onClick={() => setOpen(false)}>BOT YARD</Link>}
+      {botYard && <MyBotLink onNavigate={() => setOpen(false)} />}
       <Link href="/stats" onClick={() => setOpen(false)}>STATS</Link>
       <Link href="/terminal" onClick={() => setOpen(false)}>TERMINAL</Link>
       <Link href="/how-it-works" onClick={() => setOpen(false)}>HOW IT WORKS</Link>

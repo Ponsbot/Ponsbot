@@ -18,6 +18,8 @@ export function replyQueueExpiresAt(priority: ReplyPriority, readyAt: number) {
 }
 
 export function replyQueuePriority(text: string, kind?: string, ok?: boolean): ReplyPriority {
+  if (kind === "bot_create") return ok ? "A" : "B";
+  if (kind === "bot_check") return "C";
   if (kind === "poll_created" || kind === "poll_result") return "A";
   if (kind === "poll") return "B";
   if (["graduation", "houdini_final", "houdini_progress", "liquidity", "guided_execution"].includes(kind ?? "")) return "A";

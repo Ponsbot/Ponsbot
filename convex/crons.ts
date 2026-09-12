@@ -1,7 +1,9 @@
-import { cronJobs } from "convex/server";
+import { cronJobs, makeFunctionReference } from "convex/server";
 import { internal } from "./_generated/api";
 
 const crons = cronJobs();
+// No provider calls or worker starts until both scheduler and paper flags are enabled.
+crons.interval("run staged bot yard workers", { minutes: 1 }, makeFunctionReference<"action">("tradingAgentRuntime:tick"));
 crons.interval("recover poll snapshots and close voting", { minutes: 1 }, internal.polls.recover);
 crons.interval("remove expired voting sign-ins", { minutes: 30 }, internal.pollWalletAuth.cleanup);
 
@@ -34,4 +36,5 @@ crons.interval("expire automated fee enrollment reservations", { hours: 1 }, int
 crons.interval("recover liquidity executions", { minutes: 1 }, internal.liquidity.recoverExecutions);
 crons.interval("monitor liquidity health", { minutes: 5 }, internal.liquidity.monitorHealth);
 
+crons.interval("recover owner bot transactions", { minutes: 1 }, makeFunctionReference<"mutation">("tradingAgentExecution:tick"));
 export default crons;
