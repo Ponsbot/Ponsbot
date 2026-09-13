@@ -71,6 +71,24 @@ function completion(lease: Lease) {
 }
 
 describe("dormant agent persistence", () => {
+  it("caps all bots at 100 including drafts and paused bots, with idempotent retries allowed", async () => {
+    const db = database(), ctx = { db };
+    for (let i=0;i<99;i++) await db.insert("tradingAgents", {ownerXUserId:`seed${i}`, nameKey:`seed${i}`, status:i%2?"paused":"draft"});
+    const id = await invoke(agents.createPaperAgent, ctx, create);
+    expect(await invoke(agents.createPaperAgent, ctx, create)).toBe(id);
+    await expect(invoke(agents.createPaperAgent, ctx, {...create,ownerXUserId:"456",creationKey:"new",name:"One too many"})).rejects.toThrow("BOT_PLATFORM_CAPACITY_REACHED");
+    expect(await db.query("tradingAgents").take(101)).toHaveLength(100);
+  });
+  it("applies the same global cap to X creation before wallet provisioning", async () => {
+    const db=database(),ctx={db};
+    for(let i=0;i<99;i++) await db.insert("tradingAgents",{ownerXUserId:`seed${i}`,nameKey:`seed${i}`,status:"draft"});
+    await db.insert("xReplyInteractions",{postId:"100",authorXUserId:"123",text:'@ponsbotfamily create a bot named "Last Bot". Loves nature.'});
+    const id=await invoke(agents.createYardBotFromPost,ctx,{postId:"100"});
+    expect(await invoke(agents.createYardBotFromPost,ctx,{postId:"100"})).toBe(id);
+    await db.insert("xReplyInteractions",{postId:"101",authorXUserId:"456",text:'@ponsbotfamily create a bot named "Extra Bot". Loves nature.'});
+    await expect(invoke(agents.createYardBotFromPost,ctx,{postId:"101"})).rejects.toThrow("BOT_PLATFORM_CAPACITY_REACHED");
+    expect(await db.query("tradingAgents").take(101)).toHaveLength(100);
+  });
   it("reserves names globally across owners and preserves idempotent creation", async () => {
     const db = database(), ctx = { db };
     const id = await invoke(agents.createPaperAgent, ctx, create);

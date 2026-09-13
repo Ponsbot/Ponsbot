@@ -22,6 +22,14 @@ import { countAgentTrade, isSecondaryAgentToken, secondaryAgentTokens, secondary
 // Deliberately internal only. No cron, public action, browser/X/TG entry point, CDP account, or signer.
 // Future web adapters must derive ownerXUserId from a verified session, never request/model text.
 const MAX_BOTS_PER_USER = 3;
+const MAX_BOTS_TOTAL = 100;
+async function requireBotCapacity(ctx: MutationCtx) {
+  // Count every status, including pending wallet provisioning. This range read
+  // and insertion share a serializable mutation, so concurrent creators retry
+  // against the new count. Idempotent retries return before this check.
+  if ((await ctx.db.query("tradingAgents").take(MAX_BOTS_TOTAL)).length >= MAX_BOTS_TOTAL)
+    throw new Error("BOT_PLATFORM_CAPACITY_REACHED");
+}
 function requirePaper() {
   const caps = tradingAgentCapabilities();
   if (!caps.paperTrading && !caps.liveTrading) throw new Error("TRADING_AGENTS_DISABLED");
@@ -60,6 +68,7 @@ export const createPaperAgent = internalMutation({
     if (await ctx.db.query("tradingAgents").withIndex("by_name", q => q.eq("nameKey", nameKey)).first()) throw new Error("BOT_NAME_TAKEN");
     const ownedAgents = await ctx.db.query("tradingAgents").withIndex("by_owner", q => q.eq("ownerXUserId", args.ownerXUserId)).take(MAX_BOTS_PER_USER);
     if (ownedAgents.length >= MAX_BOTS_PER_USER) throw new Error("AGENT_COUNT_LIMIT");
+    await requireBotCapacity(ctx);
     const now = Date.now();
     return ctx.db.insert("tradingAgents", {
       ownerXUserId: args.ownerXUserId, creationKey, name, nameKey, strategy, mode: "paper", status: "draft", policy, policyVersion: 1,
@@ -88,6 +97,7 @@ export const createYardBotFromPost = internalMutation({
     if ((await ctx.db.query("tradingAgents").withIndex("by_owner", q => q.eq("ownerXUserId", ownerXUserId)).take(MAX_BOTS_PER_USER)).length >= MAX_BOTS_PER_USER) throw new Error("AGENT_COUNT_LIMIT");
     const nameKey = botNameKey(parsed.name);
     if (await ctx.db.query("tradingAgents").withIndex("by_name", q => q.eq("nameKey", nameKey)).first()) throw new Error("BOT_NAME_TAKEN");
+    await requireBotCapacity(ctx);
     const now = Date.now(), schedule = initialYardSchedule(now), maximum = (2n ** 256n - 1n).toString();
     // Cash starts at zero. This creates neither a real wallet nor a funded paper balance.
     return ctx.db.insert("tradingAgents", {

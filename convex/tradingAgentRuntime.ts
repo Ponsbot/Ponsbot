@@ -176,6 +176,7 @@ export const handleX = internalAction({
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
       message = code.includes("BOT_NAME_TAKEN") ? "That bot name is already taken. Choose a different name."
+        : code.includes("BOT_PLATFORM_CAPACITY_REACHED") ? "The Bot Yard has reached its limit of 100 bots. No new bot was created."
         : code.includes("AGENT_COUNT_LIMIT") ? "You already have three bots. Each user can create a maximum of three."
           : "I couldn't finish setting up this bot request. No agent trade was started.";
     }
