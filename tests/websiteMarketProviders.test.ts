@@ -68,6 +68,29 @@ describe("website provider fallback", () => {
     expect(results[0]).toMatchObject({ marketCapUsd: 20000, marketCapSource: "onchain" });
     expect(paidRpc.getBlock).not.toHaveBeenCalled();
   });
+  it("does not accept a freshly fetched but incorrect simple batch cap", async () => {
+    const at = Date.now() - 1000;
+    mocks.gecko.mockImplementation(async (url: string) => new Response(JSON.stringify(url.includes('/simple/')
+      ? { data: { attributes: { market_cap_usd: { [addr(1)]: '12976.25055' }, h24_volume_usd: { [addr(1)]: '0' } } } }
+      : { data: [{ attributes: { address: addr(2), fdv_usd: '4858.170336' } }] }), { headers: { 'x-market-observed-at': String(at) } }));
+    const [result] = await refreshWebsiteMarkets(client, 's', [target], config);
+    expect(result).toMatchObject({ marketCapUsd: 4858.170336, observedAt: at, volume24hUsd: 0 });
+    expect(publicRpc.getBlock).not.toHaveBeenCalled();
+  });
+  it("uses reserves instead of an incorrect batch cap if the pool API is missing", async () => {
+    mocks.gecko.mockImplementation(async (url: string) => new Response(JSON.stringify(url.includes('/simple/')
+      ? { data: { attributes: { market_cap_usd: { [addr(1)]: '12976' } } } } : { data: [] })));
+    const [result] = await refreshWebsiteMarkets(client, 's', [target], config);
+    expect(result).toMatchObject({ marketCapUsd: 20000, marketCapSource: 'onchain' });
+  });
+  it("does not use the paired asset's cap when the pool base token differs", async () => {
+    mocks.gecko.mockImplementation(async () => new Response(JSON.stringify({ data: [{
+      attributes: { address: addr(2), fdv_usd: '999999999' },
+      relationships: { base_token: { data: { id: `robinhood_${addr(5)}` } } },
+    }] })));
+    const [result] = await refreshWebsiteMarkets(client, 's', [target], config);
+    expect(result).toMatchObject({ marketCapUsd: 20000, marketCapSource: 'onchain' });
+  });
   it("reuses stable metadata and one pair price for multiple tokens", async () => {
     const results = await refreshWebsiteMarkets(client, "s", [target, { ...target, tokenAddress: addr(4) }], config);
     expect(results).toHaveLength(2);

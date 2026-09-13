@@ -106,12 +106,14 @@ export async function refreshWebsiteMarkets(client: ConvexHttpClient, secret: st
       pools.set(pool.toLowerCase(), token);
     } catch { /* Missing pool configuration does not discard other tokens. */ }
   });
-  // Token-level batching supplies price/cap/volume/activity in one request and
-  // follows the active venue after migrations. Pool data remains the fallback.
+  // Token-level batching supplies cross-pool volume and activity. Value the
+  // token from its Pons pool instead of the simple endpoint's last-trade price.
   const tokenMarkets = await geckoTokenMarkets([...resolved.keys()], { allowStale: true }).catch(() => new Map());
   for (const [token, market] of tokenMarkets) {
     snapshots.set(token, { ...snapshots.get(token), tokenAddress: token, observedAt: market.observedAt,
-      ...(market.marketCapUsd === undefined ? {} : { marketCapUsd: market.marketCapUsd, marketCapSource: "gecko" }),
+      // The simple token-price endpoint can return a last-trade price for an
+      // inactive source as if freshly fetched. Use the verified Pons pool below
+      // for valuation; retain token-wide volume and activity from this batch.
       ...(market.volume24hUsd === undefined ? {} : { volume24hUsd: market.volume24hUsd, volumeObservedAt: market.observedAt }),
       ...(market.lastTradeAt === undefined ? {} : { lastTradeAt: market.lastTradeAt }),
     });
@@ -123,16 +125,18 @@ export async function refreshWebsiteMarkets(client: ConvexHttpClient, secret: st
   const poolIds = [...pools.entries()].filter(([, token]) => fallbackTokens.has(token)).map(([pool]) => pool).sort();
   if (poolIds.length) {
     const response = await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/pools/multi/${poolIds.join(",")}`).catch(() => undefined);
-    const payload = response?.ok ? await response.json().catch(() => undefined) as { data?: Array<{ attributes?: { address?: string; market_cap_usd?: string | null; fdv_usd?: string | null; volume_usd?: { h24?: string } } }> } | undefined : undefined;
+    const payload = response?.ok ? await response.json().catch(() => undefined) as { data?: Array<{ relationships?: { base_token?: { data?: { id?: string } } }; attributes?: { address?: string; market_cap_usd?: string | null; fdv_usd?: string | null; volume_usd?: { h24?: string } } }> } | undefined : undefined;
     const observedAt = Number(response?.headers.get("x-market-observed-at")) || Date.now();
     for (const pool of payload?.data ?? []) {
       const token = pools.get(pool.attributes?.address?.toLowerCase() ?? "");
       if (!token) continue;
-      const cap = geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd);
+      const base = pool.relationships?.base_token?.data?.id;
+      const cap = !base || base.toLowerCase() === `robinhood_${token}`
+        ? geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd) : undefined;
       const rawVolume = pool.attributes?.volume_usd?.h24;
       const volume = rawVolume === undefined || rawVolume === null || rawVolume === "" ? NaN : Number(rawVolume);
       const existing = snapshots.get(token);
-      snapshots.set(token, { ...existing, tokenAddress: token, observedAt: Math.max(existing?.observedAt ?? 0, observedAt),
+      snapshots.set(token, { ...existing, tokenAddress: token, observedAt: cap === undefined ? existing?.observedAt ?? observedAt : observedAt,
         ...(existing?.marketCapUsd !== undefined || cap === undefined ? {} : { marketCapUsd: cap, marketCapSource: "gecko" }),
         ...(existing?.volume24hUsd !== undefined || !Number.isFinite(volume) || volume < 0 ? {} : { volume24hUsd: volume, volumeObservedAt: observedAt }),
       });

@@ -52,24 +52,27 @@ export async function refreshWebsiteCatalog(client: ConvexHttpClient, secret: st
     const missing: string[] = [];
     for (const token of batch) {
       const market = markets.get(token);
-      if (!market || market.marketCapUsd === undefined || market.volume24hUsd === undefined) missing.push(token);
+      // Always obtain cap from the actual Pons pool. Simple batch caps can be
+      // stale last-trade prices even when the HTTP response is brand new.
+      missing.push(token);
       if (!market) continue;
       snapshots.push({ tokenAddress: token, observedAt: market.observedAt,
-        ...(market.marketCapUsd === undefined ? {} : { marketCapUsd: market.marketCapUsd }),
         ...(market.volume24hUsd === undefined ? {} : { volume24hUsd: market.volume24hUsd }),
         ...(market.lastTradeAt === undefined ? {} : { lastTradeAt: market.lastTradeAt }),
       });
     }
-    // Compatibility fallback for tokens not yet indexed by the token endpoint.
+    // Authoritative pool valuation, even when the simple endpoint returned a cap.
     const fallbackPools = missing.flatMap(token => [...pools.entries()].filter(([, value]) => value.toLowerCase() === token).map(([pool]) => pool));
     if (!fallbackPools.length) return;
     const response = await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/pools/multi/${fallbackPools.join(",")}`, 60_000, 8_000, true, true).catch(() => undefined);
-    const data = response?.ok ? await response.json().catch(() => undefined) as { data?: Array<{ attributes?: { address?: string; market_cap_usd?: string; fdv_usd?: string; volume_usd?: { h24?: string } } }> } | undefined : undefined;
+    const data = response?.ok ? await response.json().catch(() => undefined) as { data?: Array<{ relationships?: { base_token?: { data?: { id?: string } } }; attributes?: { address?: string; market_cap_usd?: string; fdv_usd?: string; volume_usd?: { h24?: string } } }> } | undefined : undefined;
     const observedAt = Number(response?.headers.get("x-market-observed-at")) || Date.now();
     for (const pool of data?.data ?? []) {
       const tokenAddress = pools.get(pool.attributes?.address?.toLowerCase() ?? "");
       if (!tokenAddress) continue;
-      const cap = geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd);
+      const base = pool.relationships?.base_token?.data?.id;
+      const cap = !base || base.toLowerCase() === `robinhood_${tokenAddress.toLowerCase()}`
+        ? geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd) : undefined;
       const rawVolume = pool.attributes?.volume_usd?.h24;
       const volume = rawVolume ? Number(rawVolume) : NaN;
       if (cap === undefined && !Number.isFinite(volume)) continue;
