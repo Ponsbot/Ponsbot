@@ -53,6 +53,14 @@ describe("Yard timing and balances", () => {
   it.each([-1, 0, 100.1, NaN, Infinity, 0.001])("rejects invalid percentages %s", value => expect(() => yardSellAmount("10000", value)).toThrow());
 });
 describe("one-time native pixel sprites and wallet links", () => {
+  it("varies whole silhouettes for generic briefs and preserves saved legacy designs", () => {
+    const designs = Array.from({ length: 100 }, (_, n) => createBotSprite(`Bot ${n}`, "An inquisitive trader"));
+    expect(new Set(designs.map(sprite => sprite.archetype)).size).toBe(10);
+    expect(designs.every(sprite => sprite.version === 2)).toBe(true);
+    const legacy = { version: 1 as const, seed: 123, archetype: "robot" as const, palette: 0 };
+    expect(botSpriteDataUrl(legacy)).toBe(botSpriteDataUrl(legacy));
+    expect(botSpriteDataUrl(legacy)).not.toBe(botSpriteDataUrl({ ...legacy, version: 2 }));
+  });
   it("is deterministic and character-driven", () => {
     expect(createBotSprite("Merlin", "A wizard")).toEqual(createBotSprite("Merlin", "A wizard"));
     expect(createBotSprite("Merlin", "A wizard").archetype).toBe("wizard");

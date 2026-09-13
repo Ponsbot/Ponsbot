@@ -10,6 +10,10 @@ export const agentMarketContextSchema = z.object({
   strategy: z.string().min(1).max(2000), policy: agentPolicySchema,
   character: z.object({ name: z.string().min(1).max(60), description: z.string().min(1).max(2000) }).strict().optional(),
   recentLog: z.array(z.object({ at: z.number().int().positive().safe(), summary: z.string().max(600) }).strict()).max(15).optional(),
+  yard: z.object({
+    places: z.array(z.string().max(80)).max(8),
+    neighbors: z.array(z.object({ name: z.string().max(60), description: z.string().max(300), thought: z.string().max(600).optional() }).strict()).max(8),
+  }).strict().optional(),
   tokens: z.array(z.object({ address: tokenAddress, symbol: z.string().min(1).max(100),
     decimals: z.number().int().min(0).max(255).optional(),
     priceUsd: z.number().finite().positive().optional(), priceObservedAt: z.number().int().positive().optional(), volume24hUsd: z.number().finite().nonnegative().optional() }).strict()).max(100),

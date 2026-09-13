@@ -30,6 +30,6 @@ export function formatBotStatus(input: {
     `🤖 ${safeText(input.name)} — ${input.mode === "live" ? "live trading" : "paper trading"}`,
     `💭 Last thought: ${input.thought ? `${safeText(input.thought.text)} (${time(input.thought.at)})` : "No thoughts yet."}`,
     `🔄 Last trade: ${input.trade ? `${input.mode === "live" ? "" : "Paper "}${input.trade.side === "buy" ? "bought" : "sold"} ${amount(input.trade.asset)} (${time(input.trade.at)}). ${safeText(input.trade.reason)}` : "No completed trades yet."}`,
-    input.holdingsAvailable === false ? "💰 Wallet balances have not been verified yet." : `💰 Current ${input.mode === "live" ? "wallet" : "paper"} holdings (saved ${time(input.updatedAt)}):\n${formatUnits(BigInt(input.cashWei), 18)} ETH${input.holdings.length ? `\n${input.holdings.map(amount).join("\n")}` : "\nNo tokens held."}`,
+    input.holdingsAvailable === false ? "💰 I couldn't retrieve the wallet balances right now. Please check again shortly." : `💰 ${input.mode === "live" ? "Wallet" : "Paper"} holdings (checked ${time(input.updatedAt)}):\n${formatUnits(BigInt(input.cashWei), 18)} ETH${input.holdings.length ? `\n${input.holdings.map(amount).join("\n")}` : "\nNo tokens held."}`,
   ].join("\n\n");
 }

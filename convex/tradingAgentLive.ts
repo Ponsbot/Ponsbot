@@ -100,7 +100,7 @@ export const work = internalAction({
       cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), failed,
     });
     try {
-      const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
+      const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"]; yard: AgentMarketContext["yard"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
       const base = new URL((process.env.WALLET_SIGNER_URL || `${process.env.NEXT_PUBLIC_SITE_URL}/api/wallet-signer`).replace(/\/$/, "") + "/v1/agents/live-context");
       if (base.protocol !== "https:" || base.username || base.password || !process.env.WALLET_SIGNER_TOKEN) throw new Error("SIGNER_NOT_CONFIGURED");
       const response = await fetch(base, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ agentId: current.agent._id, walletAddress: current.agent.walletAddress, tokens: context.tokens.map(t => t.address) }), signal: AbortSignal.timeout(60000) });
@@ -111,12 +111,16 @@ export const work = internalAction({
       const allowed = new Set([...context.tokens.map(t => t.address), ...heldAllowed].filter(t => !isSecondaryAgentToken(t) || secondaryTradeAvailable(current.agent.liveTradeMix)));
       // Non-platform holdings remain visible to wallet management but never become model trade candidates.
       if (!snapshot.complete) throw new Error("LIVE_HOLDINGS_INCOMPLETE");
+      // A verified balance read is useful even if the later model or trade step fails.
+      await ctx.runMutation(makeFunctionReference<"mutation", { agentId: Id<"tradingAgents">; snapshotJson: string }>("tradingAgentLive:saveHoldings"), {
+        agentId: current.agent._id, snapshotJson: JSON.stringify(snapshot),
+      });
       if (!await ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, boolean>("tradingAgents:reserveModelCall"), { cycleId: current.cycleId, leaseToken })) throw new Error("MODEL_LIMIT");
       const result = await runAgentModel(current.kind, { agentId: current.agent._id, cycleId: current.cycleId, policyVersion: current.agent.policyVersion,
         observedAt: markets.observedAt, strategy: current.agent.strategy, character: { name: current.agent.name, description: current.agent.description ?? current.agent.strategy }, policy: current.agent.policy,
         ethUsd: markets.ethUsd,
         tokens: markets.tokens.filter(t => allowed.has(t.address)).map(({ address, symbol, decimals, priceUsd, priceObservedAt, volume24hUsd }) => ({ address, symbol, decimals, priceUsd, priceObservedAt, volume24hUsd })),
-        cashWei: snapshot.cashWei, holdings: snapshot.tokens.filter(t => allowed.has(t.token)).slice(0, 20), recentLog: context.recentLog }, AbortSignal.timeout(50000), openRouter);
+        cashWei: snapshot.cashWei, holdings: snapshot.tokens.filter(t => allowed.has(t.token)).slice(0, 20), recentLog: context.recentLog, yard: context.yard }, AbortSignal.timeout(50000), openRouter);
       let finalSnapshot = snapshot;
       if (current.kind === "trade") {
         const refreshed = await fetch(new URL(base.toString().replace(/live-context$/, "live-balances")), { method: "POST",
@@ -145,7 +149,7 @@ export const saveHoldings = internalMutation({
   args: { agentId: v.id("tradingAgents"), snapshotJson: v.string() }, handler: async (ctx, args) => {
     if (args.snapshotJson.length > 20000) throw new Error("PAYLOAD_TOO_LARGE");
     const snapshot = snapshotSchema.parse(JSON.parse(args.snapshotJson)), agent = await ctx.db.get(args.agentId);
-    if (!agent || agent.mode !== "live" || !snapshot.complete || snapshot.observedAt < (agent.liveHoldings?.observedAt ?? 0)) return;
+    if (!agent || agent.mode !== "live" || !snapshot.complete || snapshot.observedAt > Date.now() || snapshot.observedAt < (agent.liveHoldings?.observedAt ?? 0)) return;
     await ctx.db.patch(agent._id, { liveHoldings: snapshot, updatedAt: Date.now() });
   },
 });

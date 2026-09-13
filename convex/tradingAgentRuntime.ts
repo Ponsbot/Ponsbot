@@ -12,9 +12,10 @@ import { parseCreateBotPost } from "../lib/trading-agents/bot-yard";
 import { parseCheckBotPost } from "../lib/trading-agents/status";
 import { parseBotFundingPost } from "../lib/trading-agents/funding";
 import { botCreatedReply } from "../lib/trading-agents/messages";
+import type { AgentMarketContext } from "../lib/trading-agents/eliza-bridge";
 
 type Lease = { agent: Doc<"tradingAgents">; cycleId: Id<"tradingAgentCycles">; cycleKey: string; leaseUntil: number; kind: "thought" | "trade" };
-type Context = { agent: Doc<"tradingAgents">; cycle: Doc<"tradingAgentCycles">; tokens: Array<{ address: string; symbol: string }>; recentLog: Array<{ at: number; summary: string }> };
+type Context = { agent: Doc<"tradingAgents">; cycle: Doc<"tradingAgentCycles">; tokens: Array<{ address: string; symbol: string }>; recentLog: Array<{ at: number; summary: string }>; yard: AgentMarketContext["yard"] };
 const ref = {
   lease: makeFunctionReference<"mutation", { leaseToken: string }, Lease | null>("tradingAgents:leaseNextPaperCycle"),
   context: makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, Context>("tradingAgents:workerContext"),
@@ -29,7 +30,7 @@ const ref = {
 };
 
 /** Uses existing server credentials; never sends arbitrary URLs or logs secrets. */
-async function signer(path: "markets" | "provision", body: unknown, signal?: AbortSignal): Promise<unknown> {
+async function signer(path: "markets" | "provision" | "live-balances", body: unknown, signal?: AbortSignal): Promise<unknown> {
   const base = (process.env.WALLET_SIGNER_URL || `${process.env.NEXT_PUBLIC_SITE_URL || ""}/api/wallet-signer`).replace(/\/$/, "");
   const url = new URL(base);
   if (url.protocol !== "https:" || url.username || url.password || !process.env.WALLET_SIGNER_TOKEN) throw new Error("AGENT_SIGNER_NOT_CONFIGURED");
@@ -59,7 +60,7 @@ export const work = internalAction({
         const allowed = new Set(data.tokens.map(t => t.address));
         return { agentId: data.agent._id, cycleId: data.cycle.cycleKey, policyVersion: data.agent.policyVersion,
           observedAt: Date.now(), ethUsd: markets.ethUsd, strategy: data.agent.strategy, policy: data.agent.policy,
-          character: { name: data.agent.name, description: data.agent.description ?? data.agent.strategy }, recentLog: data.recentLog,
+          character: { name: data.agent.name, description: data.agent.description ?? data.agent.strategy }, recentLog: data.recentLog, yard: data.yard,
           tokens: markets.tokens.filter(t => allowed.has(t.address)).map(t => ({ address: t.address, symbol: t.symbol, decimals: t.decimals,
             ...(t.priceUsd ? { priceUsd: t.priceUsd, priceObservedAt: t.priceObservedAt } : {}), ...(t.volume24hUsd !== undefined ? { volume24hUsd: t.volume24hUsd } : {}) })),
           cashWei: data.agent.portfolio.cashWei, holdings: data.agent.portfolio.holdings,
@@ -138,6 +139,13 @@ export const handleX = internalAction({
           message = botCreatedReply(create.name, create.description); ok = true;
         }
       } else if (check) {
+        const wallet = await ctx.runQuery(makeFunctionReference<"query", { text: string }, { agentId: Id<"tradingAgents">; walletAddress: string; tokens: string[] } | null>("tradingAgents:checkBotWallet"), { text });
+        if (wallet) {
+          try {
+            const snapshot = await signer("live-balances", { ...wallet, discover: true }, AbortSignal.timeout(25000));
+            await ctx.runMutation(makeFunctionReference<"mutation", { agentId: Id<"tradingAgents">; snapshotJson: string }>("tradingAgentLive:saveHoldings"), { agentId: wallet.agentId, snapshotJson: JSON.stringify(snapshot) });
+          } catch { /* Preserve the last verified holdings; a status request never triggers a trade. */ }
+        }
         message = (await ctx.runQuery(ref.check, { text }))?.reply ?? "I couldn't find that bot."; ok = true;
       } else if (funding && !funding.ok) message = funding.message;
       else {

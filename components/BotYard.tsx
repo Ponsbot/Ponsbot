@@ -1,21 +1,22 @@
 "use client";
 
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { formatEther } from "viem";
 import { botSpriteDataUrl } from "@/lib/trading-agents/sprite";
 import { botWalletLinks, type BotYardBot } from "@/lib/trading-agents/yard-view";
 import styles from "./BotYard.module.css";
 import { BotYardHowItWorks } from "./BotYardHowItWorks";
+import { BotYardScene } from "./BotYardScene";
+import { yardTour } from "@/lib/trading-agents/yard-motion";
 
 function walkingStyle(seed: number): CSSProperties {
-  const point = (n: number, min: number, span: number) => `${min + (Math.imul(seed ^ n, 2654435761) >>> 0) % span}%`;
-  return { "--x1": point(1, 13, 67), "--x2": point(2, 13, 67), "--x3": point(3, 13, 67),
-    "--y1": point(4, 18, 58), "--y2": point(5, 18, 58), "--y3": point(6, 18, 58),
-    animationDuration: `${35 + seed % 25}s`, animationDelay: `-${seed % 30}s` } as CSSProperties;
+  const tour = yardTour(seed);
+  return { ...Object.fromEntries(tour.stops.flatMap((stop, i) => [[`--x${i + 1}`, `${stop.x}%`], [`--y${i + 1}`, `${stop.y}%`]])),
+    "--tour-duration": `${tour.duration}s`, "--tour-delay": `${tour.delay}s` } as CSSProperties;
 }
 
 /** Receives presentation-only DTOs; never receives wallet credentials or worker state. */
-export function BotYard({ bots, preview = false, onSelect }: { bots: BotYardBot[]; preview?: boolean; onSelect?: (id: string) => void }) {
+export function BotYard({ bots, preview = false, onSelect, headingAction }: { bots: BotYardBot[]; preview?: boolean; onSelect?: (id: string) => void; headingAction?: ReactNode }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = bots.find(bot => bot.id === selectedId) ?? bots[0];
   const links = botWalletLinks(selected?.walletAddress);
@@ -23,24 +24,29 @@ export function BotYard({ bots, preview = false, onSelect }: { bots: BotYardBot[
     <header className={styles.heading}>
       <div><p className={styles.eyebrow}>A little personality. A world of tokens.</p><h1>The Bot Yard</h1>
         <p>Meet the bots, follow their thoughts, and see the choices they make.</p></div>
+      {headingAction && <div className={styles.headingAction}>{headingAction}</div>}
     </header>
-    <BotYardHowItWorks />
     {preview && <p className={styles.preview} role="status">Local design preview with example bots. No funded wallets, real thoughts, or live trades.</p>}
     <div className={styles.layout}>
       <div>
         <div className={styles.yard} aria-label="Bot Yard. Select a bot to view its log.">
-          <div className={styles.path} aria-hidden="true" />
+          <BotYardScene />
           <span className={styles.sign} aria-hidden="true">BOT YARD</span>
-          <span className={styles.flowerA} aria-hidden="true">✿</span><span className={styles.flowerB} aria-hidden="true">✿</span>
           {bots.slice(0, 24).map(bot => <button key={bot.id} type="button" className={`${styles.bot} ${selected?.id === bot.id ? styles.selected : ""}`}
             style={walkingStyle(bot.sprite.seed)} aria-label={`${bot.name}, view log`} aria-pressed={selected?.id === bot.id}
             onClick={() => { setSelectedId(bot.id); onSelect?.(bot.id); }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={botSpriteDataUrl(bot.sprite)} width={60} height={72} alt="" draggable={false} />
-            <span>{bot.name}</span>
+            <span className={styles.botShadow} aria-hidden="true" />
+            {yardTour(bot.sprite.seed).stops.map((stop, i) => <span key={stop.key} className={`${styles.activityBubble} ${styles[`stop${i}`]}`} aria-hidden="true" title={`${stop.label} (decorative)`}>{stop.icon}<small>{stop.label}</small></span>)}
+            <span className={styles.spritePose} aria-hidden="true">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={botSpriteDataUrl(bot.sprite)} width={60} height={72} alt="" draggable={false} />
+            </span>
+            <span className={styles.nameTag}>{bot.name}</span>
           </button>)}
           {!bots.length && <p className={styles.empty}>The yard is quiet. No bots have moved in yet.</p>}
         </div>
+        <p className={styles.sceneCaption}>A little life in the yard. Scenery and interactions are decorative.</p>
+        <BotYardHowItWorks />
         <div className={styles.roster} aria-label="Choose a bot without following its movement">
           {bots.map(bot => <button type="button" key={bot.id} aria-pressed={selected?.id === bot.id}
             onClick={() => { setSelectedId(bot.id); onSelect?.(bot.id); }}>{bot.name}</button>)}

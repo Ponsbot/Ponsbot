@@ -198,6 +198,17 @@ export const yardDetail = internalQuery({
 });
 
 /** Staged read-only command adapter. Does not enqueue replies or alter an agent. */
+export const checkBotWallet = internalQuery({
+  args: { text: v.string() }, handler: async (ctx, { text }) => {
+    requirePaper();
+    const nameKey = parseCheckBotPost(text);
+    if (!nameKey) return null;
+    const agent = await ctx.db.query("tradingAgents").withIndex("by_name", q => q.eq("nameKey", nameKey)).unique();
+    if (!agent || agent.mode !== "live" || !agent.walletAddress || agent.walletProvisionStatus !== "ready") return null;
+    return { agentId: agent._id, walletAddress: agent.walletAddress, tokens: agent.liveHoldings?.tokens.map(t => t.token) ?? [] };
+  },
+});
+
 export const checkBotPost = internalQuery({
   args: { text: v.string() },
   handler: async (ctx, { text }) => {
@@ -373,7 +384,15 @@ export const workerContext = internalQuery({
     ].map(t => [t.address, t])).values()].slice(0, 40) : [];
     const tokens = [...primary.slice(0, 100 - alternatives.length), ...alternatives];
     const history = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", agent._id)).order("desc").take(16);
-    return { agent, cycle, tokens, recentLog: history.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).slice(0, 15).map(l => ({ at: l.at, summary: l.summary })) };
+    const neighbors = await ctx.db.query("tradingAgents").withIndex("by_created").order("desc").take(9);
+    const yard = {
+      places: ["Garden with flowers", "Pond with lily pads", "Noticeboard", "Lookout telescope"],
+      neighbors: await Promise.all(neighbors.filter(bot => bot._id !== agent._id && bot.status === "running").slice(0, 8).map(async bot => {
+        const thought = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_kind_status", q => q.eq("agentId", bot._id).eq("kind", "thought").eq("status", "held")).order("desc").first();
+        return { name: bot.name, description: (bot.description ?? bot.strategy).slice(0, 300), ...(thought?.thought ? { thought: thought.thought.slice(0, 600) } : {}) };
+      })),
+    };
+    return { agent, cycle, tokens, yard, recentLog: history.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).slice(0, 15).map(l => ({ at: l.at, summary: l.summary })) };
   },
 });
 

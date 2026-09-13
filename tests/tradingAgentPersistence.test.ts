@@ -270,7 +270,7 @@ describe("Bot Yard staging", () => {
     const first = structuredClone(await db.get(id));
     expect(await invoke(agents.createYardBotFromPost, ctx, { postId: "4567" })).toBe(id);
     expect(await db.get(id)).toEqual(first);
-    expect(first).toMatchObject({ name: "Moss", description: "A thoughtful garden bot who likes Pons Bot tokens.", status: "draft", sprite: { version: 1, archetype: "plant" }, portfolio: { cashWei: "0" } });
+    expect(first).toMatchObject({ name: "Moss", description: "A thoughtful garden bot who likes Pons Bot tokens.", status: "draft", sprite: { version: 2, archetype: "plant" }, portfolio: { cashWei: "0" } });
     expect(await db.query("cryptoWallets").take(10)).toEqual([]);
   });
   it("derives ownership from the stored X interaction", async () => {

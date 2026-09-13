@@ -41,8 +41,8 @@ export const tradingAgentTables = {
     paperTradeMix: v.optional(v.object({ platform: v.number(), secondary: v.number() })),
     liveHoldings: v.optional(v.object({ cashWei: v.string(), tokens: v.array(v.object({ token: v.string(), amount: v.string() })), observedAt: v.number(), complete: v.boolean() })),
     schedule: v.optional(v.object({ anchorAt: v.number(), nextThoughtAt: v.number(), nextTradeAt: v.number() })),
-    sprite: v.optional(v.object({ version: v.literal(1), seed: v.number(), palette: v.number(),
-      archetype: v.union(v.literal("robot"), v.literal("wizard"), v.literal("cat"), v.literal("plant"), v.literal("pirate")) })),
+    sprite: v.optional(v.object({ version: v.union(v.literal(1), v.literal(2)), seed: v.number(), palette: v.number(),
+      archetype: v.union(v.literal("robot"), v.literal("wizard"), v.literal("cat"), v.literal("plant"), v.literal("pirate"), v.literal("rover"), v.literal("jelly"), v.literal("bird"), v.literal("golem"), v.literal("astronaut")) })),
   }).index("by_provision_due", ["walletProvisionStatus", "walletProvisionNextAt"])
     .index("by_wallet", ["walletAddress"]).index("by_name", ["nameKey"]).index("by_owner_creation", ["ownerXUserId", "creationKey"])
     .index("by_owner", ["ownerXUserId"]).index("by_status_due", ["status", "nextRunAt"]).index("by_mode_status_due", ["mode", "status", "nextRunAt"]).index("by_created", ["createdAt"]),

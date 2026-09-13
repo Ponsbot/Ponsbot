@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { BotYard } from "./BotYard";
+import { MyBotLink } from "./MyBotLink";
 import type { BotYardBot } from "@/lib/trading-agents/yard-view";
 
 export function LiveBotYard() {
@@ -33,7 +34,7 @@ export function LiveBotYard() {
     const visible = () => void refresh(); document.addEventListener("visibilitychange", visible);
     return () => { active = false; controller.abort(); clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [selected, cursor]);
-  return <><BotYard bots={bots} onSelect={setSelected} />{error && <p role="status">{error}</p>}
+  return <><BotYard bots={bots} onSelect={setSelected} headingAction={<MyBotLink button />} />{error && <p role="status">{error}</p>}
     <nav aria-label="Bot Yard pages">{cursor && <button onClick={() => { setCursor(undefined); setSelected(undefined); }}>First page</button>}
       {next && <button onClick={() => { setCursor(next); setSelected(undefined); }}>Next bots</button>}</nav></>;
 }

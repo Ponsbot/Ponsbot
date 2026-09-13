@@ -58,19 +58,28 @@ export async function agentLiveContext(raw: unknown) {
 /** Final pre-reservation balance check, without another price/discovery round trip. */
 export async function agentLiveBalances(raw: unknown) {
   if (!tradingAgentCapabilities().liveTrading) throw new Error("LIVE_DISABLED");
-  const input = z.object({ agentId, walletAddress: address, tokens: z.array(address).max(100) }).strict().parse(raw);
+  const input = z.object({ agentId, walletAddress: address, tokens: z.array(address).max(100), discover: z.boolean().optional() }).strict().parse(raw);
   const wallet = await provisionWallet(`agent:${input.agentId}`);
   if (wallet.address.toLowerCase() !== input.walletAddress.toLowerCase()) throw new Error("BOT_WALLET_MISMATCH");
   const client = createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL) });
   if (await client.getChainId() !== 4663) throw new Error("AGENT_WRONG_CHAIN");
-  const tokens = [...new Set(input.tokens.map(t => t.toLowerCase() as Address))];
+  let discoveredTokens: string[] = [], discoveryComplete = true;
+  if (input.discover) {
+    // Check-ins need inventory discovery, but no market prices, AI, or trade execution.
+    const response = await fetch(`https://robinhoodchain.blockscout.com/api/v2/addresses/${input.walletAddress}/token-balances`, { signal: AbortSignal.timeout(8000), cache: "no-store" }).catch(() => null);
+    const discovery = response?.ok ? parseExplorerHoldings(await response.json()) : { holdings: [], complete: false };
+    discoveredTokens = discovery.holdings.flatMap(t => t.address ? [t.address] : []);
+    discoveryComplete = discovery.complete;
+  }
+  const allTokens = [...new Set([...input.tokens, ...discoveredTokens].map(t => t.toLowerCase() as Address))];
+  const tokens = allTokens.slice(0, 100);
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const [cash, balances] = await Promise.all([
     client.getBalance({ address: input.walletAddress as Address, blockNumber }),
     tokens.length ? client.multicall({ multicallAddress: "0xcA11bde05977b3631167028862bE2a173976CA11", blockNumber, allowFailure: false,
       contracts: tokens.map(token => ({ address: token, abi: tokenAbi, functionName: "balanceOf" as const, args: [input.walletAddress as Address] })) }) : Promise.resolve([]),
   ]);
-  return { cashWei: cash.toString(), observedAt: Date.now(), complete: true,
+  return { cashWei: cash.toString(), observedAt: Date.now(), complete: discoveryComplete && allTokens.length <= 100,
     tokens: tokens.flatMap((token, index) => BigInt(balances[index]) > 0n ? [{ token, amount: balances[index].toString() }] : []) };
 }
 
