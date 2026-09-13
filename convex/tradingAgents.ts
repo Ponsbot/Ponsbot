@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { yardZones } from "../lib/trading-agents/yard-zones";
+import { yardAwareness } from "../lib/trading-agents/yard-awareness";
 import { pnlDisplay } from "../lib/trading-agents/pnl";
 import { hashMessage } from "viem";
 import { advanceYardSchedule, botThoughtSchema, BOT_TRADE_INTERVAL_MS, dueYardCycle, initialYardSchedule, parseCreateBotPost } from "../lib/trading-agents/bot-yard";
@@ -390,6 +391,7 @@ export const workerContext = internalQuery({
     const neighbors = await ctx.db.query("tradingAgents").withIndex("by_yard_zone", q => q.eq("yardPosition.zone", area)).order("desc").take(9);
     const yard = {
       area: yardZones[area].name,
+      ...yardAwareness(agent.yardPosition,Date.now()),
       places: [...yardZones[area].places],
       neighbors: await Promise.all(neighbors.filter(bot => bot._id !== agent._id && bot.status === "running").slice(0, 8).map(async bot => {
         const thought = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_kind_status", q => q.eq("agentId", bot._id).eq("kind", "thought").eq("status", "held")).order("desc").first();

@@ -2,12 +2,13 @@ import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { applyPnlFill, loadPnlState } from "../lib/trading-agents/pnl";
+import { applyPnlFill, loadPnlState, markUnrealized } from "../lib/trading-agents/pnl";
+import { geckoSharedFetch } from "../lib/gecko-shared";
 import { tradingAgentCapabilities } from "../lib/trading-agents/config";
 import { z } from "zod";
 import { feePriceBucket, FEE_PRICE_BUCKET_MS, historicalEthCandles } from "../lib/historical-fee-prices";
 
-type Work = { id:Id<"tradingAgents">; stateJson?:string; jobs:Array<{id:Id<"tradingAgentExecutions">;cursor:number;state:string;withdraw:boolean;hasHashes:boolean}> };
+type Work = { id:Id<"tradingAgents">; walletAddress?:string; stateJson?:string; jobs:Array<{id:Id<"tradingAgentExecutions">;cursor:number;state:string;withdraw:boolean;hasHashes:boolean}> };
 export const lease = internalMutation({args:{},handler:async ctx => {
   if(!tradingAgentCapabilities().website) return null;
   const now=Date.now();
@@ -16,7 +17,7 @@ export const lease = internalMutation({args:{},handler:async ctx => {
   await ctx.db.patch(agent._id,{pnlNextAt:now+300000,pnlPending:true});
   const state=loadPnlState(agent.pnlStateJson);
   const jobs=await ctx.db.query("tradingAgentExecutions").withIndex("by_agent",q=>q.eq("agentId",agent._id).gt("_creationTime",state.cursor)).order("asc").take(3);
-  return {id:agent._id,...(agent.pnlStateJson?{stateJson:agent.pnlStateJson}:{}),jobs:jobs.map(job=>({id:job._id,cursor:job._creationTime,state:job.state,withdraw:JSON.parse(job.intentJson).kind==="withdraw",hasHashes:job.hashes.length>0}))};
+  return {id:agent._id,walletAddress:agent.walletAddress,...(agent.pnlStateJson?{stateJson:agent.pnlStateJson}:{}),jobs:jobs.map(job=>({id:job._id,cursor:job._creationTime,state:job.state,withdraw:JSON.parse(job.intentJson).kind==="withdraw",hasHashes:job.hashes.length>0}))};
 }});
 export const price = internalQuery({args:{at:v.number()},handler:async(ctx,{at})=>{
   const price=await ctx.db.query("historicalEthPrices").withIndex("by_bucket",q=>q.eq("bucketAt",feePriceBucket(at))).unique();
@@ -79,5 +80,30 @@ export const tick=internalAction({args:{},handler:async ctx=>{
     } catch {pending=true;break;} // No accounting failure can interrupt or repeat a trade.
   }
   state.sales=state.sales.filter(s=>s.at>Date.now()-86400000);
+  if(!pending && work.walletAddress) {
+    try {
+      const tokens=Object.entries(state.lots).filter(([,lot])=>BigInt(lot.amount)>0n).map(([token])=>token);
+      const base=new URL((process.env.WALLET_SIGNER_URL||`${process.env.NEXT_PUBLIC_SITE_URL}/api/wallet-signer`).replace(/\/$/,"")+"/v1/agents/live-balances");
+      if(base.protocol!=="https:"||base.username||base.password) throw new Error("PNL_SIGNER_URL");
+      const response=await fetch(base,{method:"POST",headers:{authorization:`Bearer ${process.env.WALLET_SIGNER_TOKEN}`,"content-type":"application/json"},body:JSON.stringify({agentId:work.id,walletAddress:work.walletAddress,tokens}),signal:AbortSignal.timeout(60000)});
+      if(!response.ok) throw new Error("PNL_MARKET_RETRY");
+      const snapshot=z.object({complete:z.literal(true),observedAt:z.number(),tokens:z.array(z.object({token:z.string(),amount:z.string().regex(/^\d+$/)}))}).parse(await response.json());
+      const now=Date.now();
+      if(snapshot.observedAt>now || now-snapshot.observedAt>60000) throw new Error("PNL_BALANCE_STALE");
+      const prices:Record<string,number>={};
+      // Token detail prices, not the simple endpoint's potentially stale inactive-source price.
+      for(let i=0;i<tokens.length;i+=30) {
+        const market=await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/multi/${tokens.slice(i,i+30).join(',')}`,60000,8000,true,false);
+        const observed=Number(market.headers.get('x-market-observed-at'))||Date.now();
+        if(!market.ok || observed>now+30000 || now-observed>300000) throw new Error('PNL_PRICE_STALE');
+        const data=await market.json() as {data?:Array<{attributes?:{address?:string;price_usd?:string;decimals?:number}}>};
+        for(const row of data.data??[]) {
+          const a=row.attributes,price=Number(a?.price_usd),decimals=a?.decimals;
+          if(a?.address && tokens.includes(a.address.toLowerCase()) && Number.isInteger(decimals) && decimals!>=0 && decimals!<=255 && price>0 && Number.isFinite(price)) prices[a.address.toLowerCase()]=price/10**decimals!;
+        }
+      }
+      markUnrealized(state,prices,now,Object.fromEntries(snapshot.tokens.map(t=>[t.token.toLowerCase(),t.amount])));
+    } catch { pending=true; }
+  }
   await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentPnl:save"),{agentId:work.id,...(work.stateJson?{expected:work.stateJson}:{}),stateJson:JSON.stringify(state),pending,tradeValues});
 }});

@@ -13,6 +13,8 @@ export const agentMarketContextSchema = z.object({
   recentLog: z.array(z.object({ at: z.number().int().positive().safe(), summary: z.string().max(600), kind: z.enum(["thought","trade"]).optional(), outcome: z.enum(["thought","paper_filled","live_filled","executing","held","failed"]).optional() }).strict()).max(15).optional(),
   yard: z.object({
     area: z.string().max(80).optional(),
+    position: z.object({x:z.number().min(0).max(100),y:z.number().min(0).max(100),observedAt:z.number().int().positive(),region:z.string().max(80)}).strict().optional(),
+    nearby: z.array(z.object({name:z.string().max(80),proximity:z.enum(["beside","nearby"])}).strict()).max(3).optional(),
     places: z.array(z.string().max(80)).max(8),
     neighbors: z.array(z.object({ name: z.string().max(60), description: z.string().max(300), thought: z.string().max(600).optional() }).strict()).max(8),
   }).strict().optional(),

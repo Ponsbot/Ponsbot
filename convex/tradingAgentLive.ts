@@ -165,7 +165,7 @@ export const saveHoldings = internalMutation({
     if (args.snapshotJson.length > 20000) throw new Error("PAYLOAD_TOO_LARGE");
     const snapshot = snapshotSchema.parse(JSON.parse(args.snapshotJson)), agent = await ctx.db.get(args.agentId);
     if (!agent || agent.mode !== "live" || !snapshot.complete || snapshot.observedAt > Date.now() || snapshot.observedAt < (agent.liveHoldings?.observedAt ?? 0)) return;
-    await ctx.db.patch(agent._id, { liveHoldings: snapshot, updatedAt: Date.now() });
+    await ctx.db.patch(agent._id, { liveHoldings: snapshot, pnlNextAt: Date.now(), updatedAt: Date.now() });
   },
 });
 export const refreshAfterExecution = internalAction({

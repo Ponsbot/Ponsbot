@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { getFunctionName } from "convex/server";
 import { tick, save } from "../convex/tradingAgentPnl";
 import { initialPnlState } from "../lib/trading-agents/pnl";
+import { geckoSharedFetch } from "../lib/gecko-shared";
+vi.mock('../lib/gecko-shared',()=>({geckoSharedFetch:vi.fn()}));
 const invoke=(fn:unknown,ctx:unknown,args:unknown)=>(fn as {_handler:(ctx:unknown,args:unknown)=>Promise<unknown>})._handler(ctx,args);
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 function enable(){vi.stubEnv("TRADING_AGENTS_ENABLED","true");vi.stubEnv("TRADING_AGENTS_WEBSITE_ENABLED","true");vi.stubEnv("WALLET_SIGNER_TOKEN","test-secret");vi.stubEnv("NEXT_PUBLIC_SITE_URL","https://example.com");}
@@ -44,4 +46,18 @@ it("rejects stale accounting commits so overlapping retries cannot double-count"
   const patch=vi.fn();
   expect(await invoke(save,{db:{get:async()=>({pnlStateJson:"newer"}),patch}},{agentId:"agent",expected:"older",stateJson:JSON.stringify(initialPnlState()),pending:false})).toBe(false);
   expect(patch).not.toHaveBeenCalled();
+});
+it('refreshes unrealized values without a new trade or signing request',async()=>{
+  enable(); const token='0x1111111111111111111111111111111111111111',now=Date.now();
+  const state=initialPnlState(); state.lots[token]={amount:'100',costUsd:20};
+  state.open=[{token,amount:'100',costUsd:20,at:now-1000}];
+  const fetch=vi.fn(async()=>({ok:true,json:async()=>({complete:true,observedAt:now,tokens:[{token,amount:'100'}]})}));
+  vi.stubGlobal('fetch',fetch);
+  vi.mocked(geckoSharedFetch).mockResolvedValue(new Response(JSON.stringify({data:[{attributes:{address:token,decimals:0,price_usd:'0.3'}}]}),{headers:{'x-market-observed-at':String(now)}}));
+  const runMutation=vi.fn(async(ref:Parameters<typeof getFunctionName>[0])=>getFunctionName(ref).endsWith(':lease')?{id:'agent',walletAddress:token,stateJson:JSON.stringify(state),jobs:[]}:true);
+  await invoke(tick,{runMutation},{});
+  const args=(runMutation.mock.calls.at(-1) as unknown as [unknown,{stateJson:string}])[1];
+  expect(JSON.parse(args.stateJson).unrealized).toMatchObject({dayUsd:10,lifetimeUsd:10});
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch).toHaveBeenCalledWith(expect.objectContaining({pathname:'/api/wallet-signer/v1/agents/live-balances'}),expect.anything());
 });

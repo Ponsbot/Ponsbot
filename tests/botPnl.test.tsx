@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { applyPnlFill, initialPnlState, loadPnlState, pnlDisplay, tracedNativeDelta } from "../lib/trading-agents/pnl";
+import { applyPnlFill, initialPnlState, loadPnlState, markUnrealized, pnlDisplay, tracedNativeDelta } from "../lib/trading-agents/pnl";
 import { BotPnl } from "../components/BotPnl";
 vi.stubGlobal("React",React);
 const token="0x1111111111111111111111111111111111111111", now=200000000;
@@ -13,7 +13,8 @@ describe("realized bot trading P&L",()=>{
   });
   it("does not count buys or unsold appreciation as realized profit",()=>{
     const state=initialPnlState(); applyPnlFill(state,{token,side:"buy",amount:"100",cashUsd:50,at:now-1000});
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
+    markUnrealized(state,{[token]:.75},now);
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:25,lifetimeUsd:25});
   });
   it("allocates average purchase cost across partial sales without counting proceeds as profit",()=>{
     const state=initialPnlState();
@@ -29,22 +30,45 @@ describe("realized bot trading P&L",()=>{
     applyPnlFill(state,{token,side:"buy",amount:"200",cashUsd:100,at:now-90000000});
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:75,at:now-86400001});
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:80,at:now-1000});
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:30,lifetimeUsd:55});
+    markUnrealized(state,{},now);
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
   });
   it("does not treat gifts or unknown purchase costs as free tokens",()=>{
     const state=initialPnlState();
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:500,at:now-86400001});
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:null});
+    markUnrealized(state,{[token]:1},now,{[token]:'10'});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:null,lifetimeUsd:null});
     applyPnlFill(state,{token,side:"buy",amount:"100",cashUsd:null,at:now-2000});
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:500,at:now-1000});
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:null,lifetimeUsd:null});
+    markUnrealized(state,{},now);
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
   });
   it("does not poison later fully known lots after an unknown lot is exhausted",()=>{
     const state=initialPnlState();
     applyPnlFill(state,{token,side:"sell",amount:"10",cashUsd:5,at:now-90000000});
     applyPnlFill(state,{token,side:"buy",amount:"10",cashUsd:5,at:now-2000});
     applyPnlFill(state,{token,side:"sell",amount:"10",cashUsd:8,at:now-1000});
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:3,lifetimeUsd:null});
+    markUnrealized(state,{},now);
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
+  });
+  it('marks old and new purchases separately for rolling 24h and removes sold exposure',()=>{
+    const state=initialPnlState();
+    applyPnlFill(state,{token,side:'buy',amount:'100',cashUsd:100,at:now-90000000});
+    markUnrealized(state,{[token]:2},now-86400000);
+    applyPnlFill(state,{token,side:'buy',amount:'100',cashUsd:300,at:now-10000});
+    markUnrealized(state,{[token]:4},now);
+    expect(state.unrealized).toMatchObject({dayUsd:300,lifetimeUsd:400});
+    applyPnlFill(state,{token,side:'sell',amount:'100',cashUsd:450,at:now});
+    markUnrealized(state,{[token]:4},now);
+    expect(state.unrealized).toMatchObject({dayUsd:150,lifetimeUsd:200});
+  });
+  it('does not invent missing daily references or prices',()=>{
+    const state=initialPnlState();
+    applyPnlFill(state,{token,side:'buy',amount:'100',cashUsd:100,at:now-90000000});
+    markUnrealized(state,{[token]:2},now);
+    expect(state.unrealized).toMatchObject({dayUsd:null,lifetimeUsd:100});
+    markUnrealized(state,{},now);
+    expect(state.unrealized).toMatchObject({dayUsd:null,lifetimeUsd:null});
   });
   it("counts actual ETH transfers and refunds, not delegatecall value or reverted subcalls",()=>{
     expect(tracedNativeDelta({type:"CALL",from:token,to:"router",value:"100",calls:[
