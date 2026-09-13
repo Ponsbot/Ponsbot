@@ -42,7 +42,7 @@ export const lease = internalMutation({
   },
 });
 export const complete = internalMutation({
-  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()) },
+  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()), ethUsd: v.optional(v.number()) },
   handler: async (ctx, args) => {
     if (!tradingAgentCapabilities().liveTrading) throw new Error("LIVE_DISABLED");
     if (args.resultJson.length > 3000 || (args.snapshotJson?.length ?? 0) > 20000) throw new Error("PAYLOAD_TOO_LARGE");
@@ -66,6 +66,10 @@ export const complete = internalMutation({
         const decision = agentDecisionSchema.parse(JSON.parse(args.resultJson));
         const reservation = reserveLiveDecision(decision, agent.policy, snapshot, agent.liveBudget, now);
         decisionJson = JSON.stringify(decision);
+        if (decision.action === "buy" && args.ethUsd && Number.isFinite(args.ethUsd) && args.ethUsd > 0) {
+          const buyUsd = Number(decision.amount) / 1e18 * args.ethUsd;
+          if (Number.isFinite(buyUsd)) await ctx.db.patch(cycle._id, { buyUsd });
+        }
         await ctx.db.patch(agent._id, { liveHoldings: snapshot });
         if (decision.action !== "hold") {
           const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", q => q.eq("normalizedTokenAddress", decision.token)).unique();
@@ -96,8 +100,9 @@ export const work = internalAction({
     const leaseToken = crypto.randomUUID();
     const current = await ctx.runMutation(makeFunctionReference<"mutation", { leaseToken: string }, Lease | null>("tradingAgentLive:lease"), { leaseToken });
     if (!current) return;
-    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean }>("tradingAgentLive:complete"), {
-      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), failed,
+    let ethUsd: number | undefined;
+    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean; ethUsd?: number }>("tradingAgentLive:complete"), {
+      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), ...(ethUsd ? { ethUsd } : {}), failed,
     });
     try {
       const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"]; yard: AgentMarketContext["yard"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
@@ -116,6 +121,7 @@ export const work = internalAction({
       if (!response.ok) throw new Error("LIVE_MARKETS_UNAVAILABLE");
       const data = await response.json() as { markets: unknown; snapshot: unknown };
       const markets = agentMarketsSchema.parse(data.markets), snapshot = snapshotSchema.parse(data.snapshot);
+      ethUsd = markets.ethUsd;
       const heldAllowed = await ctx.runQuery(makeFunctionReference<"query", { tokens: string[] }, string[]>("tradingAgentLive:allowedHoldings"), { tokens: snapshot.tokens.map(t => t.token) });
       const allowed = new Set([...context.tokens.map(t => t.address), ...heldAllowed].filter(t => !isSecondaryAgentToken(t) || secondaryTradeAvailable(current.agent.liveTradeMix)));
       // Non-platform holdings remain visible to wallet management but never become model trade candidates.

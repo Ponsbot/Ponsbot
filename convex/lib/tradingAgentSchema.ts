@@ -11,6 +11,7 @@ export const tradingAgentPortfolioValidator = v.object({
   day: v.string(), turnoverWei: v.string(), gasWei: v.string(), trades: v.number(),
 });
 export const tradingAgentTables = {
+  tradingAgentYardCounts: defineTable({ key: v.string(), at: v.number(), center: v.number(), north: v.number(), east: v.number(), south: v.number(), west: v.number() }).index("by_key", ["key"]),
   tradingAgentExecutions: defineTable({
     agentId: v.id("tradingAgents"), ownerXUserId: v.string(), requestKey: v.string(), from: v.string(), destination: v.string(), intentJson: v.string(),
     state: v.union(v.literal("active"), v.literal("confirmed"), v.literal("failed")), step: v.number(),
@@ -41,10 +42,13 @@ export const tradingAgentTables = {
     paperTradeMix: v.optional(v.object({ platform: v.number(), secondary: v.number() })),
     liveHoldings: v.optional(v.object({ cashWei: v.string(), tokens: v.array(v.object({ token: v.string(), amount: v.string() })), observedAt: v.number(), complete: v.boolean() })),
     schedule: v.optional(v.object({ anchorAt: v.number(), nextThoughtAt: v.number(), nextTradeAt: v.number() })),
+    yardPosition: v.optional(v.object({ x: v.number(), y: v.number(), at: v.number(), goalX: v.number(), goalY: v.number(),
+      zone: v.optional(v.union(v.literal("center"), v.literal("north"), v.literal("east"), v.literal("south"), v.literal("west"))),
+      exitDirection: v.optional(v.union(v.literal("north"), v.literal("east"), v.literal("south"), v.literal("west"))) })),
     sprite: v.optional(v.object({ version: v.union(v.literal(1), v.literal(2)), seed: v.number(), palette: v.number(),
       archetype: v.union(v.literal("robot"), v.literal("wizard"), v.literal("cat"), v.literal("plant"), v.literal("pirate"), v.literal("rover"), v.literal("jelly"), v.literal("bird"), v.literal("golem"), v.literal("astronaut")) })),
   }).index("by_provision_due", ["walletProvisionStatus", "walletProvisionNextAt"])
-    .index("by_wallet", ["walletAddress"]).index("by_name", ["nameKey"]).index("by_owner_creation", ["ownerXUserId", "creationKey"])
+    .index("by_yard_zone", ["yardPosition.zone"]).index("by_wallet", ["walletAddress"]).index("by_name", ["nameKey"]).index("by_owner_creation", ["ownerXUserId", "creationKey"])
     .index("by_owner", ["ownerXUserId"]).index("by_status_due", ["status", "nextRunAt"]).index("by_mode_status_due", ["mode", "status", "nextRunAt"]).index("by_created", ["createdAt"]),
   tradingAgentCycles: defineTable({
     agentId: v.id("tradingAgents"), cycleKey: v.string(), policyVersion: v.number(), leaseToken: v.string(),
@@ -53,7 +57,7 @@ export const tradingAgentTables = {
     executionId: v.optional(v.id("tradingAgentExecutions")), transactionHashes: v.optional(v.array(v.string())),
     // Validated canonical JSON only, never raw model output or provider errors/secrets.
     decisionJson: v.optional(v.string()), quoteJson: v.optional(v.string()), diagnosticCode: v.optional(v.string()),
-    completionDigest: v.optional(v.string()),
+    completionDigest: v.optional(v.string()), buyUsd: v.optional(v.number()),
     kind: v.optional(v.union(v.literal("thought"), v.literal("trade"))), thought: v.optional(v.string()),
   }).index("by_cycle", ["cycleKey"]).index("by_agent_created", ["agentId", "createdAt"])
     .index("by_agent_kind_status", ["agentId", "kind", "status", "createdAt"])

@@ -1,4 +1,4 @@
-import { formatUnits } from "viem";
+import { botAmount } from "./display";
 
 /** One global identity namespace, independent of owner and display capitalization. */
 export function botNameKey(name: string) {
@@ -17,7 +17,7 @@ export type BotStatusAsset = { token: string; amount: string; symbol?: string; d
 function amount(asset: BotStatusAsset) {
   const label = asset.symbol ? safeText(asset.symbol).slice(0, 40) : `${asset.token.slice(0, 6)}...${asset.token.slice(-4)}`;
   if (asset.decimals === undefined || !Number.isInteger(asset.decimals) || asset.decimals < 0 || asset.decimals > 255) return `${asset.amount} base units of ${label}`;
-  return `${formatUnits(BigInt(asset.amount), asset.decimals)} ${label}`;
+  return `${botAmount(asset.amount, asset.decimals)} ${label}`;
 }
 export function formatBotStatus(input: {
   name: string; cashWei: string; holdings: BotStatusAsset[]; updatedAt: number;
@@ -30,6 +30,6 @@ export function formatBotStatus(input: {
     `🤖 ${safeText(input.name)} — ${input.mode === "live" ? "live trading" : "paper trading"}`,
     `💭 Last thought: ${input.thought ? `${safeText(input.thought.text)} (${time(input.thought.at)})` : "No thoughts yet."}`,
     `🔄 Last trade: ${input.trade ? `${input.mode === "live" ? "" : "Paper "}${input.trade.side === "buy" ? "bought" : "sold"} ${amount(input.trade.asset)} (${time(input.trade.at)}). ${safeText(input.trade.reason)}` : "No completed trades yet."}`,
-    input.holdingsAvailable === false ? "💰 I couldn't retrieve the wallet balances right now. Please check again shortly." : `💰 ${input.mode === "live" ? "Wallet" : "Paper"} holdings (checked ${time(input.updatedAt)}):\n${formatUnits(BigInt(input.cashWei), 18)} ETH${input.holdings.length ? `\n${input.holdings.map(amount).join("\n")}` : "\nNo tokens held."}`,
+    input.holdingsAvailable === false ? "💰 I couldn't retrieve the wallet balances right now. Please check again shortly." : `💰 ${input.mode === "live" ? "Wallet" : "Paper"} holdings (checked ${time(input.updatedAt)}):\n${botAmount(input.cashWei)} ETH${input.holdings.length ? `\n${input.holdings.map(amount).join("\n")}` : "\nNo tokens held."}`,
   ].join("\n\n");
 }

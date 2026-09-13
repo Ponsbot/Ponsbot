@@ -1,8 +1,10 @@
 import type { BotSprite } from "./sprite";
+import type { YardZone } from "./yard-zones";
 
 export type BotYardLog = {
   id: string; at: number; kind: "thought" | "trade"; outcome: "thought" | "paper_filled" | "live_filled" | "executing" | "held" | "failed";
   transactionHashes?: string[];
+  buyUsd?: number; tokenSymbol?: string;
   summary: string; token?: string; amountIn?: string; amountOut?: string; side?: "buy" | "sell";
 };
 export type BotYardBot = {
@@ -10,9 +12,10 @@ export type BotYardBot = {
   status: "draft" | "running" | "paused"; mode: "paper" | "live";
   nextThoughtAt?: number; nextTradeAt?: number;
   walletAddress?: string;
+  yardPosition?: { x: number; y: number; at: number; zone?: YardZone };
   creatorUsername?: string;
   paperHoldings?: { cashWei: string; tokens: Array<{ token: string; amount: string }>; updatedAt: number };
-  liveHoldings?: { cashWei: string; tokens: Array<{ token: string; amount: string }>; observedAt: number; complete: boolean };
+  liveHoldings?: { cashWei: string; tokens: Array<{ token: string; amount: string; symbol?: string; decimals?: number }>; observedAt: number; complete: boolean };
   logs: BotYardLog[];
 };
 export function botWalletLinks(address: string | undefined) {

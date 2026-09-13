@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { yardZones } from "../lib/trading-agents/yard-zones";
 import { hashMessage } from "viem";
 import { advanceYardSchedule, botThoughtSchema, BOT_TRADE_INTERVAL_MS, dueYardCycle, initialYardSchedule, parseCreateBotPost } from "../lib/trading-agents/bot-yard";
 import { createBotSprite } from "../lib/trading-agents/sprite";
@@ -157,7 +158,7 @@ async function yardSummary(ctx: QueryCtx, agent: Doc<"tradingAgents">): Promise<
   const creator = await ctx.db.query("xReplyUsers").withIndex("by_x_user_id", q => q.eq("xUserId", agent.ownerXUserId)).unique();
   const creatorUsername = creator && /^[A-Za-z0-9_]{1,15}$/.test(creator.username) ? creator.username : undefined;
   return { id: agent._id, name: agent.name, description: agent.description, sprite: agent.sprite, status: agent.status,
-    creatorUsername,
+    creatorUsername, ...(agent.yardPosition ? { yardPosition: { x: agent.yardPosition.x, y: agent.yardPosition.y, at: agent.yardPosition.at, zone: agent.yardPosition.zone ?? "center" } } : {}),
     mode: agent.mode, nextThoughtAt: agent.schedule?.nextThoughtAt, nextTradeAt: agent.schedule?.nextTradeAt,
     walletAddress: agent.walletAddress, logs: [] };
 }
@@ -172,7 +173,7 @@ function yardLog(cycle: Doc<"tradingAgentCycles">): BotYardLog | null {
   try {
     const decision = agentDecisionSchema.parse(JSON.parse(cycle.decisionJson ?? ""));
     const quote = cycle.quoteJson ? JSON.parse(cycle.quoteJson) as { amountOut?: string } : undefined;
-    return { ...base, outcome: cycle.status === "paper_filled" || cycle.status === "live_filled" || cycle.status === "executing" ? cycle.status : "held", summary: decision.reason, transactionHashes: cycle.transactionHashes,
+    return { ...base, ...(cycle.buyUsd !== undefined ? { buyUsd: cycle.buyUsd } : {}), outcome: cycle.status === "paper_filled" || cycle.status === "live_filled" || cycle.status === "executing" ? cycle.status : "held", summary: decision.reason, transactionHashes: cycle.transactionHashes,
       ...(decision.action === "hold" ? {} : { side: decision.action, token: decision.token, amountIn: decision.amount, amountOut: quote?.amountOut }) };
   } catch { return null; }
 }
@@ -384,9 +385,11 @@ export const workerContext = internalQuery({
     ].map(t => [t.address, t])).values()].slice(0, 40) : [];
     const tokens = [...primary.slice(0, 100 - alternatives.length), ...alternatives];
     const history = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", agent._id)).order("desc").take(16);
-    const neighbors = await ctx.db.query("tradingAgents").withIndex("by_created").order("desc").take(9);
+    const area = agent.yardPosition?.zone ?? "center";
+    const neighbors = await ctx.db.query("tradingAgents").withIndex("by_yard_zone", q => q.eq("yardPosition.zone", area)).order("desc").take(9);
     const yard = {
-      places: ["Garden with flowers", "Pond with lily pads", "Noticeboard", "Lookout telescope"],
+      area: yardZones[area].name,
+      places: [...yardZones[area].places],
       neighbors: await Promise.all(neighbors.filter(bot => bot._id !== agent._id && bot.status === "running").slice(0, 8).map(async bot => {
         const thought = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_kind_status", q => q.eq("agentId", bot._id).eq("kind", "thought").eq("status", "held")).order("desc").first();
         return { name: bot.name, description: (bot.description ?? bot.strategy).slice(0, 300), ...(thought?.thought ? { thought: thought.thought.slice(0, 600) } : {}) };
@@ -467,8 +470,16 @@ export const leaseAgentProvision = internalMutation({
 });
 
 /** Public DTO only. Disabled by default; no private ids, policies or signing state. */
+export const publicYardPositions = query({
+  args: { ids: v.array(v.id("tradingAgents")) }, handler: async (ctx, { ids }) => {
+    if (!tradingAgentCapabilities().website || ids.length > 24) return { positions: [], counts: { center: 0, north: 0, east: 0, south: 0, west: 0 } };
+    const bots = await Promise.all(ids.map(id => ctx.db.get(id)));
+    const counts = await ctx.db.query("tradingAgentYardCounts").withIndex("by_key", q => q.eq("key", "yard")).unique();
+    return { positions: bots.flatMap(bot => bot?.sprite && bot.yardPosition ? [{ id: bot._id, x: bot.yardPosition.x, y: bot.yardPosition.y, at: bot.yardPosition.at, zone: bot.yardPosition.zone ?? "center" }] : []), counts: { center: counts?.center ?? 0, north: counts?.north ?? 0, east: counts?.east ?? 0, south: counts?.south ?? 0, west: counts?.west ?? 0 } };
+  },
+});
 export const publicYard = query({
-  args: { selected: v.optional(v.id("tradingAgents")), walletAddress: v.optional(v.string()), cursor: v.optional(v.string()) },
+  args: { selected: v.optional(v.id("tradingAgents")), walletAddress: v.optional(v.string()), cursor: v.optional(v.string()), zone: v.optional(v.union(v.literal("center"), v.literal("north"), v.literal("east"), v.literal("south"), v.literal("west"))) },
   handler: async (ctx, args) => {
     if (!tradingAgentCapabilities().website) return { bots: [], nextCursor: null };
     const selected = args.selected ? await ctx.db.get(args.selected) : args.walletAddress && /^0x[0-9a-fA-F]{40}$/.test(args.walletAddress)
@@ -477,10 +488,24 @@ export const publicYard = query({
       const bot = selected ? await yardSummary(ctx, selected) : null;
       if (!bot || !selected) return { bots: [], nextCursor: null };
       const logs = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", selected._id)).order("desc").take(30);
-      return { bots: [{ ...bot, ...(selected.mode === "live" ? { liveHoldings: selected.liveHoldings } : { paperHoldings: { cashWei: selected.portfolio.cashWei, tokens: selected.portfolio.holdings, updatedAt: selected.updatedAt } }),
-        logs: logs.map(yardLog).filter((l): l is BotYardLog => Boolean(l)) }], nextCursor: null };
+      const metadata = async (token: string) => ctx.db.query("tokenRegistry").withIndex("by_normalized_address", q => q.eq("normalizedAddress", token.toLowerCase())).first();
+      const liveHoldings = selected.liveHoldings ? { ...selected.liveHoldings, tokens: await Promise.all(selected.liveHoldings.tokens.map(async holding => {
+        const token = await metadata(holding.token);
+        return { ...holding, ...(token ? { symbol: token.symbol, decimals: token.decimals } : {}) };
+      })) } : undefined;
+      const displayLogs = await Promise.all(logs.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).map(async log => {
+        if (!log.token) return log;
+        const token = await metadata(log.token);
+        let buyUsd = log.buyUsd;
+        if (buyUsd === undefined && log.side === "buy" && log.amountIn) {
+          const historical = await ctx.db.query("historicalEthPrices").withIndex("by_bucket", q => q.eq("bucketAt", Math.floor(log.at / 300000) * 300000)).unique();
+          if (historical) buyUsd = Number(log.amountIn) / 1e18 * historical.priceUsd;
+        }
+        return { ...log, ...(token ? { tokenSymbol: token.symbol } : {}), ...(buyUsd !== undefined && Number.isFinite(buyUsd) ? { buyUsd } : {}) };
+      }));
+      return { bots: [{ ...bot, ...(selected.mode === "live" ? { liveHoldings } : { paperHoldings: { cashWei: selected.portfolio.cashWei, tokens: selected.portfolio.holdings, updatedAt: selected.updatedAt } }), logs: displayLogs }], nextCursor: null };
     }
-    const page = await ctx.db.query("tradingAgents").withIndex("by_created").order("desc").paginate({ cursor: args.cursor ?? null, numItems: 24 });
+    const page = await (args.zone ? ctx.db.query("tradingAgents").withIndex("by_yard_zone", q => q.eq("yardPosition.zone", args.zone!)) : ctx.db.query("tradingAgents").withIndex("by_created")).order("desc").paginate({ cursor: args.cursor ?? null, numItems: 24 });
     return { bots: (await Promise.all(page.page.map(a => yardSummary(ctx, a)))).filter((b): b is BotYardBot => Boolean(b)), nextCursor: page.isDone ? null : page.continueCursor };
   },
 });

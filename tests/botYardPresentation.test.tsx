@@ -31,7 +31,7 @@ describe("Bot Yard presentation", () => {
   });
   it("renders an empty yard without fake bots or transactions", () => {
     const html = renderToStaticMarkup(<BotYard bots={[]} />);
-    expect(html).toContain("No bots have moved in yet"); expect(html).not.toContain("Paper buy");
+    expect(html).toContain("This area is quiet"); expect(html).not.toContain("Paper buy");
   });
   it("does not construct a profile link from an invalid creator handle", () => {
     const html = renderToStaticMarkup(<BotYard bots={[{ ...botYardPreviewBots()[0], creatorUsername: "evil/path" }]} />);
