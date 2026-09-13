@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { botTokenMetadata } from "./lib/botTokenMetadata";
 import { diverseCandidates } from "../lib/trading-agents/diversification";
 import { yardZones } from "../lib/trading-agents/yard-zones";
 import { yardAwareness } from "../lib/trading-agents/yard-awareness";
@@ -227,7 +228,7 @@ export const checkBotPost = internalQuery({
     ]);
     const asset = async (token: string, amount: string): Promise<BotStatusAsset> => {
       // Registry is display metadata only, never authorization to trade a token.
-      const metadata = await ctx.db.query("tokenRegistry").withIndex("by_normalized_address", q => q.eq("normalizedAddress", token.toLowerCase())).first();
+      const metadata = await botTokenMetadata(ctx, token);
       return { token, amount, symbol: metadata?.symbol, decimals: metadata?.decimals };
     };
     let lastTrade: Parameters<typeof formatBotStatus>[0]["trade"];
@@ -492,14 +493,19 @@ export const publicYard = query({
       const bot = selected ? await yardSummary(ctx, selected) : null;
       if (!bot || !selected) return { bots: [], nextCursor: null };
       const logs = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", selected._id)).order("desc").take(30);
-      const metadata = async (token: string) => ctx.db.query("tokenRegistry").withIndex("by_normalized_address", q => q.eq("normalizedAddress", token.toLowerCase())).first();
+      const metadataCache = new Map<string, ReturnType<typeof botTokenMetadata>>();
+      const metadata = (token: string) => {
+        const address = token.toLowerCase();
+        if (!metadataCache.has(address)) metadataCache.set(address, botTokenMetadata(ctx, address));
+        return metadataCache.get(address)!;
+      };
       const marks=loadPnlState(selected.pnlStateJson).marks;
-      const latest=marks.at(-1);
       const ethPrice=await ctx.db.query('historicalEthPrices').withIndex('by_bucket').order('desc').first();
       const cashUsd=selected.liveHoldings && ethPrice && Date.now()-ethPrice.bucketAt<7200000 ? Number(selected.liveHoldings.cashWei)/1e18*ethPrice.priceUsd:undefined;
       const liveHoldings = selected.liveHoldings ? { ...selected.liveHoldings, ...(cashUsd!==undefined&&Number.isFinite(cashUsd)?{cashUsd}:{}), tokens: await Promise.all(selected.liveHoldings.tokens.map(async holding => {
         const token = await metadata(holding.token);
-        const price=latest?.prices[holding.token.toLowerCase()];
+        // A partial price refresh must not erase a previously verified estimate.
+        const price=[...marks].reverse().find(mark=>mark.prices[holding.token.toLowerCase()]>0)?.prices[holding.token.toLowerCase()];
         const usdValue=price!==undefined?Number(holding.amount)*price:undefined;
         return { ...holding, ...(token ? { symbol: token.symbol, decimals: token.decimals } : {}), ...(usdValue!==undefined&&Number.isFinite(usdValue)?{usdValue}:{}) };
       })) } : undefined;

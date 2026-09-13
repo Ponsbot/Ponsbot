@@ -8,7 +8,7 @@ import { tradingAgentCapabilities } from "../lib/trading-agents/config";
 import { z } from "zod";
 import { feePriceBucket, FEE_PRICE_BUCKET_MS, historicalEthCandles } from "../lib/historical-fee-prices";
 
-type Work = { id:Id<"tradingAgents">; walletAddress?:string; stateJson?:string; jobs:Array<{id:Id<"tradingAgentExecutions">;cursor:number;state:string;withdraw:boolean;hasHashes:boolean}> };
+type Work = { id:Id<"tradingAgents">; walletAddress?:string; holdingTokens?:string[]; stateJson?:string; jobs:Array<{id:Id<"tradingAgentExecutions">;cursor:number;state:string;withdraw:boolean;hasHashes:boolean}> };
 export const lease = internalMutation({args:{},handler:async ctx => {
   if(!tradingAgentCapabilities().website) return null;
   const now=Date.now();
@@ -17,7 +17,7 @@ export const lease = internalMutation({args:{},handler:async ctx => {
   await ctx.db.patch(agent._id,{pnlNextAt:now+300000,pnlPending:true});
   const state=loadPnlState(agent.pnlStateJson);
   const jobs=await ctx.db.query("tradingAgentExecutions").withIndex("by_agent",q=>q.eq("agentId",agent._id).gt("_creationTime",state.cursor)).order("asc").take(3);
-  return {id:agent._id,walletAddress:agent.walletAddress,...(agent.pnlStateJson?{stateJson:agent.pnlStateJson}:{}),jobs:jobs.map(job=>({id:job._id,cursor:job._creationTime,state:job.state,withdraw:JSON.parse(job.intentJson).kind==="withdraw",hasHashes:job.hashes.length>0}))};
+  return {id:agent._id,walletAddress:agent.walletAddress,holdingTokens:agent.liveHoldings?.tokens.map(t=>t.token)??[],...(agent.pnlStateJson?{stateJson:agent.pnlStateJson}:{}),jobs:jobs.map(job=>({id:job._id,cursor:job._creationTime,state:job.state,withdraw:JSON.parse(job.intentJson).kind==="withdraw",hasHashes:job.hashes.length>0}))};
 }});
 export const price = internalQuery({args:{at:v.number()},handler:async(ctx,{at})=>{
   const price=await ctx.db.query("historicalEthPrices").withIndex("by_bucket",q=>q.eq("bucketAt",feePriceBucket(at))).unique();
@@ -80,9 +80,10 @@ export const tick=internalAction({args:{},handler:async ctx=>{
     } catch {pending=true;break;} // No accounting failure can interrupt or repeat a trade.
   }
   state.sales=state.sales.filter(s=>s.at>Date.now()-86400000);
-  if(!pending && work.walletAddress) {
+  // Holdings valuation must not wait for cost-basis auditing or a candle to close.
+  if(work.walletAddress) {
     try {
-      const tokens=Object.entries(state.lots).filter(([,lot])=>BigInt(lot.amount)>0n).map(([token])=>token);
+      const tokens=[...new Set([...Object.entries(state.lots).filter(([,lot])=>BigInt(lot.amount)>0n).map(([token])=>token),...(work.holdingTokens??[])])];
       const base=new URL((process.env.WALLET_SIGNER_URL||`${process.env.NEXT_PUBLIC_SITE_URL}/api/wallet-signer`).replace(/\/$/,"")+"/v1/agents/live-balances");
       if(base.protocol!=="https:"||base.username||base.password) throw new Error("PNL_SIGNER_URL");
       const response=await fetch(base,{method:"POST",headers:{authorization:`Bearer ${process.env.WALLET_SIGNER_TOKEN}`,"content-type":"application/json"},body:JSON.stringify({agentId:work.id,walletAddress:work.walletAddress,tokens}),signal:AbortSignal.timeout(60000)});
@@ -90,6 +91,10 @@ export const tick=internalAction({args:{},handler:async ctx=>{
       const snapshot=z.object({complete:z.literal(true),observedAt:z.number(),tokens:z.array(z.object({token:z.string(),amount:z.string().regex(/^\d+$/)}))}).parse(await response.json());
       const now=Date.now();
       if(snapshot.observedAt>now || now-snapshot.observedAt>60000) throw new Error("PNL_BALANCE_STALE");
+      for(const holding of snapshot.tokens) {
+        const token=holding.token.toLowerCase();
+        if(/^0x[0-9a-f]{40}$/.test(token) && BigInt(holding.amount)>0n && !tokens.includes(token)) tokens.push(token);
+      }
       const prices:Record<string,number>={};
       // Token detail prices, not the simple endpoint's potentially stale inactive-source price.
       for(let i=0;i<tokens.length;i+=30) {

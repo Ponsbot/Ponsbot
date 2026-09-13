@@ -47,6 +47,17 @@ it("rejects stale accounting commits so overlapping retries cannot double-count"
   expect(await invoke(save,{db:{get:async()=>({pnlStateJson:"newer"}),patch}},{agentId:"agent",expected:"older",stateJson:JSON.stringify(initialPnlState()),pending:false})).toBe(false);
   expect(patch).not.toHaveBeenCalled();
 });
+it('prices new holdings even while an execution is pending accounting',async()=>{
+  enable(); const token='0x39dbed3a2bd333467115de45665cc57f813c4571',now=Date.now();
+  vi.stubGlobal('fetch',vi.fn(async()=>({ok:true,json:async()=>({complete:true,observedAt:now,tokens:[{token,amount:'100'}]})})));
+  vi.mocked(geckoSharedFetch).mockResolvedValue(new Response(JSON.stringify({data:[{attributes:{address:token,decimals:0,price_usd:'0.6'}}]})));
+  const runMutation=vi.fn(async(ref:Parameters<typeof getFunctionName>[0])=>getFunctionName(ref).endsWith(':lease')?{id:'agent',walletAddress:token,stateJson:JSON.stringify(initialPnlState()),jobs:[{id:'job',state:'active'}]}:true);
+  await invoke(tick,{runMutation},{});
+  const args=(runMutation.mock.calls.at(-1) as unknown as [unknown,{stateJson:string;pending:boolean}])[1];
+  expect(args.pending).toBe(true);
+  expect(JSON.parse(args.stateJson).marks.at(-1).prices[token]).toBe(0.6);
+  expect(JSON.parse(args.stateJson).lots).toEqual({});
+});
 it('refreshes unrealized values without a new trade or signing request',async()=>{
   enable(); const token='0x1111111111111111111111111111111111111111',now=Date.now();
   const state=initialPnlState(); state.lots[token]={amount:'100',costUsd:20};
