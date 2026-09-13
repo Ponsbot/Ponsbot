@@ -6,12 +6,15 @@ import { botWalletLinks } from "../lib/trading-agents/yard-view";
 
 it("starts within five minutes, then resumes the normal cadence", () => {
   const initial = initialYardSchedule(1000);
-  expect(initial.nextThoughtAt).toBe(61000);
-  expect(initial.nextTradeAt).toBe(121000);
+  expect(initial.nextThoughtAt).toBeGreaterThanOrEqual(61000);
+  expect(initial.nextThoughtAt).toBeLessThanOrEqual(301000);
+  expect(initial.nextTradeAt).toBeGreaterThanOrEqual(61000);
+  expect(initial.nextTradeAt).toBeLessThanOrEqual(301000);
   const thought = advanceYardSchedule(initial, "thought", 90000);
-  expect(thought.nextThoughtAt).toBe(901000);
-  expect(dueYardCycle(thought, 121000)).toBe("trade");
-  expect(advanceYardSchedule(thought, "trade", 180000).nextTradeAt).toBe(2701000);
+  expect(Math.abs(thought.nextThoughtAt-90000-1800000)).toBeGreaterThanOrEqual(60000);
+  expect(Math.abs(thought.nextThoughtAt-90000-1800000)).toBeLessThanOrEqual(120000);
+  expect(dueYardCycle(thought, initial.nextTradeAt)).toBe("trade");
+  expect(Math.abs(advanceYardSchedule(thought, "trade", 180000).nextTradeAt-180000-2700000)).toBeLessThanOrEqual(120000);
 });
 
 describe("bot creation grammar", () => {
@@ -39,7 +42,7 @@ describe("bot creation grammar", () => {
 });
 describe("Yard timing and balances", () => {
   it("schedules independent slots", () => {
-    const schedule = initialYardSchedule(0); expect(dueYardCycle(schedule, 59999)).toBeNull(); expect(dueYardCycle(schedule, 60000)).toBe("thought");
+    const schedule = initialYardSchedule(0); expect(dueYardCycle(schedule, 59999)).toBeNull(); expect(dueYardCycle(schedule, Math.max(schedule.nextThoughtAt,schedule.nextTradeAt))).toBe("thought");
     const afterThought = advanceYardSchedule(schedule, "thought", 2700000);
     expect(dueYardCycle(afterThought, 2700000)).toBe("trade");
     expect(dueYardCycle(advanceYardSchedule(afterThought, "trade", 2700000), 2700000)).toBeNull();

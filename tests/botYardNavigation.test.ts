@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { yardPath, yardWalkable, advanceYardPath } from "../lib/trading-agents/yard-navigation";
-import { botAmount, botBuyLabel } from "../lib/trading-agents/display";
+import { botAmount, botBuyLabel, botAsset, botDollars } from "../lib/trading-agents/display";
 import { yardZones, zoneExits, zoneGates, opposite, zoneObjects, type YardZone, type YardDirection } from "../lib/trading-agents/yard-zones";
 
 describe("shared ground-plane navigation", () => {
+  it('adds dollar approximations without inventing missing values',()=>{
+    expect(botAsset({token:'0x123',amount:'1500000',decimals:6,symbol:'TEST',usdValue:12.345})).toBe('1.5 TEST ($12.35)');
+    expect(botDollars(0)).toBe(' ($0.00)');
+    expect(botDollars(undefined)).toBe('');
+    expect(botDollars(NaN)).toBe('');
+  });
   it("connects each outer area back to the center on the opposite edge", () => {
     expect(Object.keys(zoneExits("center"))).toHaveLength(4);
     for (const direction of ["north", "east", "south", "west"] as const) {

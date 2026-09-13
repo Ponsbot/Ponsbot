@@ -3,7 +3,7 @@ import { units } from "./policy";
 import { BOT_BUY_RESERVE_BPS } from "./config";
 export { BOT_BUY_RESERVE_BPS } from "./config";
 
-export const BOT_THOUGHT_INTERVAL_MS = 15 * 60_000;
+export const BOT_THOUGHT_INTERVAL_MS = 30 * 60_000;
 export const BOT_TRADE_INTERVAL_MS = 45 * 60_000;
 // Leave room for the minute worker tick, wallet provisioning and model latency.
 export const BOT_FIRST_THOUGHT_DELAY_MS = 60_000;
@@ -28,17 +28,24 @@ export function parseCreateBotPost(text: string): CreateBotRequest | null {
 }
 
 export type YardSchedule = { anchorAt: number; nextThoughtAt: number; nextTradeAt: number };
+function scheduleJitter(seed:string) {
+  let hash=2166136261;
+  for(const c of seed) hash=Math.imul(hash^c.charCodeAt(0),16777619)>>>0;
+  return (60000+(hash%60001))*(hash&1?1:-1);
+}
 export function initialYardSchedule(now: number): YardSchedule {
-  return { anchorAt: now, nextThoughtAt: now + BOT_FIRST_THOUGHT_DELAY_MS, nextTradeAt: now + BOT_FIRST_TRADE_DELAY_MS };
+  return { anchorAt: now, nextThoughtAt: now + 180000 + scheduleJitter(`${now}:first-thought`), nextTradeAt: now + 180000 + scheduleJitter(`${now}:first-trade`) };
 }
 export function dueYardCycle(schedule: YardSchedule, now: number): "thought" | "trade" | null {
-  // Both run at 45-minute boundaries. Finish the thought before leasing the trade.
+  // If both happen to be due, finish the thought before leasing the trade.
   if (schedule.nextThoughtAt <= now) return "thought";
   return schedule.nextTradeAt <= now ? "trade" : null;
 }
 export function advanceYardSchedule(schedule: YardSchedule, kind: "thought" | "trade", now: number): YardSchedule {
   const interval = kind === "thought" ? BOT_THOUGHT_INTERVAL_MS : BOT_TRADE_INTERVAL_MS;
-  const next = schedule.anchorAt + (Math.floor(Math.max(0, now - schedule.anchorAt) / interval) + 1) * interval;
+  // Deterministic per cycle for transaction retries, varied across times and bots.
+  const jitter=scheduleJitter(`${schedule.anchorAt}:${kind}:${now}`);
+  const next = now + interval + jitter;
   return { ...schedule, ...(kind === "thought" ? { nextThoughtAt: next } : { nextTradeAt: next }) };
 }
 

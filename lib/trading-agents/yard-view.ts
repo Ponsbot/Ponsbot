@@ -17,7 +17,7 @@ export type BotYardBot = {
   yardPosition?: { x: number; y: number; at: number; zone?: YardZone };
   creatorUsername?: string;
   paperHoldings?: { cashWei: string; tokens: Array<{ token: string; amount: string }>; updatedAt: number };
-  liveHoldings?: { cashWei: string; tokens: Array<{ token: string; amount: string; symbol?: string; decimals?: number }>; observedAt: number; complete: boolean };
+  liveHoldings?: { cashWei: string; cashUsd?:number; tokens: Array<{ token: string; amount: string; symbol?: string; decimals?: number; usdValue?:number }>; observedAt: number; complete: boolean };
   logs: BotYardLog[];
 };
 export function botWalletLinks(address: string | undefined) {

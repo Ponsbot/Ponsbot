@@ -4,7 +4,7 @@ import { makeFunctionReference } from "convex/server";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 import { tradingAgentCapabilities } from "@/lib/trading-agents/config";
 import type { BotYardBot } from "@/lib/trading-agents/yard-view";
-import { botAmount, botAsset, botBuyLabel } from "@/lib/trading-agents/display";
+import { botAmount, botAsset, botBuyLabel, botDollars } from "@/lib/trading-agents/display";
 import { CopyWalletAddress } from "@/components/CopyWalletAddress";
 import { BotLocalTime } from "@/components/BotLocalTime";
 import { BotPnl } from "@/components/BotPnl";
@@ -35,11 +35,11 @@ export default async function BotWalletPage({ params }: { params: Promise<{ addr
     <div className={styles.address}><span className={styles.eyebrow}>Wallet address</span><CopyWalletAddress address={address} /></div>
     <BotPnl pnl={bot.pnl} />
     <div className={styles.stats}>
-      <article><span>ETH balance</span><strong>{holdings ? `${botAmount(holdings.cashWei)} ETH` : "Not checked yet"}</strong></article>
+      <article><span>ETH balance</span><strong>{holdings ? `${botAmount(holdings.cashWei)} ETH${botDollars(holdings.cashUsd)}` : "Not checked yet"}</strong></article>
       <article><span>Token holdings</span>{holdings?.complete ? holdings.tokens.length ? holdings.tokens.map(token => <p key={token.token}>{botAsset(token)}</p>) : <strong>No tokens held</strong> : <strong>Not confirmed</strong>}</article>
       <article><span>Bot status</span><strong>{bot.status === "running" ? "Active" : bot.status === "paused" ? "Paused" : "Getting ready"}</strong></article>
     </div>
-    <p className={styles.caption}>{holdings ? <>Balances last checked <BotLocalTime at={holdings.observedAt} includeDate />.</> : "Balances will appear after the first wallet check."} View the explorer for current balances and full transaction history.</p>
+    <p className={styles.caption}>View the explorer for current balances and full transaction history.</p>
     <section className={styles.activity}><header><h2>Recent activity</h2><span>{bot.logs.length} entries</span></header>
       {bot.logs.length ? <ol>{bot.logs.map(log => <li key={log.id}>
         <div className={styles.meta}><span className={styles.badge}>{log.kind === "thought" ? "Thought" : log.outcome === "live_filled" ? "Trade completed" : log.outcome === "executing" ? "Processing" : log.outcome === "failed" ? "Trade incomplete" : "Holding"}</span><BotLocalTime at={log.at} includeDate /></div>

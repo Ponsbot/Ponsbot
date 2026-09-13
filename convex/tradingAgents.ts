@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { yardZones } from "../lib/trading-agents/yard-zones";
 import { yardAwareness } from "../lib/trading-agents/yard-awareness";
-import { pnlDisplay } from "../lib/trading-agents/pnl";
+import { pnlDisplay, loadPnlState } from "../lib/trading-agents/pnl";
 import { hashMessage } from "viem";
 import { advanceYardSchedule, botThoughtSchema, BOT_TRADE_INTERVAL_MS, dueYardCycle, initialYardSchedule, parseCreateBotPost } from "../lib/trading-agents/bot-yard";
 import { createBotSprite } from "../lib/trading-agents/sprite";
@@ -492,9 +492,15 @@ export const publicYard = query({
       if (!bot || !selected) return { bots: [], nextCursor: null };
       const logs = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", selected._id)).order("desc").take(30);
       const metadata = async (token: string) => ctx.db.query("tokenRegistry").withIndex("by_normalized_address", q => q.eq("normalizedAddress", token.toLowerCase())).first();
-      const liveHoldings = selected.liveHoldings ? { ...selected.liveHoldings, tokens: await Promise.all(selected.liveHoldings.tokens.map(async holding => {
+      const marks=loadPnlState(selected.pnlStateJson).marks;
+      const latest=marks.at(-1);
+      const ethPrice=await ctx.db.query('historicalEthPrices').withIndex('by_bucket').order('desc').first();
+      const cashUsd=selected.liveHoldings && ethPrice && Date.now()-ethPrice.bucketAt<7200000 ? Number(selected.liveHoldings.cashWei)/1e18*ethPrice.priceUsd:undefined;
+      const liveHoldings = selected.liveHoldings ? { ...selected.liveHoldings, ...(cashUsd!==undefined&&Number.isFinite(cashUsd)?{cashUsd}:{}), tokens: await Promise.all(selected.liveHoldings.tokens.map(async holding => {
         const token = await metadata(holding.token);
-        return { ...holding, ...(token ? { symbol: token.symbol, decimals: token.decimals } : {}) };
+        const price=latest?.prices[holding.token.toLowerCase()];
+        const usdValue=price!==undefined?Number(holding.amount)*price:undefined;
+        return { ...holding, ...(token ? { symbol: token.symbol, decimals: token.decimals } : {}), ...(usdValue!==undefined&&Number.isFinite(usdValue)?{usdValue}:{}) };
       })) } : undefined;
       const displayLogs = await Promise.all(logs.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).map(async log => {
         if (!log.token) return log;

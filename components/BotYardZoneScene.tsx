@@ -1,5 +1,6 @@
 import { yardZones, zoneObjects, type YardZone } from "@/lib/trading-agents/yard-zones";
 import styles from "./BotYard.module.css";
+import motion from './BotYardZoneScene.module.css';
 
 function Landmark({ kind }: { kind: string }) {
   switch (kind) {
@@ -23,5 +24,5 @@ export function BotYardZoneScene({ zone }: { zone: Exclude<YardZone,"center"> })
     <rect width="1000" height="600" fill={yardZones[zone].color}/>
     <path d="M-40 480Q260 370 480 450T1040 390M-40 170Q280 80 520 180T1040 140" fill="none" stroke="#ffffff" strokeOpacity=".14" strokeWidth="75"/>
     {Array.from({length:38},(_,i)=><ellipse key={i} cx={(i*193+37)%1000} cy={(i*137+55)%600} rx="3" ry="2" fill={zone==="west"?"#eee5bc":"#72936c"} opacity=".45"/>)}
-  </svg>{zoneObjects[zone].map(object=><svg key={object.kind} className={styles.scenery} style={{zIndex:10+object.y}} viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true"><g transform={`translate(${object.x*10} ${object.y*6})`}><ellipse rx="72" ry="14" fill="#293b34" opacity=".12"/><Landmark kind={object.kind}/><text y="25" textAnchor="middle" fontSize="12" fontFamily="monospace" letterSpacing="1" fill="#40514b">{object.label}</text></g></svg>)}</>;
+  </svg>{zoneObjects[zone].map(object=><svg key={object.kind} className={styles.scenery} style={{zIndex:10+object.y}} viewBox="0 0 1000 600" preserveAspectRatio="none" aria-hidden="true"><g transform={`translate(${object.x*10} ${object.y*6})`}><ellipse rx="72" ry="14" fill="#293b34" opacity=".12"/><g className={motion.landmark} data-kind={object.kind}><Landmark kind={object.kind}/></g><text y="25" textAnchor="middle" fontSize="12" fontFamily="monospace" letterSpacing="1" fill="#40514b">{object.label}</text></g></svg>)}</>;
 }

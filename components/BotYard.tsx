@@ -2,7 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { formatEther } from "viem";
-import { botAmount, botAsset, botBuyLabel } from "@/lib/trading-agents/display";
+import { botAmount, botAsset, botBuyLabel, botDollars } from "@/lib/trading-agents/display";
 import { botSpriteDataUrl } from "@/lib/trading-agents/sprite";
 import { botWalletLinks, type BotYardBot } from "@/lib/trading-agents/yard-view";
 import styles from "./BotYard.module.css";
@@ -59,7 +59,7 @@ export function BotYard({ bots, preview = false, onSelect, headingAction, zone: 
           {selected.mode === "live" && <BotPnl pnl={selected.pnl} />}
           {selected.paperHoldings && <div><h3>Paper holdings</h3><p>{formatEther(BigInt(selected.paperHoldings.cashWei))} ETH</p>
             <p>{selected.paperHoldings.tokens.length} token holdings</p></div>}
-          {selected.liveHoldings && <div><h3>Wallet holdings</h3><p>{botAmount(selected.liveHoldings.cashWei)} ETH</p>{selected.liveHoldings.tokens.map(token => <p key={token.token}>{botAsset(token)}</p>)}{!selected.liveHoldings.tokens.length && <p>No tokens held.</p>}<small>Last checked <BotLocalTime at={selected.liveHoldings.observedAt} includeDate /></small></div>}
+          {selected.liveHoldings && <div><h3>Wallet holdings</h3><p>{botAmount(selected.liveHoldings.cashWei)} ETH{botDollars(selected.liveHoldings.cashUsd)}</p>{selected.liveHoldings.tokens.map(token => <p key={token.token}>{botAsset(token)}</p>)}{!selected.liveHoldings.tokens.length && <p>No tokens held.</p>}</div>}
           <div className={styles.walletButtons}>
             {links ? <><a href={links.wallet} target="_blank" rel="noreferrer">Bot wallet ↗</a>
               <a href={links.transactions} target="_blank" rel="noreferrer">Transaction history ↗</a></>
