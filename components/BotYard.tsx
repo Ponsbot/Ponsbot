@@ -1,19 +1,13 @@
 "use client";
 
-import { useState, type CSSProperties, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { formatEther } from "viem";
 import { botSpriteDataUrl } from "@/lib/trading-agents/sprite";
 import { botWalletLinks, type BotYardBot } from "@/lib/trading-agents/yard-view";
 import styles from "./BotYard.module.css";
 import { BotYardHowItWorks } from "./BotYardHowItWorks";
 import { BotYardScene } from "./BotYardScene";
-import { yardTour } from "@/lib/trading-agents/yard-motion";
-
-function walkingStyle(seed: number): CSSProperties {
-  const tour = yardTour(seed);
-  return { ...Object.fromEntries(tour.stops.flatMap((stop, i) => [[`--x${i + 1}`, `${stop.x}%`], [`--y${i + 1}`, `${stop.y}%`]])),
-    "--tour-duration": `${tour.duration}s`, "--tour-delay": `${tour.delay}s` } as CSSProperties;
-}
+import { WanderingBot } from "./WanderingBot";
 
 /** Receives presentation-only DTOs; never receives wallet credentials or worker state. */
 export function BotYard({ bots, preview = false, onSelect, headingAction }: { bots: BotYardBot[]; preview?: boolean; onSelect?: (id: string) => void; headingAction?: ReactNode }) {
@@ -32,17 +26,8 @@ export function BotYard({ bots, preview = false, onSelect, headingAction }: { bo
         <div className={styles.yard} aria-label="Bot Yard. Select a bot to view its log.">
           <BotYardScene />
           <span className={styles.sign} aria-hidden="true">BOT YARD</span>
-          {bots.slice(0, 24).map(bot => <button key={bot.id} type="button" className={`${styles.bot} ${selected?.id === bot.id ? styles.selected : ""}`}
-            style={walkingStyle(bot.sprite.seed)} aria-label={`${bot.name}, view log`} aria-pressed={selected?.id === bot.id}
-            onClick={() => { setSelectedId(bot.id); onSelect?.(bot.id); }}>
-            <span className={styles.botShadow} aria-hidden="true" />
-            {yardTour(bot.sprite.seed).stops.map((stop, i) => <span key={stop.key} className={`${styles.activityBubble} ${styles[`stop${i}`]}`} aria-hidden="true" title={`${stop.label} (decorative)`}>{stop.icon}<small>{stop.label}</small></span>)}
-            <span className={styles.spritePose} aria-hidden="true">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={botSpriteDataUrl(bot.sprite)} width={60} height={72} alt="" draggable={false} />
-            </span>
-            <span className={styles.nameTag}>{bot.name}</span>
-          </button>)}
+          {bots.slice(0, 24).map(bot => <WanderingBot key={bot.id} bot={bot} selected={selected?.id === bot.id}
+            onSelect={() => { setSelectedId(bot.id); onSelect?.(bot.id); }} />)}
           {!bots.length && <p className={styles.empty}>The yard is quiet. No bots have moved in yet.</p>}
         </div>
         <p className={styles.sceneCaption}>A little life in the yard. Scenery and interactions are decorative.</p>
