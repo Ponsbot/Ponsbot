@@ -1,9 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { botDirectionalSprites, facings } from "../lib/trading-agents/directional-sprite";
 import { createBotSprite, botSpriteDataUrl } from "../lib/trading-agents/sprite";
-import { nextWander, wanderingRandom, wanderPoint, walkingFacing } from "../lib/trading-agents/wander";
+import { nextWander, wanderingRandom, wanderPoint, walkingFacing, stableWalkingFacing, botMotionProfile } from "../lib/trading-agents/wander";
 
 describe("directional yard sprites", () => {
+  it("adds repeatable movement personality without modifying the saved sprite",()=>{
+    const sprite=createBotSprite("Pons Bot Bot","nature-loving heart of gold");
+    const saved=JSON.stringify(sprite), image=botSpriteDataUrl(sprite);
+    expect(botMotionProfile(sprite)).toEqual(botMotionProfile(sprite));
+    expect(botMotionProfile({...sprite,archetype:"jelly"}).style).toBe("float");
+    expect(botMotionProfile({...sprite,archetype:"rover"}).style).toBe("roll");
+    expect(botMotionProfile({...sprite,archetype:"plant"}).style).toBe("walk");
+    expect(JSON.stringify(sprite)).toBe(saved);expect(botSpriteDataUrl(sprite)).toBe(image);
+  });
+  it("keeps the facing steady near an angular boundary but turns for clear direction changes",()=>{
+    const at=(degrees:number)=>[Math.cos(degrees*Math.PI/180),Math.sin(degrees*Math.PI/180)];
+    const [x,y]=at(24);
+    expect(stableWalkingFacing(x,y,"e")).toBe("e");
+    expect(stableWalkingFacing(x,y,"se")).toBe("se");
+    expect(stableWalkingFacing(0,1,"e")).toBe("s");
+    expect(stableWalkingFacing(0,0,"n")).toBe("n");
+  });
   it("generates eight reusable angles and preserves the original front", () => {
     for (const sprite of [createBotSprite("Moss", "A garden bot"), { version: 1 as const, seed: 123, archetype: "robot" as const, palette: 0 }]) {
       const frames = botDirectionalSprites(sprite);

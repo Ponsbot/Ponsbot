@@ -36,4 +36,14 @@
 .scenery[data-scene-layer=ground]>g[data-object],.scenery[data-scene-layer]:not([data-scene-layer=ground])>path,.scenery[data-scene-layer]:not([data-scene-layer=ground])>g{display:none}
 .scenery[data-scene-layer=garden]>g[data-object=garden],.scenery[data-scene-layer=pond]>g[data-object=pond],.scenery[data-scene-layer=board]>g[data-object=board],.scenery[data-scene-layer=lookout]>g[data-object=lookout]{display:block}.yard{isolation:isolate}
 .zoneNav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}.zoneNav button{display:flex;align-items:center;gap:6px;border:1px solid #94ac87;border-radius:18px;padding:7px 11px;background:#f0f3e9;color:#34513c;font-size:12px;cursor:pointer}.zoneNav button[aria-pressed=true]{background:#345d45;color:white}.zoneCount{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 4px;border-radius:50%;background:#edf2d9;color:#31553d;font-size:12px;font-weight:700}.zoneArrow{position:absolute;z-index:250;display:flex;align-items:center;justify-content:center;gap:5px;background:#f5f5e7ed;border:1px solid #82987b;border-radius:16px;padding:6px 9px;color:#34523e;cursor:pointer;box-shadow:0 2px 7px #253d2520}.zoneArrow>span:first-child{font-size:22px}.arrowName{font-size:10px;max-width:70px;line-height:1.2}.north{top:8px;left:50%;transform:translateX(-50%)}.south{bottom:8px;left:50%;transform:translateX(-50%)}.west{left:6px;top:50%;transform:translateY(-50%)}.east{right:6px;top:50%;transform:translateY(-50%)}.zoneArrow:hover,.zoneNav button:hover{filter:brightness(.94)}
+.wanderingBot .directionalSprite{transform-origin:50% 95%;animation:botIdle var(--idle,4s) ease-in-out var(--phase,0ms) infinite}
+.wanderingBot[data-walking=true] .directionalSprite{animation:walkingStep var(--gait,.6s) ease-in-out var(--phase,0ms) infinite}
+.wanderingBot[data-motion=float] .directionalSprite{animation:botFloat 2.4s ease-in-out var(--phase,0ms) infinite}
+.wanderingBot[data-motion=roll][data-walking=true] .directionalSprite{animation:botRoll var(--gait,.6s) linear var(--phase,0ms) infinite}
+.wanderingBot[data-walking=true] .botShadow{animation:botFootfall var(--gait,.6s) ease-in-out var(--phase,0ms) infinite}
+.wanderingBot[data-motion-paused=true] *{animation-play-state:paused!important}
+@keyframes botIdle{0%,70%,100%{transform:translateY(0) rotate(0)}80%{transform:translateY(-1px) rotate(-1deg)}90%{transform:translateY(0) rotate(1deg)}}
+@keyframes botFloat{0%,100%{transform:translateY(-2px) rotate(-1deg)}50%{transform:translateY(-6px) rotate(1deg)}}
+@keyframes botRoll{0%,50%,100%{transform:translateY(0)}25%,75%{transform:translateY(-.7px)}}
+@keyframes botFootfall{0%,100%{transform:scaleX(1);opacity:1}50%{transform:scaleX(.85);opacity:.75}}
 @media(max-width:600px){.arrowName{display:none}.zoneArrow{padding:4px 7px}.zoneNav button{font-size:11px;padding:6px 8px}}

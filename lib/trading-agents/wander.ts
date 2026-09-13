@@ -1,5 +1,22 @@
 import { facings, type Facing } from "./directional-sprite";
 import { YARD_STOPS } from "./yard-motion";
+import type { BotSprite } from "./sprite";
+
+/** Motion personality is derived from the saved design; artwork is never regenerated. */
+export function botMotionProfile(sprite: BotSprite) {
+  const style = sprite.archetype === "jelly" ? "float" : sprite.archetype === "rover" ? "roll" : "walk";
+  return { style, speed: .00105 + (sprite.seed % 7) * .00005,
+    gaitMs: 470 + (sprite.seed % 6) * 35, idleMs: 3200 + (sprite.seed % 5) * 430,
+    phaseMs: -(sprite.seed % 3000) };
+}
+
+/** Hysteresis prevents rapid sprite flicker near the boundary between two views. */
+export function stableWalkingFacing(dx: number, dy: number, previous: Facing): Facing {
+  if (Math.hypot(dx, dy) < .001) return previous;
+  const angle = Math.atan2(dy, dx), prior = facings.indexOf(previous) * Math.PI / 4;
+  const difference = Math.abs(Math.atan2(Math.sin(angle - prior), Math.cos(angle - prior)));
+  return difference < Math.PI / 4 * .65 ? previous : walkingFacing(dx, dy, previous);
+}
 
 export type Point = { x: number; y: number };
 export function wanderingRandom(seed: number) {

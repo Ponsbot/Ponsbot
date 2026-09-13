@@ -6,6 +6,17 @@ import { BotPnl } from "../components/BotPnl";
 vi.stubGlobal("React",React);
 const token="0x1111111111111111111111111111111111111111", now=200000000;
 describe("realized bot trading P&L",()=>{
+  it("never values incoming tokens as profit, including gifts of an already purchased token",()=>{
+    for(const sameToken of [true,false]) {
+      const state=initialPnlState();
+      applyPnlFill(state,{token,side:"buy",amount:"100",cashUsd:100,at:now-1000});
+      const gift=sameToken?token:"0x2222222222222222222222222222222222222222";
+      markUnrealized(state,{[token]:1,[gift]:1},now,{[token]:"100",[gift]:sameToken?"150":"50"});
+      expect(state.lifetimeUsd).toBe(0);
+      expect(state.total).toMatchObject({dayUsd:null,lifetimeUsd:null});
+      expect(state.lots[token]).toEqual({amount:"100",costUsd:100});
+    }
+  });
   it("replays older accounting once to recover display values without adding old totals twice",()=>{
     expect(loadPnlState(JSON.stringify({cursor:100,lifetimeUsd:999}))).toEqual(initialPnlState());
     const state={...initialPnlState(),cursor:100,lifetimeUsd:12};
