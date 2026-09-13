@@ -8,7 +8,7 @@ export function wanderingRandom(seed: number) {
 }
 export function nextWander(from: Point, random: () => number) {
   const stop = random() < .23 ? YARD_STOPS[Math.floor(random() * YARD_STOPS.length)] : undefined;
-  const target = stop ? { x: stop.x + random() * 8 - 4, y: stop.y + random() * 8 - 4 }
+  const target = stop ? { x: Math.max(12, Math.min(88, stop.x + random() * 8 - 4)), y: Math.max(24, Math.min(84, stop.y + random() * 8 - 4)) }
     : { x: Math.max(12, Math.min(88, from.x + (random() - .5) * 65)), y: Math.max(24, Math.min(84, from.y + (random() - .5) * 55)) };
   return { from, target, bend: (random() - .5) * 18, duration: 3500 + Math.hypot(target.x - from.x, target.y - from.y) * 240,
     pause: stop ? 4500 + random() * 5500 : random() < .45 ? 1200 + random() * 3000 : 0, stop };

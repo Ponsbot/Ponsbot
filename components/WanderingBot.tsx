@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { botDirectionalSprites, facings, type Facing } from "@/lib/trading-agents/directional-sprite";
 import { wanderingRandom, walkingFacing } from "@/lib/trading-agents/wander";
 import { nearestYardPoint, yardPath, type YardPoint } from "@/lib/trading-agents/yard-navigation";
-import { YARD_STOPS } from "@/lib/trading-agents/yard-motion";
+import { centralYardActivity } from "@/lib/trading-agents/yard-motion";
 import { zoneObjects } from "@/lib/trading-agents/yard-zones";
 import type { BotYardBot } from "@/lib/trading-agents/yard-view";
 import styles from "./BotYard.module.css";
@@ -49,11 +49,14 @@ export function WanderingBot({ bot, selected, onSelect }: { bot: BotYardBot; sel
         element.style.left = `${point.x}%`; element.style.top = `${point.y}%`;
         element.dataset.facing = facing; element.dataset.walking = String(walking);
         element.style.zIndex = String(10 + Math.round(point.y));
-        const places = zone === "center" ? YARD_STOPS : zoneObjects[zone].map(place => ({ ...place, icon: "✦" }));
-        const stop = places.find(place => Math.hypot(place.x - point.x, place.y - point.y) < 10);
+        const stop = zone === "center" ? centralYardActivity(point, walking)
+          : zoneObjects[zone].map(place => ({ ...place, icon: "✦" })).find(place => Math.hypot(place.x - point.x, place.y - point.y) < 10);
         if (bubble.current) { bubble.current.hidden = walking || !stop; bubble.current.textContent = stop ? `${stop.icon} ${stop.label}` : ""; }
         if (!walking && !route.length && time >= pausedUntil) pausedUntil = time + 1500 + random() * 2000;
-      } else element.dataset.walking = "false";
+      } else {
+        element.dataset.walking = "false";
+        if (bubble.current) { bubble.current.hidden = true; bubble.current.textContent = ""; }
+      }
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
