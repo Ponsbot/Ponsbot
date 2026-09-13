@@ -20,6 +20,7 @@ import type * as crons from "../crons.js";
 import type * as freeLaunches from "../freeLaunches.js";
 import type * as graduationAnnouncements from "../graduationAnnouncements.js";
 import type * as legacyClaims from "../legacyClaims.js";
+import type * as lib_botTokenMetadata from "../lib/botTokenMetadata.js";
 import type * as lib_liquiditySchema from "../lib/liquiditySchema.js";
 import type * as lib_liquidityWorkflowSchema from "../lib/liquidityWorkflowSchema.js";
 import type * as lib_pollSchema from "../lib/pollSchema.js";
@@ -80,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   freeLaunches: typeof freeLaunches;
   graduationAnnouncements: typeof graduationAnnouncements;
   legacyClaims: typeof legacyClaims;
+  "lib/botTokenMetadata": typeof lib_botTokenMetadata;
   "lib/liquiditySchema": typeof lib_liquiditySchema;
   "lib/liquidityWorkflowSchema": typeof lib_liquidityWorkflowSchema;
   "lib/pollSchema": typeof lib_pollSchema;
