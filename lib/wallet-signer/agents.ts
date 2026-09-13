@@ -6,20 +6,19 @@ import { ethUsdPrice } from "./pricing";
 import { provisionWallet } from "./service";
 import { tradingAgentCapabilities } from "../trading-agents/config";
 import { agentMarketsSchema, type AgentMarkets } from "../trading-agents/market";
-import { parseExplorerHoldings } from "../wallet-holdings";
+import { secondaryAgentTokens } from "../trading-agents/universe";
 
 export async function agentWalletHoldings(walletAddress: string, knownTokens: string[]) {
-  const response = await fetch(`https://robinhoodchain.blockscout.com/api/v2/addresses/${address.parse(walletAddress)}/token-balances`, { signal: AbortSignal.timeout(8000), cache: "no-store" }).catch(() => null);
-  const discovered = response?.ok ? parseExplorerHoldings(await response.json()) : { holdings: [], complete: false };
-  const tokens = [...new Set([...knownTokens, ...discovered.holdings.flatMap(t => t.address ? [t.address] : [])].map(t => t.toLowerCase()))];
+  const snapshot = await readAgentBalances(walletAddress, knownTokens, true);
+  const tokens = snapshot.tokens.map(t => t.token);
   const market = await agentMarketSnapshot({ walletAddress, tokens: tokens.slice(0, 100) }).catch(async () => {
     // Owner ETH withdrawals do not depend on a pricing provider's availability.
     const rpc = createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL) });
     if (await rpc.getChainId() !== 4663) throw new Error("AGENT_WRONG_CHAIN");
     return { cashWei: (await rpc.getBalance({ address: walletAddress as Address })).toString(), observedAt: Date.now(), tokens: [] as AgentMarkets["tokens"] };
   });
-  return { cashWei: market.cashWei!, observedAt: market.observedAt, complete: discovered.complete && tokens.length <= 100 && market.tokens.length === tokens.length,
-    tokens: market.tokens.filter(t => t.balance && BigInt(t.balance) > 0n).map(t => ({ address: t.address, symbol: t.symbol, decimals: t.decimals, balance: t.balance!, ...(t.priceUsd ? { priceUsd: t.priceUsd } : {}) })) };
+  return { cashWei: snapshot.cashWei, observedAt: snapshot.observedAt, complete: snapshot.complete && market.tokens.length === tokens.length,
+    tokens: snapshot.tokens.flatMap(t => { const metadata = market.tokens.find(m => m.address === t.token); return metadata ? [{ address: t.token, symbol: metadata.symbol, decimals: metadata.decimals!, balance: t.amount, ...(metadata.priceUsd ? { priceUsd: metadata.priceUsd } : {}) }] : []; }) };
 }
 
 const agentId = z.string().regex(/^[a-zA-Z0-9_-]{8,100}$/);
@@ -47,12 +46,10 @@ export async function agentLiveContext(raw: unknown) {
     const client = createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL) });
     if (await client.getBlockNumber({ cacheTime: 0 }) < BigInt(input.minimumBlock)) throw new Error("AGENT_RPC_BEHIND");
   }
-  const inventory = await agentWalletHoldings(input.walletAddress, []);
-  const tokens = [...new Set([...inventory.tokens.map(t => t.address), ...input.tokens].map(t => t.toLowerCase()))].slice(0, 100);
+  const inventory = await readAgentBalances(input.walletAddress, input.tokens, true);
+  const tokens = [...new Set([...inventory.tokens.map(t => t.token), ...input.tokens].map(t => t.toLowerCase()))].slice(0, 100);
   const markets = await agentMarketSnapshot({ walletAddress: input.walletAddress, tokens });
-  return { markets, snapshot: { cashWei: markets.cashWei!, observedAt: markets.observedAt,
-    complete: inventory.complete && inventory.tokens.every(t => markets.tokens.some(m => m.address === t.address.toLowerCase() && m.balance !== undefined)),
-    tokens: markets.tokens.filter(t => t.balance && BigInt(t.balance) > 0n).map(t => ({ token: t.address, amount: t.balance! })) } };
+  return { markets, snapshot: inventory };
 }
 
 /** Final pre-reservation balance check, without another price/discovery round trip. */
@@ -61,26 +58,29 @@ export async function agentLiveBalances(raw: unknown) {
   const input = z.object({ agentId, walletAddress: address, tokens: z.array(address).max(100), discover: z.boolean().optional() }).strict().parse(raw);
   const wallet = await provisionWallet(`agent:${input.agentId}`);
   if (wallet.address.toLowerCase() !== input.walletAddress.toLowerCase()) throw new Error("BOT_WALLET_MISMATCH");
+  return readAgentBalances(input.walletAddress, input.tokens, input.discover ?? false);
+}
+
+/** RPC verifies the tracked trading inventory plus supported reserve assets.
+ * This is not a claim to enumerate every arbitrary ERC-20 ever sent to an address.
+ * CoinGecko supplies prices only; it is never the authority for wallet balances.
+ */
+async function readAgentBalances(walletAddress: string, knownTokens: string[], includeReserves: boolean) {
+  address.parse(walletAddress);
   const client = createPublicClient({ transport: resilientRobinhoodHttp(process.env.ROBINHOOD_RPC_URL) });
   if (await client.getChainId() !== 4663) throw new Error("AGENT_WRONG_CHAIN");
-  let discoveredTokens: string[] = [], discoveryComplete = true;
-  if (input.discover) {
-    // Check-ins need inventory discovery, but no market prices, AI, or trade execution.
-    const response = await fetch(`https://robinhoodchain.blockscout.com/api/v2/addresses/${input.walletAddress}/token-balances`, { signal: AbortSignal.timeout(8000), cache: "no-store" }).catch(() => null);
-    const discovery = response?.ok ? parseExplorerHoldings(await response.json()) : { holdings: [], complete: false };
-    discoveredTokens = discovery.holdings.flatMap(t => t.address ? [t.address] : []);
-    discoveryComplete = discovery.complete;
-  }
-  const allTokens = [...new Set([...input.tokens, ...discoveredTokens].map(t => t.toLowerCase() as Address))];
-  const tokens = allTokens.slice(0, 100);
+  const reserves = includeReserves ? [...secondaryAgentTokens.map(t => t.address), "0xb1e9b822b81bbbdab375f7f4d86e44fa04d12b07", "0x0bd7d308f8e1639fab988df18a8011f41eacad73"] : [];
+  const tokens = [...new Set([...knownTokens, ...reserves].map(t => address.parse(t).toLowerCase() as Address))];
+  if (tokens.length > 512) throw new Error("AGENT_INVENTORY_LIMIT");
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   const [cash, balances] = await Promise.all([
-    client.getBalance({ address: input.walletAddress as Address, blockNumber }),
+    client.getBalance({ address: walletAddress as Address, blockNumber }),
     tokens.length ? client.multicall({ multicallAddress: "0xcA11bde05977b3631167028862bE2a173976CA11", blockNumber, allowFailure: false,
-      contracts: tokens.map(token => ({ address: token, abi: tokenAbi, functionName: "balanceOf" as const, args: [input.walletAddress as Address] })) }) : Promise.resolve([]),
+      contracts: tokens.map(token => ({ address: token, abi: tokenAbi, functionName: "balanceOf" as const, args: [walletAddress as Address] })) }) : Promise.resolve([]),
   ]);
-  return { cashWei: cash.toString(), observedAt: Date.now(), complete: discoveryComplete && allTokens.length <= 100,
-    tokens: tokens.flatMap((token, index) => BigInt(balances[index]) > 0n ? [{ token, amount: balances[index].toString() }] : []) };
+  const held = tokens.flatMap((token, index) => BigInt(balances[index]) > 0n ? [{ token, amount: balances[index].toString() }] : []);
+  if (held.length > 100) throw new Error("AGENT_INVENTORY_LIMIT");
+  return { cashWei: cash.toString(), observedAt: Date.now(), complete: true, tokens: held };
 }
 
 /** Read-only data. This endpoint has no arbitrary call, signing or broadcast operation. */

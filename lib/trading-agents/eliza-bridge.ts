@@ -7,6 +7,7 @@ export const agentMarketContextSchema = z.object({
   agentId: z.string().min(1).max(128), cycleId: z.string().min(1).max(200),
   policyVersion: z.number().int().positive().safe(), observedAt: z.number().int().positive().safe(),
   ethUsd: z.number().finite().positive().optional(),
+  holdingsAvailable: z.boolean().optional(),
   strategy: z.string().min(1).max(2000), policy: agentPolicySchema,
   character: z.object({ name: z.string().min(1).max(60), description: z.string().min(1).max(2000) }).strict().optional(),
   recentLog: z.array(z.object({ at: z.number().int().positive().safe(), summary: z.string().max(600) }).strict()).max(15).optional(),

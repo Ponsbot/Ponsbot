@@ -101,6 +101,15 @@ export const work = internalAction({
     });
     try {
       const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"]; yard: AgentMarketContext["yard"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
+      if (current.kind === "thought") {
+        // Thoughts are not transactions. They must not depend on inventory, pricing, or signer availability.
+        if (!await ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, boolean>("tradingAgents:reserveModelCall"), { cycleId: current.cycleId, leaseToken })) throw new Error("MODEL_LIMIT");
+        const result = await runAgentModel("thought", { agentId: current.agent._id, cycleId: current.cycleId, policyVersion: current.agent.policyVersion,
+          observedAt: Date.now(), strategy: current.agent.strategy, character: { name: current.agent.name, description: current.agent.description ?? current.agent.strategy }, policy: current.agent.policy,
+          tokens: context.tokens, cashWei: "0", holdings: [], holdingsAvailable: false, recentLog: context.recentLog, yard: context.yard }, AbortSignal.timeout(50000), openRouter);
+        await finish(JSON.stringify(result));
+        return;
+      }
       const base = new URL((process.env.WALLET_SIGNER_URL || `${process.env.NEXT_PUBLIC_SITE_URL}/api/wallet-signer`).replace(/\/$/, "") + "/v1/agents/live-context");
       if (base.protocol !== "https:" || base.username || base.password || !process.env.WALLET_SIGNER_TOKEN) throw new Error("SIGNER_NOT_CONFIGURED");
       const response = await fetch(base, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" }, body: JSON.stringify({ agentId: current.agent._id, walletAddress: current.agent.walletAddress, tokens: context.tokens.map(t => t.address) }), signal: AbortSignal.timeout(60000) });
