@@ -1,6 +1,6 @@
 /** Realized USD trading P&L, weighted-average cost. Deposits, withdrawals and gas are excluded. */
 export type BotPnl = { dayUsd: number | null; lifetimeUsd: number | null; at: number; pending: boolean };
-export type PnlState = { version?: number; cursor: number; lots: Record<string, { amount: string; costUsd: number | null }>; lifetimeUsd: number; incomplete: boolean; sales: Array<{ at: number; usd: number | null }>; open: Array<{token:string;amount:string;costUsd:number|null;at:number}>; marks:Array<{at:number;prices:Record<string,number>}>; unrealized?:{dayUsd:number|null;lifetimeUsd:number|null;at:number} };
+export type PnlState = { version?: number; cursor: number; lots: Record<string, { amount: string; costUsd: number | null }>; lifetimeUsd: number; incomplete: boolean; sales: Array<{ at: number; usd: number | null; token?:string; proceeds?:number|null; pieces?:Array<{amount:string;costUsd:number|null;at:number}> }>; open: Array<{token:string;amount:string;costUsd:number|null;at:number}>; marks:Array<{at:number;prices:Record<string,number>}>; unrealized?:{dayUsd:number|null;lifetimeUsd:number|null;at:number}; total?:{dayUsd:number|null;lifetimeUsd:number|null;at:number} };
 export const initialPnlState = (): PnlState => ({ version: 3, cursor: 0, lots: {}, lifetimeUsd: 0, incomplete: false, sales: [], open:[], marks:[] });
 export function loadPnlState(json?:string):PnlState { const state=json?JSON.parse(json) as PnlState:undefined;return state?.version===3?state:initialPnlState(); }
 export type PnlFill = { token: string; amount: string; cashUsd: number | null; side: "buy" | "sell"; at: number };
@@ -20,23 +20,25 @@ export function applyPnlFill(state: PnlState, fill: PnlFill) {
   const remainder = held > quantity ? held - quantity : 0n;
   let left=remainder;
   const pieces=state.open.filter(p=>p.token===key);
+  const soldPieces:Array<{amount:string;costUsd:number|null;at:number}>=[];
   pieces.forEach((piece,index)=>{
     const old=BigInt(piece.amount);
     const remaining=index===pieces.length-1?left:held>0n?old*remainder/held:0n;
     left-=remaining;
+    soldPieces.push({amount:(old-remaining).toString(),costUsd:piece.costUsd===null?null:old>0n?piece.costUsd*Number(old-remaining)/Number(old):0,at:piece.at});
     piece.amount=remaining.toString();
     piece.costUsd=piece.costUsd===null?null:old>0n?piece.costUsd*Number(remaining)/Number(old):0;
   });
   state.open=state.open.filter(p=>BigInt(p.amount)>0n);
   state.lots[key] = { amount: remainder.toString(), costUsd: remainder === 0n ? 0 : basis === null || lot.costUsd === null ? null : lot.costUsd - basis };
-  state.sales.push({ at: fill.at, usd });
+  state.sales.push({ at: fill.at, usd, token:key, proceeds:fill.cashUsd, ...(held>=quantity && soldPieces.reduce((n,p)=>n+BigInt(p.amount),0n)===quantity?{pieces:soldPieces}:{} ) });
   if (usd === null) state.incomplete = true; else state.lifetimeUsd += usd;
 }
 export function pnlDisplay(stateJson: string | undefined, at: number | undefined, now: number, pending = false): BotPnl {
   if (!stateJson || !at) return { dayUsd: null, lifetimeUsd: null, at: 0, pending: true };
   const state = JSON.parse(stateJson) as PnlState;
   if(state.version!==3 || !state.unrealized) return {dayUsd:null,lifetimeUsd:null,at:0,pending:true};
-  return {...state.unrealized,pending};
+  return state.total ? {...state.total,pending} : {dayUsd:null,lifetimeUsd:null,at:0,pending:true};
 }
 
 /** Prices are USD per raw token unit. No ETH deposits or realized sales enter these totals. */
@@ -58,6 +60,25 @@ export function markUnrealized(state:PnlState,prices:Record<string,number>,at:nu
   }
   if(balances && Object.entries(balances).some(([t,a])=>BigInt(a)>0n && BigInt(state.lots[t]?.amount??'0')!==BigInt(a))) {lifetime=null;day=null;}
   state.unrealized={at,dayUsd:day!==null&&Number.isFinite(day)?day:null,lifetimeUsd:lifetime!==null&&Number.isFinite(lifetime)?lifetime:null};
+  // Realized sales use the same rolling reference as remaining exposure, not lifetime
+  // purchase cost for positions that already existed at the start of the 24h window.
+  let realizedDay:number|null=0;
+  for(const sale of state.sales.filter(s=>s.at>cutoff && s.at<=at)) {
+    if(!sale.pieces || !sale.token || sale.proceeds==null) {realizedDay=null;break;}
+    const baseline=[...state.marks].reverse().find(m=>m.at<=cutoff && cutoff-m.at<=600000 && m.prices[sale.token!]>0);
+    let reference:number|null=0;
+    for(const piece of sale.pieces) {
+      if(BigInt(piece.amount)===0n) continue;
+      const basis=piece.at>cutoff?piece.costUsd:baseline?Number(piece.amount)*baseline.prices[sale.token]:null;
+      if(basis===null) {reference=null;break;}
+      reference+=basis;
+    }
+    if(reference===null) {realizedDay=null;break;}
+    realizedDay+=sale.proceeds-reference;
+  }
+  const totalDay=day===null||realizedDay===null?null:day+realizedDay;
+  const totalLifetime=lifetime===null||state.incomplete?null:lifetime+state.lifetimeUsd;
+  state.total={at,dayUsd:totalDay!==null&&Number.isFinite(totalDay)?totalDay:null,lifetimeUsd:totalLifetime!==null&&Number.isFinite(totalLifetime)?totalLifetime:null};
   state.marks=state.marks.filter(m=>m.at>=cutoff-600000);
   if(!state.marks.length || at-state.marks[state.marks.length-1].at>=60000) state.marks.push({at,prices});
   // Older purchases share the same daily reference; compact them to bound history size.

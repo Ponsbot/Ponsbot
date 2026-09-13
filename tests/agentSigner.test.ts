@@ -34,4 +34,11 @@ describe("agent signer boundary", () => {
     const result = await agentMarketSnapshot({ tokens: [`0x${"1".repeat(40)}`] });
     expect(result.tokens[0]).toEqual({ address: `0x${"1".repeat(40)}`, symbol: "TEST", decimals: 6 });
   });
+  it("preserves verified balances and metadata if Gecko fails",async()=>{
+    markets.mockRejectedValue(new Error('provider unavailable'));
+    multicall.mockResolvedValue([{status:'success',result:'TEST'},{status:'success',result:6},{status:'success',result:123n}]);
+    const token=`0x${'1'.repeat(40)}`;
+    const result=await agentMarketSnapshot({tokens:[token],walletAddress:token});
+    expect(result.tokens[0]).toEqual({address:token,symbol:'TEST',decimals:6,balance:'123'});
+  });
 });

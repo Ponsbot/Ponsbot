@@ -31,7 +31,7 @@ describe("realized bot trading P&L",()=>{
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:75,at:now-86400001});
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:80,at:now-1000});
     markUnrealized(state,{},now);
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:null,lifetimeUsd:55});
   });
   it("does not treat gifts or unknown purchase costs as free tokens",()=>{
     const state=initialPnlState();
@@ -41,7 +41,7 @@ describe("realized bot trading P&L",()=>{
     applyPnlFill(state,{token,side:"buy",amount:"100",cashUsd:null,at:now-2000});
     applyPnlFill(state,{token,side:"sell",amount:"100",cashUsd:500,at:now-1000});
     markUnrealized(state,{},now);
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:null,lifetimeUsd:null});
   });
   it("does not poison later fully known lots after an unknown lot is exhausted",()=>{
     const state=initialPnlState();
@@ -49,7 +49,7 @@ describe("realized bot trading P&L",()=>{
     applyPnlFill(state,{token,side:"buy",amount:"10",cashUsd:5,at:now-2000});
     applyPnlFill(state,{token,side:"sell",amount:"10",cashUsd:8,at:now-1000});
     markUnrealized(state,{},now);
-    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:3,lifetimeUsd:null});
   });
   it('marks old and new purchases separately for rolling 24h and removes sold exposure',()=>{
     const state=initialPnlState();
@@ -61,6 +61,7 @@ describe("realized bot trading P&L",()=>{
     applyPnlFill(state,{token,side:'sell',amount:'100',cashUsd:450,at:now});
     markUnrealized(state,{[token]:4},now);
     expect(state.unrealized).toMatchObject({dayUsd:150,lifetimeUsd:200});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:350,lifetimeUsd:450});
   });
   it('does not invent missing daily references or prices',()=>{
     const state=initialPnlState();
@@ -77,10 +78,20 @@ describe("realized bot trading P&L",()=>{
       {type:"CALL",error:"reverted",calls:[{type:"CALL",to:token,value:"900"}]},
     ]},token)).toBe(-80n);
   });
+  it('retains gains after a full sale and does not count sale proceeds twice',()=>{
+    const state=initialPnlState();
+    applyPnlFill(state,{token,side:'buy',amount:'100',cashUsd:100,at:now-5000});
+    applyPnlFill(state,{token,side:'sell',amount:'100',cashUsd:140,at:now-1000});
+    markUnrealized(state,{},now,{});
+    expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:40,lifetimeUsd:40});
+    markUnrealized(state,{},now+1000,{});
+    expect(state.total).toMatchObject({dayUsd:40,lifetimeUsd:40});
+  });
   it("shows both periods with clear signs and never substitutes zero for missing data",()=>{
     const html=renderToStaticMarkup(<BotPnl pnl={{dayUsd:12.345,lifetimeUsd:-5,at:now,pending:false}}/>);
     expect(html).toContain("24h P&amp;L"); expect(html).toContain("Lifetime P&amp;L");
     expect(html).toContain("+$12.35"); expect(html).toContain("-$5.00");
+    expect(html).not.toContain("Unrealized gains/losses");
     expect(renderToStaticMarkup(<BotPnl/>)).toContain("Calculating");
     expect(renderToStaticMarkup(<BotPnl pnl={{dayUsd:null,lifetimeUsd:null,at:now,pending:false}}/>)).toContain("Unavailable");
   });

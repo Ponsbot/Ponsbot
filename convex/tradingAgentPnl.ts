@@ -88,9 +88,10 @@ export const tick=internalAction({args:{},handler:async ctx=>{
       if(base.protocol!=="https:"||base.username||base.password) throw new Error("PNL_SIGNER_URL");
       const response=await fetch(base,{method:"POST",headers:{authorization:`Bearer ${process.env.WALLET_SIGNER_TOKEN}`,"content-type":"application/json"},body:JSON.stringify({agentId:work.id,walletAddress:work.walletAddress,tokens}),signal:AbortSignal.timeout(60000)});
       if(!response.ok) throw new Error("PNL_MARKET_RETRY");
-      const snapshot=z.object({complete:z.literal(true),observedAt:z.number(),tokens:z.array(z.object({token:z.string(),amount:z.string().regex(/^\d+$/)}))}).parse(await response.json());
+      const snapshot=z.object({cashWei:z.string().regex(/^\d+$/).optional(),complete:z.literal(true),observedAt:z.number(),tokens:z.array(z.object({token:z.string(),amount:z.string().regex(/^\d+$/)}))}).parse(await response.json());
       const now=Date.now();
       if(snapshot.observedAt>now || now-snapshot.observedAt>60000) throw new Error("PNL_BALANCE_STALE");
+      if(snapshot.cashWei!==undefined) await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentLive:saveHoldings"),{agentId:work.id,snapshotJson:JSON.stringify(snapshot)});
       for(const holding of snapshot.tokens) {
         const token=holding.token.toLowerCase();
         if(/^0x[0-9a-f]{40}$/.test(token) && BigInt(holding.amount)>0n && !tokens.includes(token)) tokens.push(token);

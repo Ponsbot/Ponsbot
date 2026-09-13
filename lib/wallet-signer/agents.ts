@@ -97,7 +97,8 @@ export async function agentMarketSnapshot(raw: unknown) {
   for (let offset = 0; offset < addresses.length; offset += 30) {
     const batch = addresses.slice(offset, offset + 30);
     const [markets, metadata] = await Promise.all([
-      geckoTokenMarkets(batch, { allowStale: true, ttlMs: 60_000, timeoutMs: 8000, priority: "background" }),
+      // Price-provider failures must not discard independently verified balances/metadata.
+      geckoTokenMarkets(batch, { allowStale: true, ttlMs: 60_000, timeoutMs: 8000, priority: "background" }).catch(() => new Map()),
       client.multicall({ multicallAddress: "0xcA11bde05977b3631167028862bE2a173976CA11", allowFailure: true,
         contracts: batch.flatMap(token => [
           { address: token, abi: tokenAbi, functionName: "symbol" as const },

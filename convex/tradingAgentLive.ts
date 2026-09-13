@@ -12,6 +12,7 @@ import { runAgentModel } from "../lib/trading-agents/model";
 import { agentMarketsSchema } from "../lib/trading-agents/market";
 import type { AgentMarketContext } from "../lib/trading-agents/eliza-bridge";
 import { z } from "zod";
+import { loadPnlState } from "../lib/trading-agents/pnl";
 
 const snapshotSchema = z.object({ cashWei: units, tokens: z.array(z.object({ token: z.string().regex(/^0x[0-9a-f]{40}$/), amount: units })).max(100), observedAt: z.number().int().positive(), complete: z.boolean() }).strict();
 type Lease = { agent: Doc<"tradingAgents">; cycleId: Id<"tradingAgentCycles">; kind: "thought" | "trade" };
@@ -140,7 +141,7 @@ export const work = internalAction({
       if (current.kind === "trade") {
         const refreshed = await fetch(new URL(base.toString().replace(/live-context$/, "live-balances")), { method: "POST",
           headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" },
-          body: JSON.stringify({ agentId: current.agent._id, walletAddress: current.agent.walletAddress, tokens: markets.tokens.map(t => t.address) }), signal: AbortSignal.timeout(25000) });
+          body: JSON.stringify({ agentId: current.agent._id, walletAddress: current.agent.walletAddress, tokens: [...new Set([...snapshot.tokens.map(t=>t.token),...markets.tokens.map(t=>t.address)])].slice(0,100) }), signal: AbortSignal.timeout(25000) });
         if (!refreshed.ok) throw new Error("LIVE_BALANCE_REFRESH_FAILED");
         finalSnapshot = snapshotSchema.parse(await refreshed.json());
       }
@@ -168,6 +169,16 @@ export const saveHoldings = internalMutation({
     await ctx.db.patch(agent._id, { liveHoldings: snapshot, pnlNextAt: Date.now(), updatedAt: Date.now() });
   },
 });
+export const inventoryTokens = internalQuery({
+  args:{agentId:v.id("tradingAgents")},handler:async(ctx,{agentId})=>{
+    const agent=await ctx.db.get(agentId);
+    if(!agent)return [];
+    const state=loadPnlState(agent.pnlStateJson);
+    const tokens=[...new Set([...(agent.liveHoldings?.tokens.map(t=>t.token)??[]),...Object.entries(state.lots).filter(([,lot])=>BigInt(lot.amount)>0n).map(([token])=>token)])];
+    if(tokens.length>100)throw new Error("AGENT_INVENTORY_LIMIT");
+    return tokens;
+  },
+});
 export const refreshAfterExecution = internalAction({
   args: { jobId: v.id("tradingAgentExecutions") }, handler: async (ctx, { jobId }) => {
     if (!tradingAgentCapabilities().liveTrading || !process.env.WALLET_SIGNER_TOKEN) return;
@@ -177,8 +188,11 @@ export const refreshAfterExecution = internalAction({
     if (base.protocol !== "https:" || base.username || base.password) return;
     try {
       const intent = JSON.parse(job.intentJson) as { token?: string };
+      const tracked=await ctx.runQuery(makeFunctionReference<"query",{agentId:Id<"tradingAgents">},string[]>("tradingAgentLive:inventoryTokens"),{agentId:job.agentId});
+      const tokens=[...new Set([...tracked,...(intent.token?[intent.token]:[])])];
+      if(tokens.length>100)return;
       const response = await fetch(base, { method: "POST", headers: { authorization: `Bearer ${process.env.WALLET_SIGNER_TOKEN}`, "content-type": "application/json" },
-        body: JSON.stringify({ agentId: job.agentId, walletAddress: job.from, tokens: intent.token ? [intent.token] : [], minimumBlock: job.confirmedBlock }), signal: AbortSignal.timeout(60000) });
+        body: JSON.stringify({ agentId: job.agentId, walletAddress: job.from, tokens, minimumBlock: job.confirmedBlock }), signal: AbortSignal.timeout(60000) });
       if (!response.ok) return;
       const data = await response.json() as { snapshot: unknown };
       await ctx.runMutation(makeFunctionReference<"mutation", { agentId: Id<"tradingAgents">; snapshotJson: string }>("tradingAgentLive:saveHoldings"), { agentId: job.agentId, snapshotJson: JSON.stringify(data.snapshot) });
