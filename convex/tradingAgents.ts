@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { yardZones } from "../lib/trading-agents/yard-zones";
+import { pnlDisplay } from "../lib/trading-agents/pnl";
 import { hashMessage } from "viem";
 import { advanceYardSchedule, botThoughtSchema, BOT_TRADE_INTERVAL_MS, dueYardCycle, initialYardSchedule, parseCreateBotPost } from "../lib/trading-agents/bot-yard";
 import { createBotSprite } from "../lib/trading-agents/sprite";
@@ -160,7 +161,7 @@ async function yardSummary(ctx: QueryCtx, agent: Doc<"tradingAgents">): Promise<
   return { id: agent._id, name: agent.name, description: agent.description, sprite: agent.sprite, status: agent.status,
     creatorUsername, ...(agent.yardPosition ? { yardPosition: { x: agent.yardPosition.x, y: agent.yardPosition.y, at: agent.yardPosition.at, zone: agent.yardPosition.zone ?? "center" } } : {}),
     mode: agent.mode, nextThoughtAt: agent.schedule?.nextThoughtAt, nextTradeAt: agent.schedule?.nextTradeAt,
-    walletAddress: agent.walletAddress, logs: [] };
+    walletAddress: agent.walletAddress, pnl: pnlDisplay(agent.pnlStateJson,agent.pnlAt,Date.now(),agent.pnlPending), logs: [] };
 }
 function yardLog(cycle: Doc<"tradingAgentCycles">): BotYardLog | null {
   if (cycle.status === "leased") return null;
@@ -395,7 +396,7 @@ export const workerContext = internalQuery({
         return { name: bot.name, description: (bot.description ?? bot.strategy).slice(0, 300), ...(thought?.thought ? { thought: thought.thought.slice(0, 600) } : {}) };
       })),
     };
-    return { agent, cycle, tokens, yard, recentLog: history.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).slice(0, 15).map(l => ({ at: l.at, summary: l.summary })) };
+    return { agent, cycle, tokens, yard, recentLog: history.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).slice(0, 15).map(l => ({ at: l.at, summary: l.summary, kind: l.kind, outcome: l.outcome })) };
   },
 });
 

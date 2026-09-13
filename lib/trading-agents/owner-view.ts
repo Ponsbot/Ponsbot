@@ -1,4 +1,6 @@
+import type { BotPnl } from "./pnl";
 export type OwnedBot = {
+  pnl?: BotPnl;
   id: string;
   name: string;
   walletAddress?: string;

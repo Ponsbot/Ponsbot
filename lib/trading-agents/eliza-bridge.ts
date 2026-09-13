@@ -10,8 +10,9 @@ export const agentMarketContextSchema = z.object({
   holdingsAvailable: z.boolean().optional(),
   strategy: z.string().min(1).max(2000), policy: agentPolicySchema,
   character: z.object({ name: z.string().min(1).max(60), description: z.string().min(1).max(2000) }).strict().optional(),
-  recentLog: z.array(z.object({ at: z.number().int().positive().safe(), summary: z.string().max(600) }).strict()).max(15).optional(),
+  recentLog: z.array(z.object({ at: z.number().int().positive().safe(), summary: z.string().max(600), kind: z.enum(["thought","trade"]).optional(), outcome: z.enum(["thought","paper_filled","live_filled","executing","held","failed"]).optional() }).strict()).max(15).optional(),
   yard: z.object({
+    area: z.string().max(80).optional(),
     places: z.array(z.string().max(80)).max(8),
     neighbors: z.array(z.object({ name: z.string().max(60), description: z.string().max(300), thought: z.string().max(600).optional() }).strict()).max(8),
   }).strict().optional(),

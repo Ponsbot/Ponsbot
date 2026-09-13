@@ -26,6 +26,7 @@ import { creatorLayerLaunchPreflight, creatorNewLaunchPreflight, deployCreatorLa
 import { prepareLiquidityEnvelope, signLiquidityEnvelope } from "@/lib/wallet-signer/liquidity";
 import { agentLiveBalances, agentLiveContext, agentMarketSnapshot, provisionAgentWallet } from "@/lib/wallet-signer/agents";
 import { executeAgentWalletJob } from "@/lib/wallet-signer/agent-execution";
+import { auditAgentPnl } from "@/lib/wallet-signer/agent-pnl";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,6 +81,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pa
     if (path === "v1/agents/live-balances") return NextResponse.json(await agentLiveBalances(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/agents/provision") return NextResponse.json(await provisionAgentWallet(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/agents/execute") return NextResponse.json(await executeAgentWalletJob(body), { headers: { "cache-control": "no-store" } });
+    if (path === "v1/agents/pnl-audit") return NextResponse.json(await auditAgentPnl(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/liquidity/funding-check") return NextResponse.json(await checkLiquidityFunding(body), { headers: { "cache-control": "no-store" } });
     if (path === "v1/liquidity/quote") return NextResponse.json(await quoteLiquidity(body));
     if (path === "v1/liquidity/refresh-open") return NextResponse.json(await refreshLiquidityOpen(body), { headers: { "cache-control": "no-store" } });

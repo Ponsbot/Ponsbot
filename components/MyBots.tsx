@@ -4,6 +4,7 @@ import { formatEther, formatUnits } from "viem";
 import { ownerBotIntent, type OwnerBotIntent } from "@/lib/trading-agents/execution";
 import type { OwnedBotsResponse } from "@/lib/trading-agents/owner-view";
 import styles from "./MyBots.module.css";
+import { BotPnl } from "./BotPnl";
 
 export function MyBots() {
   const [data, setData] = useState<OwnedBotsResponse | null>(null);
@@ -76,6 +77,7 @@ export function MyBots() {
       {!data.bots.length && <p>You don’t own any bots yet.</p>}
       <div className={styles.grid}>{data.bots.map(bot => <article className={styles.card} key={bot.id}>
         <h2>{bot.name}</h2>
+        {bot.mode === "live" && <BotPnl pnl={bot.pnl} />}
         {bot.walletAddress ? <p>Bot wallet: <a href={`/bot-yard/wallet/${bot.walletAddress}`}>{bot.walletAddress}</a></p> : <p>Bot wallet has not been provisioned yet.</p>}
         <h3>Token positions</h3>
         <p>Sales stay in the bot wallet. Paired-token sales may return the pairing asset instead of ETH.</p>

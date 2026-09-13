@@ -43,6 +43,7 @@ import type * as telegramDeliveries from "../telegramDeliveries.js";
 import type * as tradingAgentExecution from "../tradingAgentExecution.js";
 import type * as tradingAgentLive from "../tradingAgentLive.js";
 import type * as tradingAgentOwners from "../tradingAgentOwners.js";
+import type * as tradingAgentPnl from "../tradingAgentPnl.js";
 import type * as tradingAgentPositions from "../tradingAgentPositions.js";
 import type * as tradingAgentRuntime from "../tradingAgentRuntime.js";
 import type * as tradingAgents from "../tradingAgents.js";
@@ -102,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   tradingAgentExecution: typeof tradingAgentExecution;
   tradingAgentLive: typeof tradingAgentLive;
   tradingAgentOwners: typeof tradingAgentOwners;
+  tradingAgentPnl: typeof tradingAgentPnl;
   tradingAgentPositions: typeof tradingAgentPositions;
   tradingAgentRuntime: typeof tradingAgentRuntime;
   tradingAgents: typeof tradingAgents;

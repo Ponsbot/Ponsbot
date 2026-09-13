@@ -8,6 +8,8 @@ import { botWalletLinks, type BotYardBot } from "@/lib/trading-agents/yard-view"
 import styles from "./BotYard.module.css";
 import { BotYardHowItWorks } from "./BotYardHowItWorks";
 import { BotYardScene } from "./BotYardScene";
+import { BotLocalTime } from "./BotLocalTime";
+import { BotPnl } from "./BotPnl";
 import { WanderingBot } from "./WanderingBot";
 import { BotYardZoneScene } from "./BotYardZoneScene";
 import { yardZones, zoneExits, emptyZoneCounts, type YardZone, type YardDirection, type ZoneCounts } from "@/lib/trading-agents/yard-zones";
@@ -55,9 +57,10 @@ export function BotYard({ bots, preview = false, onSelect, headingAction, zone: 
             ? <>Created by <a href={`https://x.com/${selected.creatorUsername}`} target="_blank" rel="noreferrer">@{selected.creatorUsername}</a></>
             : "Creator unavailable"}</p>
           <p className={styles.description}>{selected.description}</p>
+          {selected.mode === "live" && <BotPnl pnl={selected.pnl} />}
           {selected.paperHoldings && <div><h3>Paper holdings</h3><p>{formatEther(BigInt(selected.paperHoldings.cashWei))} ETH</p>
             <p>{selected.paperHoldings.tokens.length} token holdings</p></div>}
-          {selected.liveHoldings && <div><h3>Wallet holdings</h3><p>{botAmount(selected.liveHoldings.cashWei)} ETH</p>{selected.liveHoldings.tokens.map(token => <p key={token.token}>{botAsset(token)}</p>)}{!selected.liveHoldings.tokens.length && <p>No tokens held.</p>}<small>Last checked {new Date(selected.liveHoldings.observedAt).toLocaleString()}</small></div>}
+          {selected.liveHoldings && <div><h3>Wallet holdings</h3><p>{botAmount(selected.liveHoldings.cashWei)} ETH</p>{selected.liveHoldings.tokens.map(token => <p key={token.token}>{botAsset(token)}</p>)}{!selected.liveHoldings.tokens.length && <p>No tokens held.</p>}<small>Last checked <BotLocalTime at={selected.liveHoldings.observedAt} includeDate /></small></div>}
           <div className={styles.walletButtons}>
             {links ? <><a href={links.wallet} target="_blank" rel="noreferrer">Bot wallet ↗</a>
               <a href={links.transactions} target="_blank" rel="noreferrer">Transaction history ↗</a></>
@@ -67,7 +70,7 @@ export function BotYard({ bots, preview = false, onSelect, headingAction, zone: 
           <ol className={styles.log} aria-label={`${selected.name} activity`}>
             {selected.logs.map(entry => <li key={entry.id}>
               <div className={styles.logMeta}><span>{entry.kind === "thought" ? "Thought" : entry.outcome === "paper_filled" ? `Paper ${entry.side ?? "trade"}` : entry.outcome === "live_filled" ? `Completed ${entry.side ?? "trade"}` : entry.outcome === "executing" ? "Trade processing" : entry.outcome === "failed" ? "Trade incomplete" : "Holding"}</span>
-                <time dateTime={new Date(entry.at).toISOString()}>{new Date(entry.at).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit", timeZone: "UTC" })} UTC</time></div>
+                <BotLocalTime at={entry.at} /></div>
               {botBuyLabel(entry) && <p><strong>{botBuyLabel(entry)}</strong></p>}
               <p>{entry.summary}</p>
               {entry.token && <a className={styles.tokenLink} href={`/launch/${entry.token}`}>View token ↗</a>}

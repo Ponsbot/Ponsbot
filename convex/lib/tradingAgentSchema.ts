@@ -22,7 +22,7 @@ export const tradingAgentTables = {
     phase: v.optional(v.union(v.literal("funding"), v.literal("trade"), v.literal("convert"))), pairToken: v.optional(v.string()), pairAmount: v.optional(v.string()),
     gasSpentWei: v.optional(v.string()), outputAmount: v.optional(v.string()),
     tradeBucket: v.optional(v.union(v.literal("platform"), v.literal("secondary"))), tradeCounted: v.optional(v.boolean()),
-  }).index("by_owner_key", ["ownerXUserId", "requestKey"]).index("by_agent_state", ["agentId", "state"]).index("by_agent_created", ["agentId", "createdAt"]).index("by_state_updated", ["state", "updatedAt"]),
+  }).index("by_agent", ["agentId"]).index("by_owner_key", ["ownerXUserId", "requestKey"]).index("by_agent_state", ["agentId", "state"]).index("by_agent_created", ["agentId", "createdAt"]).index("by_state_updated", ["state", "updatedAt"]),
   tradingAgents: defineTable({
     ownerXUserId: v.string(), creationKey: v.string(), name: v.string(), strategy: v.string(),
     nameKey: v.string(),
@@ -37,6 +37,7 @@ export const tradingAgentTables = {
     walletProvisionStatus: v.optional(v.union(v.literal("pending"), v.literal("leased"), v.literal("ready"))),
     walletProvisionNextAt: v.optional(v.number()), walletProvisionLeaseToken: v.optional(v.string()),
     modelDay: v.optional(v.string()), modelCalls: v.optional(v.number()),
+    pnlStateJson: v.optional(v.string()), pnlAt: v.optional(v.number()), pnlNextAt: v.optional(v.number()), pnlPending: v.optional(v.boolean()),
     liveBudget: v.optional(v.object({ day: v.string(), buyWei: v.string(), gasReservedWei: v.string(), trades: v.number() })),
     liveTradeMix: v.optional(v.object({ platform: v.number(), secondary: v.number() })),
     paperTradeMix: v.optional(v.object({ platform: v.number(), secondary: v.number() })),
@@ -48,7 +49,7 @@ export const tradingAgentTables = {
     sprite: v.optional(v.object({ version: v.union(v.literal(1), v.literal(2)), seed: v.number(), palette: v.number(),
       archetype: v.union(v.literal("robot"), v.literal("wizard"), v.literal("cat"), v.literal("plant"), v.literal("pirate"), v.literal("rover"), v.literal("jelly"), v.literal("bird"), v.literal("golem"), v.literal("astronaut")) })),
   }).index("by_provision_due", ["walletProvisionStatus", "walletProvisionNextAt"])
-    .index("by_yard_zone", ["yardPosition.zone"]).index("by_wallet", ["walletAddress"]).index("by_name", ["nameKey"]).index("by_owner_creation", ["ownerXUserId", "creationKey"])
+    .index("by_pnl_due", ["mode", "pnlNextAt"]).index("by_yard_zone", ["yardPosition.zone"]).index("by_wallet", ["walletAddress"]).index("by_name", ["nameKey"]).index("by_owner_creation", ["ownerXUserId", "creationKey"])
     .index("by_owner", ["ownerXUserId"]).index("by_status_due", ["status", "nextRunAt"]).index("by_mode_status_due", ["mode", "status", "nextRunAt"]).index("by_created", ["createdAt"]),
   tradingAgentCycles: defineTable({
     agentId: v.id("tradingAgents"), cycleKey: v.string(), policyVersion: v.number(), leaseToken: v.string(),

@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 crons.interval("save canonical bot yard positions", { seconds: 10 }, makeFunctionReference<"mutation">("tradingAgentPositions:tick"));
+crons.interval("reconcile bot trading pnl", { minutes: 1 }, makeFunctionReference<"action">("tradingAgentPnl:tick"));
 // No provider calls or worker starts until both scheduler and paper flags are enabled.
 crons.interval("run staged bot yard workers", { minutes: 1 }, makeFunctionReference<"action">("tradingAgentRuntime:tick"));
 crons.interval("recover poll snapshots and close voting", { minutes: 1 }, internal.polls.recover);
