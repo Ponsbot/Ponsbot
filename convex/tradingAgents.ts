@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { diverseCandidates } from "../lib/trading-agents/diversification";
 import { yardZones } from "../lib/trading-agents/yard-zones";
 import { yardAwareness } from "../lib/trading-agents/yard-awareness";
 import { pnlDisplay, loadPnlState } from "../lib/trading-agents/pnl";
@@ -385,7 +386,7 @@ export const workerContext = internalQuery({
       ...secondaryAgentTokens.filter(t => owned.has(t.address) || t.symbol === "PONS"),
       ...secondaryAgentTokens.slice(rotation), ...secondaryAgentTokens.slice(0, rotation),
     ].map(t => [t.address, t])).values()].slice(0, 40) : [];
-    const tokens = [...primary.slice(0, 100 - alternatives.length), ...alternatives];
+    const tokens = [...diverseCandidates(primary, owned, `${agent._id}:${agent.sequence}`, 100 - alternatives.length), ...alternatives];
     const history = await ctx.db.query("tradingAgentCycles").withIndex("by_agent_created", q => q.eq("agentId", agent._id)).order("desc").take(16);
     const area = agent.yardPosition?.zone ?? "center";
     const neighbors = await ctx.db.query("tradingAgents").withIndex("by_yard_zone", q => q.eq("yardPosition.zone", area)).order("desc").take(9);

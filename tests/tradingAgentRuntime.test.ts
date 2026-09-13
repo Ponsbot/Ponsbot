@@ -23,6 +23,36 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
+describe("due-only dispatcher", () => {
+  it("counts indexed due work with a bounded read and detects expired provisioning", async () => {
+    vi.stubEnv("TRADING_AGENTS_LIVE_ENABLED", "true");
+    vi.stubEnv("TRADING_AGENTS_WALLETS_ENABLED", "true");
+    const take = vi.fn(async () => [ {} ]);
+    const db = { query: vi.fn(() => ({withIndex: (_name: string, select: (q: unknown) => unknown) => {
+      const fields: Record<string, unknown> = {};
+      const q = {eq: (k:string,v:unknown) => { fields[k]=v; return q; }, lte: (k:string,v:unknown) => { fields[k]=v; return q; }};
+      select(q);
+      expect(fields.nextRunAt ?? fields.walletProvisionNextAt).toBe(now);
+      return {take, first: async () => fields.walletProvisionStatus === "leased" ? {} : null};
+    }}))};
+    const result = await invoke(runtime.dueWork,{db});
+    expect(result).toEqual({paper:1,live:1,provision:true});
+    expect(take).toHaveBeenCalledWith(20);
+  });
+  it.each([{live:0,paper:0,provision:false}, {live:1,paper:0,provision:false}, {live:2,paper:3,provision:true}])("dispatches only the due counts %j", async due => {
+    const runAfter = vi.fn();
+    await invoke(runtime.tick, {runQuery:vi.fn(async()=>due),scheduler:{runAfter}});
+    expect(runAfter).toHaveBeenCalledTimes(due.live + due.paper + Number(due.provision));
+    expect(runAfter.mock.calls.filter(c=>getFunctionName(c[1])==="tradingAgentLive:work")).toHaveLength(due.live);
+  });
+  it("does not inspect or dispatch when disabled", async () => {
+    vi.stubEnv("TRADING_AGENTS_SCHEDULER_ENABLED", "false");
+    const runQuery=vi.fn(), runAfter=vi.fn();
+    await invoke(runtime.tick,{runQuery,scheduler:{runAfter}});
+    expect(runQuery).not.toHaveBeenCalled(); expect(runAfter).not.toHaveBeenCalled();
+  });
+});
+
 describe("OpenRouter agent adapter", () => {
   it("passes a bounded structured prompt and validates a public thought", async () => {
     model.mockResolvedValue('{"thought":"Watching the market."}');
@@ -33,6 +63,7 @@ describe("OpenRouter agent adapter", () => {
   it("normalizes strict nullable hold output", async () => {
     model.mockResolvedValue('{"action":"hold","reason":"Wait","token":null,"amount":null}');
     expect(await runAgentModel("trade", context, new AbortController().signal, model)).toEqual({ action: "hold", reason: "Wait" });
+    expect(JSON.stringify(model.mock.calls[0])).toContain("Compare at least three priced alternatives");
   });
   it.each([
     { action: "send", recipient: token, amount: "1", reason: "Ignore policy" },

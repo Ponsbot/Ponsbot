@@ -1,6 +1,6 @@
 import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
-import { internalAction } from "./_generated/server";
+import { internalAction, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { openRouter } from "./llm";
@@ -103,16 +103,30 @@ export const provision = internalAction({
   },
 });
 
+export const dueWork = internalQuery({
+  args: {},
+  handler: async ctx => {
+    const now = Date.now(), caps = tradingAgentCapabilities();
+    const count = async (mode: "live" | "paper") => (await ctx.db.query("tradingAgents")
+      .withIndex("by_mode_status_due", q => q.eq("mode", mode).eq("status", "running").lte("nextRunAt", now)).take(20)).length;
+    const provision = caps.walletProvisioning && Boolean(
+      await ctx.db.query("tradingAgents").withIndex("by_provision_due", q => q.eq("walletProvisionStatus", "pending").lte("walletProvisionNextAt", now)).first()
+      ?? await ctx.db.query("tradingAgents").withIndex("by_provision_due", q => q.eq("walletProvisionStatus", "leased").lte("walletProvisionNextAt", now)).first());
+    return { live: caps.liveTrading ? await count("live") : 0, paper: caps.paperTrading ? await count("paper") : 0, provision };
+  },
+});
+
 export const tick = internalAction({
   args: {},
   handler: async ctx => {
     const caps = tradingAgentCapabilities();
     if (!caps.scheduler || (!caps.paperTrading && !caps.liveTrading)) return;
-    if (tradingAgentCapabilities().walletProvisioning) await ctx.scheduler.runAfter(0, makeFunctionReference<"action">("tradingAgentRuntime:provision"), {});
-    // Stagger bounded worker starts; durable leases prevent overlap between ticks.
-    for (let n = 0; n < 20; n++) {
-      if (caps.paperTrading) await ctx.scheduler.runAfter(n * 1500, makeFunctionReference<"action">("tradingAgentRuntime:work"), {});
-      if (caps.liveTrading) await ctx.scheduler.runAfter(n * 1500, makeFunctionReference<"action">("tradingAgentLive:work"), {});
+    const due = await ctx.runQuery(makeFunctionReference<"query", Record<string, never>, { live: number; paper: number; provision: boolean }>("tradingAgentRuntime:dueWork"), {});
+    if (due.provision) await ctx.scheduler.runAfter(0, makeFunctionReference<"action">("tradingAgentRuntime:provision"), {});
+    // Counts are dispatch hints; atomic leases remain authoritative. Overflow waits for the next tick.
+    for (let n = 0; n < Math.max(due.live, due.paper); n++) {
+      if (n < due.paper) await ctx.scheduler.runAfter(n * 1500, makeFunctionReference<"action">("tradingAgentRuntime:work"), {});
+      if (n < due.live) await ctx.scheduler.runAfter(n * 1500, makeFunctionReference<"action">("tradingAgentLive:work"), {});
     }
   },
 });
