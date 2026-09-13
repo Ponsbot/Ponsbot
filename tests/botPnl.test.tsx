@@ -1,11 +1,16 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { applyPnlFill, initialPnlState, pnlDisplay, tracedNativeDelta } from "../lib/trading-agents/pnl";
+import { applyPnlFill, initialPnlState, loadPnlState, pnlDisplay, tracedNativeDelta } from "../lib/trading-agents/pnl";
 import { BotPnl } from "../components/BotPnl";
 vi.stubGlobal("React",React);
 const token="0x1111111111111111111111111111111111111111", now=200000000;
 describe("realized bot trading P&L",()=>{
+  it("replays older accounting once to recover display values without adding old totals twice",()=>{
+    expect(loadPnlState(JSON.stringify({cursor:100,lifetimeUsd:999}))).toEqual(initialPnlState());
+    const state={...initialPnlState(),cursor:100,lifetimeUsd:12};
+    expect(loadPnlState(JSON.stringify(state))).toEqual(state);
+  });
   it("does not count buys or unsold appreciation as realized profit",()=>{
     const state=initialPnlState(); applyPnlFill(state,{token,side:"buy",amount:"100",cashUsd:50,at:now-1000});
     expect(pnlDisplay(JSON.stringify(state),now,now)).toMatchObject({dayUsd:0,lifetimeUsd:0});

@@ -497,12 +497,14 @@ export const publicYard = query({
       const displayLogs = await Promise.all(logs.map(yardLog).filter((l): l is BotYardLog => Boolean(l)).map(async log => {
         if (!log.token) return log;
         const token = await metadata(log.token);
+        const executionId = logs.find(cycle => cycle._id === log.id)?.executionId;
+        const execution = executionId ? await ctx.db.get(executionId) : null;
         let buyUsd = log.buyUsd;
         if (buyUsd === undefined && log.side === "buy" && log.amountIn) {
           const historical = await ctx.db.query("historicalEthPrices").withIndex("by_bucket", q => q.eq("bucketAt", Math.floor(log.at / 300000) * 300000)).unique();
           if (historical) buyUsd = Number(log.amountIn) / 1e18 * historical.priceUsd;
         }
-        return { ...log, ...(token ? { tokenSymbol: token.symbol } : {}), ...(buyUsd !== undefined && Number.isFinite(buyUsd) ? { buyUsd } : {}) };
+        return { ...log, ...(token ? { tokenSymbol: token.symbol, tokenDecimals: token.decimals } : {}), ...(buyUsd !== undefined && Number.isFinite(buyUsd) ? { buyUsd } : {}), ...(execution?.tradeUsd !== undefined ? {tradeUsd:execution.tradeUsd} : {}) };
       }));
       return { bots: [{ ...bot, ...(selected.mode === "live" ? { liveHoldings } : { paperHoldings: { cashWei: selected.portfolio.cashWei, tokens: selected.portfolio.holdings, updatedAt: selected.updatedAt } }), logs: displayLogs }], nextCursor: null };
     }

@@ -1,4 +1,4 @@
-.box { margin: 0 0 22px; border: 1px solid var(--line, #dcded2); border-radius: 14px; background: var(--card, #fffdf7); }
+.box { margin: 22px 0; border: 1px solid var(--line, #dcded2); border-radius: 14px; background: var(--card, #fffdf7); }
 .box summary { padding: 17px 20px; cursor: pointer; font-weight: 700; color: #1c5d3d; border-radius: 14px; }
 .box summary:hover { background: #e8edda; }
 .box summary:focus-visible { outline: 2px solid #1c5d3d; outline-offset: 3px; }

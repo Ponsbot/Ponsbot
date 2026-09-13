@@ -5,7 +5,7 @@ import type { BotPnl } from "./pnl";
 export type BotYardLog = {
   id: string; at: number; kind: "thought" | "trade"; outcome: "thought" | "paper_filled" | "live_filled" | "executing" | "held" | "failed";
   transactionHashes?: string[];
-  buyUsd?: number; tokenSymbol?: string;
+  buyUsd?: number; tradeUsd?: number; tokenSymbol?: string; tokenDecimals?: number;
   summary: string; token?: string; amountIn?: string; amountOut?: string; side?: "buy" | "sell";
 };
 export type BotYardBot = {

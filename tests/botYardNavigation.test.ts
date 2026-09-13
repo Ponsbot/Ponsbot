@@ -37,7 +37,11 @@ describe("shared ground-plane navigation", () => {
   });
   it("formats ETH concisely and labels completed buys only", () => {
     expect(botAmount("79191298460125201")).toBe("0.079191");
-    expect(botBuyLabel({ side: "buy", outcome: "live_filled", buyUsd: 12.345, tokenSymbol: "PONSBOT" })).toBe("Bought $12.35 of PONSBOT");
+    expect(botBuyLabel({ side: "buy", outcome: "live_filled", buyUsd: 12.345, tokenSymbol: "PONSBOT" })).toBe("Bought PONSBOT ($12.35)");
+    expect(botBuyLabel({ side: "sell", outcome: "live_filled", tradeUsd: 25, amountIn:"123000000", tokenDecimals:6, tokenSymbol:"PONSBOT" })).toBe("Sold 123 PONSBOT ($25.00)");
+    expect(botBuyLabel({ side:"buy", outcome:"live_filled", tradeUsd:20, buyUsd:30, amountOut:"1000000", tokenDecimals:6, tokenSymbol:"TEST" })).toBe("Bought 1 TEST ($20.00)");
+    expect(botBuyLabel({ side:"sell", outcome:"live_filled", buyUsd:30, tokenSymbol:"TEST" })).toBe("Sold TEST");
+    expect(botBuyLabel({ side:"sell", outcome:"live_filled", tradeUsd:NaN, tokenSymbol:"TEST" })).toBe("Sold TEST");
     expect(botBuyLabel({ side: "buy", outcome: "failed", buyUsd: 12 })).toBeNull();
   });
 });

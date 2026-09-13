@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { makeFunctionReference } from "convex/server";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
-import { applyPnlFill, initialPnlState, type PnlState } from "../lib/trading-agents/pnl";
+import { applyPnlFill, loadPnlState } from "../lib/trading-agents/pnl";
 import { tradingAgentCapabilities } from "../lib/trading-agents/config";
 import { z } from "zod";
 import { feePriceBucket, FEE_PRICE_BUCKET_MS, historicalEthCandles } from "../lib/historical-fee-prices";
@@ -14,7 +14,7 @@ export const lease = internalMutation({args:{},handler:async ctx => {
   const agent=await ctx.db.query("tradingAgents").withIndex("by_pnl_due",q=>q.eq("mode","live").lte("pnlNextAt",now)).first();
   if(!agent) return null;
   await ctx.db.patch(agent._id,{pnlNextAt:now+300000,pnlPending:true});
-  const state=agent.pnlStateJson?JSON.parse(agent.pnlStateJson) as PnlState:initialPnlState();
+  const state=loadPnlState(agent.pnlStateJson);
   const jobs=await ctx.db.query("tradingAgentExecutions").withIndex("by_agent",q=>q.eq("agentId",agent._id).gt("_creationTime",state.cursor)).order("asc").take(3);
   return {id:agent._id,...(agent.pnlStateJson?{stateJson:agent.pnlStateJson}:{}),jobs:jobs.map(job=>({id:job._id,cursor:job._creationTime,state:job.state,withdraw:JSON.parse(job.intentJson).kind==="withdraw",hasHashes:job.hashes.length>0}))};
 }});
@@ -26,10 +26,16 @@ export const savePrice=internalMutation({args:{bucketAt:v.number(),priceUsd:v.nu
   if(!Number.isSafeInteger(args.bucketAt)||feePriceBucket(args.bucketAt)!==args.bucketAt||args.bucketAt<=0||args.bucketAt+FEE_PRICE_BUCKET_MS>Date.now()||!Number.isFinite(args.priceUsd)||args.priceUsd<=0) throw new Error("PNL_PRICE_INVALID");
   if(!await ctx.db.query("historicalEthPrices").withIndex("by_bucket",q=>q.eq("bucketAt",args.bucketAt)).unique()) await ctx.db.insert("historicalEthPrices",{...args,source:"coinbase-exchange:ETH-USD:300:open",fetchedAt:Date.now()});
 }});
-export const save = internalMutation({args:{agentId:v.id("tradingAgents"),expected:v.optional(v.string()),stateJson:v.string(),pending:v.boolean()},handler:async(ctx,args)=>{
+export const save = internalMutation({args:{agentId:v.id("tradingAgents"),expected:v.optional(v.string()),stateJson:v.string(),pending:v.boolean(),tradeValues:v.optional(v.array(v.object({jobId:v.id("tradingAgentExecutions"),usd:v.number()})))},handler:async(ctx,args)=>{
   const agent=await ctx.db.get(args.agentId);
   if(!agent || agent.pnlStateJson!==args.expected) return false;
   if(args.stateJson.length>500000) throw new Error("PNL_STATE_LIMIT");
+  if((args.tradeValues?.length??0)>3) throw new Error("PNL_VALUE_LIMIT");
+  for(const value of args.tradeValues??[]) {
+    const job=await ctx.db.get(value.jobId);
+    if(!job || job.agentId!==args.agentId || job.state==="active" || !Number.isFinite(value.usd) || value.usd<0) throw new Error("PNL_DISPLAY_VALUE_INVALID");
+    await ctx.db.patch(job._id,{tradeUsd:value.usd});
+  }
   await ctx.db.patch(agent._id,{pnlStateJson:args.stateJson,pnlAt:Date.now(),pnlPending:args.pending,pnlNextAt:Date.now()+(args.pending?60000:300000)});
   return true;
 }});
@@ -39,7 +45,8 @@ export const tick=internalAction({args:{},handler:async ctx=>{
   if(!tradingAgentCapabilities().website || !process.env.WALLET_SIGNER_TOKEN) return;
   const work=await ctx.runMutation(makeFunctionReference<"mutation",Record<string,never>,Work|null>("tradingAgentPnl:lease"),{});
   if(!work) return;
-  const state=work.stateJson?JSON.parse(work.stateJson) as PnlState:initialPnlState();
+  const state=loadPnlState(work.stateJson);
+  const tradeValues:Array<{jobId:Id<"tradingAgentExecutions">;usd:number}>=[];
   let pending=work.jobs.length===3;
   for(const job of work.jobs) {
     if(job.state==="active") {pending=true;break;}
@@ -63,12 +70,14 @@ export const tick=internalAction({args:{},handler:async ctx=>{
             if(candle) { ethUsd=candle.priceUsd; await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentPnl:savePrice"),candle); }
           }
           if(fill.cashWei!==null && ethUsd===null) throw new Error("PNL_HISTORICAL_PRICE_RETRY");
-          applyPnlFill(state,{...fill,cashUsd:fill.cashWei===null?null:Number(fill.cashWei)/1e18*ethUsd!});
+          const cashUsd=fill.cashWei===null?null:Number(fill.cashWei)/1e18*ethUsd!;
+          applyPnlFill(state,{...fill,cashUsd});
+          if(cashUsd!==null) tradeValues.push({jobId:job.id,usd:cashUsd});
         }
       }
       state.cursor=job.cursor;
     } catch {pending=true;break;} // No accounting failure can interrupt or repeat a trade.
   }
   state.sales=state.sales.filter(s=>s.at>Date.now()-86400000);
-  await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentPnl:save"),{agentId:work.id,...(work.stateJson?{expected:work.stateJson}:{}),stateJson:JSON.stringify(state),pending});
+  await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentPnl:save"),{agentId:work.id,...(work.stateJson?{expected:work.stateJson}:{}),stateJson:JSON.stringify(state),pending,tradeValues});
 }});

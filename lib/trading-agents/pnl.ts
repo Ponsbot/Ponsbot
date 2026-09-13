@@ -1,7 +1,8 @@
 /** Realized USD trading P&L, weighted-average cost. Deposits, withdrawals and gas are excluded. */
 export type BotPnl = { dayUsd: number | null; lifetimeUsd: number | null; at: number; pending: boolean };
-export type PnlState = { cursor: number; lots: Record<string, { amount: string; costUsd: number | null }>; lifetimeUsd: number; incomplete: boolean; sales: Array<{ at: number; usd: number | null }> };
-export const initialPnlState = (): PnlState => ({ cursor: 0, lots: {}, lifetimeUsd: 0, incomplete: false, sales: [] });
+export type PnlState = { version?: number; cursor: number; lots: Record<string, { amount: string; costUsd: number | null }>; lifetimeUsd: number; incomplete: boolean; sales: Array<{ at: number; usd: number | null }> };
+export const initialPnlState = (): PnlState => ({ version: 2, cursor: 0, lots: {}, lifetimeUsd: 0, incomplete: false, sales: [] });
+export function loadPnlState(json?:string):PnlState { const state=json?JSON.parse(json) as PnlState:undefined;return state?.version===2?state:initialPnlState(); }
 export type PnlFill = { token: string; amount: string; cashUsd: number | null; side: "buy" | "sell"; at: number };
 export function applyPnlFill(state: PnlState, fill: PnlFill) {
   const key = fill.token.toLowerCase(), quantity = BigInt(fill.amount);

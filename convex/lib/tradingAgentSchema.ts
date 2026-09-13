@@ -20,7 +20,7 @@ export const tradingAgentTables = {
     createdAt: v.number(), updatedAt: v.number(),
     cycleId: v.optional(v.id("tradingAgentCycles")), policyJson: v.optional(v.string()), policyVersion: v.optional(v.number()),
     phase: v.optional(v.union(v.literal("funding"), v.literal("trade"), v.literal("convert"))), pairToken: v.optional(v.string()), pairAmount: v.optional(v.string()),
-    gasSpentWei: v.optional(v.string()), outputAmount: v.optional(v.string()),
+    gasSpentWei: v.optional(v.string()), outputAmount: v.optional(v.string()), tradeUsd: v.optional(v.number()),
     tradeBucket: v.optional(v.union(v.literal("platform"), v.literal("secondary"))), tradeCounted: v.optional(v.boolean()),
   }).index("by_agent", ["agentId"]).index("by_owner_key", ["ownerXUserId", "requestKey"]).index("by_agent_state", ["agentId", "state"]).index("by_agent_created", ["agentId", "createdAt"]).index("by_state_updated", ["state", "updatedAt"]),
   tradingAgents: defineTable({

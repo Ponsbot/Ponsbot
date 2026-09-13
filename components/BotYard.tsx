@@ -32,8 +32,7 @@ export function BotYard({ bots, preview = false, onSelect, headingAction, zone: 
     {preview && <p className={styles.preview} role="status">Local design preview with example bots. No funded wallets, real thoughts, or live trades.</p>}
     <div className={styles.layout}>
       <div>
-        <nav className={styles.zoneNav} aria-label="Yard areas">{(Object.keys(yardZones) as YardZone[]).map(area => <button key={area} type="button" aria-pressed={zone === area} onClick={() => changeZone(area)}>{yardZones[area].name}{zoneCounts[area] > 0 && <span className={styles.zoneCount}>{zoneCounts[area]}</span>}</button>)}</nav>
-        <div className={styles.yard} aria-label="Bot Yard. Select a bot to view its log.">
+        <div className={styles.yard} aria-label={`${yardZones[zone].name}. Select a bot to view its log.`}>
           {zone === "center" ? <BotYardScene /> : <BotYardZoneScene zone={zone} />}
           {(Object.entries(zoneExits(zone)) as [YardDirection, YardZone][]).map(([direction, area]) => <button type="button" key={direction} className={`${styles.zoneArrow} ${styles[direction]}`} onClick={() => changeZone(area)} aria-label={`Go ${direction} to ${yardZones[area].name}`}><span aria-hidden="true">{{ north: "↑", south: "↓", east: "→", west: "←" }[direction]}</span><span className={styles.arrowName}>{yardZones[area].name}</span>{zoneCounts[area] > 0 && <span className={styles.zoneCount}>{zoneCounts[area]}</span>}</button>)}
           {visibleBots.slice(0, 24).map(bot => <WanderingBot key={`${zone}:${bot.id}`} bot={bot} selected={selectedId === bot.id}
