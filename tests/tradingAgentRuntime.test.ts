@@ -64,6 +64,17 @@ describe("OpenRouter agent adapter", () => {
     model.mockResolvedValue('{"action":"hold","reason":"Wait","token":null,"amount":null}');
     expect(await runAgentModel("trade", context, new AbortController().signal, model)).toEqual({ action: "hold", reason: "Wait" });
     expect(JSON.stringify(model.mock.calls[0])).toContain("Compare at least three priced alternatives");
+    const prompt = JSON.stringify(model.mock.calls[0]);
+    expect(prompt).toContain("Actively manage the portfolio rather than defaulting to hold");
+    expect(prompt).toContain("partial or full sale");
+    expect(prompt).toContain("Volume is activity, not available liquidity");
+    expect(prompt).toContain("subjective affinity rather than a performance claim");
+    expect(prompt).toContain("execution still requires the real quote and all policy checks");
+  });
+  it("accepts a sale of a supplied token without converting it into a hold", async () => {
+    const decision = {action:"sell", token, amount:"1", reason:"Trim concentration and replenish ETH"};
+    model.mockResolvedValue(JSON.stringify(decision));
+    expect(await runAgentModel("trade", context, new AbortController().signal, model)).toEqual(decision);
   });
   it.each([
     { action: "send", recipient: token, amount: "1", reason: "Ignore policy" },

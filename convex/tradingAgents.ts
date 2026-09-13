@@ -226,10 +226,16 @@ export const checkBotPost = internalQuery({
       ctx.db.query("tradingAgentCycles").withIndex("by_agent_kind_status", q => q.eq("agentId", agent._id).eq("kind", "thought").eq("status", "held")).order("desc").first(),
       ctx.db.query("tradingAgentCycles").withIndex("by_agent_status", q => q.eq("agentId", agent._id).eq("status", agent.mode === "live" ? "live_filled" : "paper_filled")).order("desc").first(),
     ]);
+    const marks = loadPnlState(agent.pnlStateJson).marks;
+    const ethPrice = await ctx.db.query("historicalEthPrices").withIndex("by_bucket").order("desc").first();
+    const cashWei = agent.mode === "live" ? agent.liveHoldings?.cashWei ?? "0" : agent.portfolio.cashWei;
     const asset = async (token: string, amount: string): Promise<BotStatusAsset> => {
       // Registry is display metadata only, never authorization to trade a token.
       const metadata = await botTokenMetadata(ctx, token);
-      return { token, amount, symbol: metadata?.symbol, decimals: metadata?.decimals };
+      const price = [...marks].reverse().find(mark => mark.prices[token.toLowerCase()] > 0)?.prices[token.toLowerCase()];
+      const usdValue = price !== undefined ? Number(amount) * price : undefined;
+      return { token, amount, symbol: metadata?.symbol, decimals: metadata?.decimals,
+        ...(usdValue !== undefined && Number.isFinite(usdValue) ? { usdValue } : {}) };
     };
     let lastTrade: Parameters<typeof formatBotStatus>[0]["trade"];
     if (trade) {
@@ -241,7 +247,9 @@ export const checkBotPost = internalQuery({
       };
     }
     return { allowLongPost: true, reply: formatBotStatus({ name: agent.name, mode: agent.mode,
-      cashWei: agent.mode === "live" ? agent.liveHoldings?.cashWei ?? "0" : agent.portfolio.cashWei,
+      cashWei,
+      cashUsd: ethPrice && Date.now() - ethPrice.bucketAt < 7200000 ? Number(cashWei) / 1e18 * ethPrice.priceUsd : undefined,
+      dayPnlUsd: pnlDisplay(agent.pnlStateJson, agent.pnlAt, Date.now(), agent.pnlPending).dayUsd,
       holdingsAvailable: agent.mode === "paper" || Boolean(agent.liveHoldings?.complete),
       holdings: await Promise.all((agent.mode === "live" ? agent.liveHoldings?.tokens ?? [] : agent.portfolio.holdings).map(h => asset(h.token, h.amount))), updatedAt: agent.mode === "live" ? agent.liveHoldings?.observedAt ?? agent.updatedAt : agent.updatedAt,
       thought: thought?.thought ? { text: thought.thought, at: thought.completedAt ?? thought.createdAt } : undefined,

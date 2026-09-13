@@ -25,4 +25,23 @@ describe("bot identity and status", () => {
       trade: { side: "sell", asset: { token: `0x${"1".repeat(40)}`, amount: "123" }, reason: "Taking a break", at: 0 } });
     expect(text).not.toMatch(/[@#$]/); expect(text).toContain("123 base units"); expect(text).toContain("Paper sold");
   });
+  it("shows dollar balances and signed combined 24h PNL at the bottom without timestamps", () => {
+    const text = formatBotStatus({ name: "Moss", mode: "live", cashWei: "100000000000000000", cashUsd: 250,
+      updatedAt: 1700000000000, dayPnlUsd: -10.2844,
+      holdings: [{ token: `0x${"1".repeat(40)}`, symbol: "TEST", decimals: 6, amount: "1250000", usdValue: 3.125 }],
+      thought: { text: "A new idea", at: 1700000000000 },
+      trade: { side: "sell", asset: { token: `0x${"1".repeat(40)}`, symbol: "TEST", decimals: 6, amount: "250000" }, reason: "Reducing concentration", at: 1700000000000 } });
+    expect(text).toContain("0.1 ETH ($250.00)");
+    expect(text).toContain("1.25 TEST ($3.13)");
+    expect(text).toContain("sold 0.25 TEST");
+    expect(text).not.toMatch(/UTC|2023-|checked /);
+    expect(text.endsWith("24h P&L: -$10.28")).toBe(true);
+  });
+  it("does not turn missing or invalid prices and PNL into zero", () => {
+    const text = formatBotStatus({ name: "Moss", cashWei: "0", updatedAt: 0, cashUsd: NaN, dayPnlUsd: null,
+      holdings: [{ token: `0x${"1".repeat(40)}`, symbol: "TEST", decimals: 6, amount: "1250000", usdValue: Infinity }] });
+    expect(text).not.toMatch(/NaN|Infinity|\$0\.00/);
+    expect(text.endsWith("24h P&L: Unavailable")).toBe(true);
+    expect(formatBotStatus({name:"Moss",cashWei:"0",updatedAt:0,holdings:[],dayPnlUsd:0})).toContain("24h P&L: $0.00");
+  });
 });
