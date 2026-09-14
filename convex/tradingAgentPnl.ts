@@ -108,6 +108,25 @@ export const tick=internalAction({args:{},handler:async ctx=>{
           if(a?.address && tokens.includes(a.address.toLowerCase()) && Number.isInteger(decimals) && decimals!>=0 && decimals!<=255 && price>0 && Number.isFinite(price)) prices[a.address.toLowerCase()]=price/10**decimals!;
         }
       }
+      // The detail endpoint can omit a token supported by the trading-price
+      // endpoint (including inactive-source assets). Recover only missing prices;
+      // never overwrite a fresh detail price or infer price from purchase cost.
+      const missing = tokens.filter(token => !prices[token]);
+      if (missing.length) {
+        try {
+          const marketUrl = new URL(base.toString().replace(/live-balances$/, "markets"));
+          const fallback = await fetch(marketUrl, {method:"POST",headers:{authorization:`Bearer ${process.env.WALLET_SIGNER_TOKEN}`,"content-type":"application/json"},
+            body:JSON.stringify({tokens:missing}),signal:AbortSignal.timeout(45000)});
+          if(fallback.ok) {
+            const data=z.object({tokens:z.array(z.object({address:z.string(),decimals:z.number().int().min(0).max(255),priceUsd:z.number().positive().finite().optional(),priceObservedAt:z.number().optional()}))}).parse(await fallback.json());
+            for(const token of data.tokens) {
+              const address=token.address.toLowerCase(), observed=token.priceObservedAt;
+              if(missing.includes(address) && token.priceUsd && observed!==undefined && observed<=Date.now()+30000 && Date.now()-observed<=300000)
+                prices[address]=token.priceUsd/10**token.decimals;
+            }
+          }
+        } catch { /* Missing values remain unknown, never zero. Retry next cycle. */ }
+      }
       markUnrealized(state,prices,now,Object.fromEntries(snapshot.tokens.map(t=>[t.token.toLowerCase(),t.amount])));
     } catch { pending=true; }
   }

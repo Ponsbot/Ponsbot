@@ -7,6 +7,19 @@ vi.mock('../lib/gecko-shared',()=>({geckoSharedFetch:vi.fn()}));
 const invoke=(fn:unknown,ctx:unknown,args:unknown)=>(fn as {_handler:(ctx:unknown,args:unknown)=>Promise<unknown>})._handler(ctx,args);
 afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs();});
 function enable(){vi.stubEnv("TRADING_AGENTS_ENABLED","true");vi.stubEnv("TRADING_AGENTS_WEBSITE_ENABLED","true");vi.stubEnv("WALLET_SIGNER_TOKEN","test-secret");vi.stubEnv("NEXT_PUBLIC_SITE_URL","https://example.com");}
+it.each([false,true])("recovers an omitted detail price only with a fresh independently priced fallback (stale=%s)",async(stale)=>{
+  enable();const now=Date.now(),token="0x1111111111111111111111111111111111111111",state=initialPnlState();
+  state.lots[token]={amount:"1000000000000000000",costUsd:2};state.open=[{token,amount:"1000000000000000000",costUsd:2,at:now-1000}];
+  const fetch=vi.fn(async(url:URL)=>({ok:true,json:async()=>url.pathname.endsWith("markets")?{tokens:[{address:token,decimals:18,priceUsd:3,priceObservedAt:now-(stale?3600000:0)}]}:{complete:true,observedAt:now,tokens:[{token,amount:"1000000000000000000"}]}}));
+  vi.stubGlobal("fetch",fetch);
+  vi.mocked(geckoSharedFetch).mockResolvedValue(new Response(JSON.stringify({data:[]})));
+  const runMutation=vi.fn(async(ref:Parameters<typeof getFunctionName>[0])=>getFunctionName(ref).endsWith(":lease")?{id:"agent",walletAddress:token,stateJson:JSON.stringify(state),jobs:[]}:true);
+  await invoke(tick,{runMutation},{});
+  const args=(runMutation.mock.calls.at(-1) as unknown as [unknown,{stateJson:string}])[1];
+  expect(JSON.parse(args.stateJson).total).toMatchObject({dayUsd:stale?null:1,lifetimeUsd:stale?null:1});
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch.mock.calls[1][0].pathname).toBe("/api/wallet-signer/v1/agents/markets");
+});
 it("does not count a large incoming ETH balance as realized or unrealized profit",async()=>{
   enable(); const now=Date.now();
   vi.stubGlobal("fetch",vi.fn(async()=>({ok:true,json:async()=>({cashWei:"100000000000000000000",complete:true,observedAt:now,tokens:[]})})));
