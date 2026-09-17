@@ -99,6 +99,7 @@ export const tick=internalAction({args:{},handler:async ctx=>{
       const prices:Record<string,number>={};
       // Token detail prices, not the simple endpoint's potentially stale inactive-source price.
       for(let i=0;i<tokens.length;i+=30) {
+        try {
         const market=await geckoSharedFetch(`https://api.geckoterminal.com/api/v2/networks/robinhood/tokens/multi/${tokens.slice(i,i+30).join(',')}`,60000,8000,true,false);
         const observed=Number(market.headers.get('x-market-observed-at'))||Date.now();
         if(!market.ok || observed>now+30000 || now-observed>300000) throw new Error('PNL_PRICE_STALE');
@@ -107,6 +108,7 @@ export const tick=internalAction({args:{},handler:async ctx=>{
           const a=row.attributes,price=Number(a?.price_usd),decimals=a?.decimals;
           if(a?.address && tokens.includes(a.address.toLowerCase()) && Number.isInteger(decimals) && decimals!>=0 && decimals!<=255 && price>0 && Number.isFinite(price)) prices[a.address.toLowerCase()]=price/10**decimals!;
         }
+        } catch { /* A failed detail batch must still reach the independent fallback. */ }
       }
       // The detail endpoint can omit a token supported by the trading-price
       // endpoint (including inactive-source assets). Recover only missing prices;
@@ -127,7 +129,19 @@ export const tick=internalAction({args:{},handler:async ctx=>{
           }
         } catch { /* Missing values remain unknown, never zero. Retry next cycle. */ }
       }
-      markUnrealized(state,prices,now,Object.fromEntries(snapshot.tokens.map(t=>[t.token.toLowerCase(),t.amount])));
+      const balances=Object.fromEntries(snapshot.tokens.map(t=>[t.token.toLowerCase(),t.amount]));
+      const previous=state.total;
+      markUnrealized(state,prices,now,balances);
+      const missingHeldPrice=Object.entries(balances).some(([token,amount])=>BigInt(amount)>0n && !prices[token]);
+      if(missingHeldPrice) {
+        pending=true;
+        // Keep an explicitly dated, recent valuation through a transient price outage.
+        // Never carry it across an accounting change or unexplained token transfer.
+        const priorState=loadPnlState(work.stateJson);
+        const unchanged=state.cursor===priorState.cursor && Object.entries({...state.lots,...balances}).every(([token])=>BigInt(balances[token]??'0')===BigInt(state.lots[token]?.amount??'0'));
+        if(unchanged && previous && previous.at<=now && now-previous.at<=900000)
+          state.total=previous;
+      }
     } catch { pending=true; }
   }
   await ctx.runMutation(makeFunctionReference<"mutation">("tradingAgentPnl:save"),{agentId:work.id,...(work.stateJson?{expected:work.stateJson}:{}),stateJson:JSON.stringify(state),pending,tradeValues});

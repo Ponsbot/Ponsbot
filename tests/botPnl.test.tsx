@@ -5,6 +5,12 @@ import { applyPnlFill, initialPnlState, loadPnlState, markUnrealized, pnlDisplay
 import { BotPnl } from "../components/BotPnl";
 vi.stubGlobal("React",React);
 const token="0x1111111111111111111111111111111111111111", now=200000000;
+it("keeps a recent verified PNL visible during refresh but not indefinitely",()=>{
+  const pnl={dayUsd:1,lifetimeUsd:2,at:Date.now()-60000,pending:true};
+  expect(renderToStaticMarkup(<BotPnl pnl={pnl}/>)).toContain("+$2.00");
+  expect(renderToStaticMarkup(<BotPnl pnl={pnl}/>)).toContain("last verified valuation");
+  expect(renderToStaticMarkup(<BotPnl pnl={{...pnl,at:Date.now()-1000000}}/>)).not.toContain("+$2.00");
+});
 describe("realized bot trading P&L",()=>{
   it("never values incoming tokens as profit, including gifts of an already purchased token",()=>{
     for(const sameToken of [true,false]) {
