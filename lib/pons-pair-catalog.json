@@ -64,5 +64,7 @@
   { "address": "0xF53F66751B1Eff985311b693531E3290F600c410", "symbol": "SHOP", "name": "Shopify", "route": { "kind": "v4", "fee": 50000, "tickSpacing": 500, "hook": "0x0000000000000000000000000000000000000000" } },
   { "address": "0x822CC93fFD030293E9842c30BBD678F530701867", "symbol": "BE", "name": "Bloom Energy", "route": { "kind": "v3", "fee": 3000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
   { "address": "0x25C288E6D899b9BC30160965aD9644c67e73bE0C", "symbol": "F", "name": "Ford Motor", "route": { "kind": "v4", "fee": 50000, "tickSpacing": 500, "hook": "0x0000000000000000000000000000000000000000" } },
-  { "address": "0xf3081494B87e8D5fb7960f066E931D1D0e6E3d67", "symbol": "TAO", "name": "Bittensor", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } }
+  { "address": "0xf3081494B87e8D5fb7960f066E931D1D0e6E3d67", "symbol": "TAO", "name": "Bittensor", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
+  { "address": "0xaa07a0e9209e16ac99708c3ec70159c6ef3128a3", "symbol": "ORBIO", "name": "Orbio.so", "decimals": 18, "route": { "kind": "v4", "fee": 9000, "tickSpacing": 90, "hook": "0x0000000000000000000000000000000000000000" } },
+  { "address": "0xab093def657f15df31b33922a95e047add645b29", "symbol": "SHROOM", "name": "MUSHROOM", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } }
 ]

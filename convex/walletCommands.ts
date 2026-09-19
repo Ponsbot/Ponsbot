@@ -65,6 +65,8 @@ const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ["Red Cat Holdings", "RCAT"], ["Lockheed", "LMT"], ["Rocket Lab Corporation", "RKLB"],
   ["iShares MSCI South Korea fund", "EWY"], ["South Korea ETF", "EWY"],
   ["Bittensor", "TAO"], ["TAO", "TAO"],
+  ["Orbio.so", "ORBIO"], ["Orbio", "ORBIO"], ["ORBIO", "ORBIO"],
+  ["Mushroom", "SHROOM"], ["SHROOM", "SHROOM"],
   ["United Parcel Service", "UPS"], ["UPS", "UPS"],
   ["Snap Inc", "SNAP"], ["Snap", "SNAP"], ["Snapchat", "SNAP"],
   ["Lululemon Athletica", "LULU"], ["Lululemon", "LULU"],
