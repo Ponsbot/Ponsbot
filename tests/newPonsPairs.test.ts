@@ -3,12 +3,13 @@ import { PONS_PAIR_CATALOG, PUBLISHED_PAIR_SYMBOLS } from "../lib/pair-catalog";
 import { knownLaunchPairTicker, parseWalletCommand } from "../convex/walletCommands";
 import { AUTOMATED_FEE_PAIR_ROUTES } from "../lib/automated-fee-pair-routes";
 
-const additions = ["AMC", "SGOV", "BABA", "INDA", "IBM", "NFLX", "BULL", "NU", "SLV", "SHOP", "BE", "F", "TAO", "ORBIO", "SHROOM"];
+const additions = ["AMC", "SGOV", "BABA", "INDA", "IBM", "NFLX", "BULL", "NU", "SLV", "SHOP", "BE", "F", "TAO", "ORBIO", "SHROOM", "INDEX"];
 
 describe("new Pons quote assets", () => {
   it.each([
     ["ORBIO", "Orbio.so", "0xaa07a0e9209e16ac99708c3ec70159c6ef3128a3", "v4", 9000],
     ["SHROOM", "Mushroom", "0xab093def657f15df31b33922a95e047add645b29", "v3", 10000],
+    ["INDEX", "The Index", "0x56910d4409f3a0c78c64dd8d0545ff0705389870", "v3", 10000],
   ])("supports verified non-catalog %s in paired launches and fee routes", (symbol, name, address, kind, fee) => {
     expect(PONS_PAIR_CATALOG.find(([,s])=>s===symbol)?.[0]).toBe(address);
     for(const identifier of [symbol, "$"+symbol, String(name).toLowerCase()])
@@ -24,6 +25,7 @@ describe("new Pons quote assets", () => {
   it.each([
     ["Orbio.so", "ORBIO"], ["orBIO", "ORBIO"], ["$ORBIO", "ORBIO"],
     ["Mushroom", "SHROOM"], ["shroom", "SHROOM"], ["$SHROOM", "SHROOM"],
+    ["The Index", "INDEX"], ["Index", "INDEX"], ["index", "INDEX"], ["$Index", "INDEX"],
     ["Bittensor", "TAO"], ["bittensor", "TAO"], ["tao", "TAO"], ["$TAO", "TAO"],
     ["Alibaba", "BABA"], ["Ford", "F"], ["iShares Silver Trust", "SLV"],
     ["iShares MSCI India ETF", "INDA"], ["Webull", "BULL"], ["Bloom Energy", "BE"],
