@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { backgroundInterval } from "../lib/background-cadence";
 import { makeFunctionReference } from "convex/server";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
@@ -37,7 +38,7 @@ export const save = internalMutation({args:{agentId:v.id("tradingAgents"),expect
     if(!job || job.agentId!==args.agentId || job.state==="active" || !Number.isFinite(value.usd) || value.usd<0) throw new Error("PNL_DISPLAY_VALUE_INVALID");
     await ctx.db.patch(job._id,{tradeUsd:value.usd});
   }
-  await ctx.db.patch(agent._id,{pnlStateJson:args.stateJson,pnlAt:Date.now(),pnlPending:args.pending,pnlNextAt:Date.now()+(args.pending?60000:300000)});
+  await ctx.db.patch(agent._id,{pnlStateJson:args.stateJson,pnlAt:Date.now(),pnlPending:args.pending,pnlNextAt:Date.now()+backgroundInterval(args.pending?60000:300000)});
   return true;
 }});
 const auditSchema=z.object({fill:z.object({token:z.string().regex(/^0x[0-9a-f]{40}$/),side:z.enum(["buy","sell"]),amount:z.string().regex(/^[1-9]\d*$/),at:z.number().positive(),cashWei:z.string().regex(/^\d+$/).nullable()}).nullable()});

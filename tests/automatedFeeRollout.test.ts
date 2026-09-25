@@ -121,12 +121,12 @@ describe("economic fee queue", () => {
   });
   it("retroactively accelerates a recent launch and reserves only one worker", async () => {
     const ctx = fixture(), p = ctx.rows.automatedFeePrograms[0], now = Date.now();
-    const createdAt = now - 35 * 60_000;
+    const createdAt = now - 55 * 60_000;
     Object.assign(ctx.rows.tokenLaunches[0], { publicPublished: true, createdAt });
-    Object.assign(p, { enrolledAt: createdAt, workState: "idle", lastCheckedAt: now - 20 * 60_000, nextProcessAt: now + 25 * 60_000 });
+    Object.assign(p, { enrolledAt: createdAt, workState: "idle", lastCheckedAt: now - 40 * 60_000, nextProcessAt: now + 25 * 60_000 });
     expect(await handler(feeQueue.dispatch)(ctx, {})).toMatchObject({ dispatched: 1 });
     expect(p.launchCreatedAt).toBe(createdAt);
-    expect(p.nextProcessAt).toBe(createdAt + 40 * 60_000);
+    expect(p.nextProcessAt).toBe(createdAt + 100 * 60_000);
     expect(await handler(feeQueue.dispatch)(ctx, {})).toMatchObject({ dispatched: 0 });
     expect(ctx.scheduled.filter((s: any) => s.name === "automatedFeeEngine:processProgram")).toHaveLength(1);
   });

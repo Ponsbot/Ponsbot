@@ -1,9 +1,12 @@
 import { cronJobs, makeFunctionReference } from "convex/server";
 import { internal } from "./_generated/api";
+import { backgroundInterval } from "../lib/background-cadence";
+
+const background = (minutes: number) => ({ seconds: backgroundInterval(minutes * 60) });
 
 const crons = cronJobs();
 crons.interval("save canonical bot yard positions", { seconds: 10 }, makeFunctionReference<"mutation">("tradingAgentPositions:tick"));
-crons.interval("reconcile bot trading pnl", { minutes: 1 }, makeFunctionReference<"action">("tradingAgentPnl:tick"));
+crons.interval("reconcile bot trading pnl", background(1), makeFunctionReference<"action">("tradingAgentPnl:tick"));
 // No provider calls or worker starts until both scheduler and paper flags are enabled.
 crons.interval("run staged bot yard workers", { minutes: 1 }, makeFunctionReference<"action">("tradingAgentRuntime:tick"));
 crons.interval("recover poll snapshots and close voting", { minutes: 1 }, internal.polls.recover);
@@ -14,29 +17,30 @@ crons.interval("poll direct X mentions", { minutes: 1 }, internal.xReplies.pollM
 crons.interval("recover queued X publications", { minutes: 1 }, internal.xReplyQueue.kick);
 crons.interval("recover interrupted X interactions", { minutes: 5 }, internal.xReplies.recoverStaleInteractions);
 crons.interval("recover Telegram wallet result delivery", { minutes: 1 }, internal.telegramDeliveries.recover);
-crons.interval("monitor recent token graduations", { minutes: 1 }, internal.graduationAnnouncements.monitorGraduations);
+crons.interval("monitor recent token graduations", background(1), internal.graduationAnnouncements.monitorGraduations);
 crons.interval("maintain registry migrations", { hours: 1 }, internal.registry.ensureInitialized);
-crons.interval("refresh public platform statistics", { hours: 1 }, internal.site.refreshPlatformStatsCache);
-crons.interval("value creator fees at historical ETH prices", { hours: 1 }, internal.creatorFeeHistory.refresh);
-crons.interval("refresh lifetime trading volume", { hours: 3 }, internal.lifetimeVolume.requestRefresh);
+crons.interval("refresh public platform statistics", background(60), internal.site.refreshPlatformStatsCache);
+crons.interval("value creator fees at historical ETH prices", background(60), internal.creatorFeeHistory.refresh);
+crons.interval("refresh lifetime trading volume", background(180), internal.lifetimeVolume.requestRefresh);
 crons.interval("clean market viewer rate limits", { hours: 1 }, internal.site.cleanupMarketViewerRateLimits);
 crons.interval("clean expired website market cache", { hours: 1 }, internal.marketData.cleanup);
-crons.interval("reconcile CoinGecko account usage", { hours: 6 }, internal.marketData.syncCoinGeckoUsage);
+crons.interval("reconcile CoinGecko account usage", background(360), internal.marketData.syncCoinGeckoUsage);
 crons.interval("reconcile interrupted Houdini x402 audits", { minutes: 5 }, internal.site.reconcileStaleHoudiniX402Payments);
 crons.interval("reconcile interrupted X Houdini swaps", { minutes: 1 }, internal.xHoudini.reconcileInterrupted);
 crons.interval("reconcile free launch sponsorships", { minutes: 1 }, internal.wallets.reconcileFreeLaunchSponsorships);
 // The action exits without reading or writing state unless the unreleased
 // automated fee engine is explicitly enabled and fully configured.
-// Wake/recover each minute: 10m cadence for launches under four hours, hourly afterward.
+// Wake/recover each minute, but routine assessment is 50m for new launches,
+// five-hourly afterward. Pending transactions keep the existing recovery speed.
 crons.interval("process automated creator fees", { minutes: 1 }, internal.automatedFeeEngine.runScheduledProcessing);
 crons.interval("process optional creator self buybacks", { minutes: 1 }, internal.creatorBurnEngine.tick);
 crons.interval("recover automated fee enrollments", { minutes: 1 }, internal.automatedFeeEngine.recoverPreparedEnrollments);
 crons.interval("recover automated fee controller changes", { minutes: 1 }, internal.automatedFeeEngine.recoverControllerChanges);
-crons.interval("monitor automated fee health", { minutes: 5 }, internal.automatedFeeEngine.monitorOperationalHealth);
+crons.interval("monitor automated fee health", background(5), internal.automatedFeeEngine.monitorOperationalHealth);
 crons.interval("expire automated fee enrollment reservations", { hours: 1 }, internal.automatedFeeEngine.expirePrelaunchEnrollments);
 
 crons.interval("recover liquidity executions", { minutes: 1 }, internal.liquidity.recoverExecutions);
-crons.interval("monitor liquidity health", { minutes: 5 }, internal.liquidity.monitorHealth);
+crons.interval("monitor liquidity health", background(5), internal.liquidity.monitorHealth);
 
 crons.interval("recover owner bot transactions", { minutes: 1 }, makeFunctionReference<"mutation">("tradingAgentExecution:tick"));
 export default crons;

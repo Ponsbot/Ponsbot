@@ -1,12 +1,13 @@
 import { encodeAbiParameters, keccak256, type Address } from "viem";
+import { backgroundInterval } from "./background-cadence";
 
 export const HOUR_MS = 60 * 60_000;
 // Lifetime volume is a cumulative statistic, not a live trading surface. A
-// six-hour cadence and small recent pages keep it accurate without making a
+// twenty-hour cadence and adaptive recent pages keep it accurate without making a
 // full OHLCV request for every source every hour.
-export const LIFETIME_VOLUME_REFRESH_MS = 6 * HOUR_MS;
-export const LIFETIME_VOLUME_DISCOVERY_MS = 6 * HOUR_MS;
-export const LIFETIME_VOLUME_BACKFILL_MS = 30 * 60_000;
+export const LIFETIME_VOLUME_REFRESH_MS = backgroundInterval(6 * HOUR_MS);
+export const LIFETIME_VOLUME_DISCOVERY_MS = backgroundInterval(6 * HOUR_MS);
+export const LIFETIME_VOLUME_BACKFILL_MS = backgroundInterval(30 * 60_000);
 export const LIFETIME_VOLUME_RECENT_CANDLE_LIMIT = 8;
 export const LIFETIME_VOLUME_HISTORICAL_CANDLE_LIMIT = 1_000;
 export const LIFETIME_VOLUME_BATCH_LIMIT = 12;

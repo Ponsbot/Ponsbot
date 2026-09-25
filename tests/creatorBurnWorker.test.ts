@@ -140,7 +140,7 @@ describe("history recovery", () => {
     expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"first"})).not.toBeNull();
     expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"second"})).toBeNull();
     expect(await handler(worker.finishHistoryScan)(f.ctx,{layerId:"l",leaseId:"wrong",failed:true})).toBeNull();
-    expect(await handler(worker.finishHistoryScan)(f.ctx,{layerId:"l",leaseId:"first",failed:true})).toBe(300000);
+    expect(await handler(worker.finishHistoryScan)(f.ctx,{layerId:"l",leaseId:"first",failed:true})).toBe(1200000);
     expect(f.layer.historyNextBlock).toBeUndefined();
     expect(f.layer.historyDiagnostic).toBe("CREATOR_BURN_HISTORY_READ_RETRY");
     expect(await handler(worker.claimHistoryScan)(f.ctx,{layerId:"l",leaseId:"third"})).toBeNull();
@@ -152,11 +152,19 @@ describe("history recovery", () => {
     expect(f.layer.historyLeaseId).toBeUndefined();
     expect(f.layer.historyFailures).toBe(1);
     expect(f.ctx.scheduler.runAfter).toHaveBeenCalledTimes(1);
-    expect(f.ctx.scheduler.runAfter.mock.calls[0][0]).toBe(300000);
+    expect(f.ctx.scheduler.runAfter.mock.calls[0][0]).toBe(1200000);
     expect(f.mutations).not.toContain("saveHistoryCursor");
   });
 });
 describe("creator layer durable worker", () => {
+  it("checks an idle layer only after five hours", async () => {
+    vi.stubEnv("CREATOR_SELF_BUYBACK_ENABLED", "true");
+    const f = fixture();
+    const before = Date.now();
+    await f.run();
+    expect(f.layer.nextCheckAt).toBeGreaterThanOrEqual(before + 5 * 60 * 60_000);
+    expect(f.layer.pending).toBeUndefined();
+  });
   it("makes no provider calls when disabled and no transaction exists", async () => {
     const f = fixture();
     await f.run();

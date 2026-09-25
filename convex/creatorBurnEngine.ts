@@ -13,6 +13,7 @@ import { redactSignerDiagnostic } from "../lib/signer-diagnostics";
 import { automatedFeeControllerTransactionMayExist } from "../lib/automated-fee-workflow";
 import { isAutomatedFeeWorkflowContinuation } from "../lib/automated-fee-workflow";
 import { creatorBurnPercentageBps } from "../lib/creator-burn-policy";
+import { CREATOR_BURN_CHECK_MS, CREATOR_BURN_HISTORY_MS } from "../lib/background-cadence";
 
 const MINUTE = 60_000;
 const eventValidator = v.object({
@@ -717,7 +718,7 @@ export const run = internalAction({
         )
           choice = { stage: "collect", beneficiary: current.owner };
         if (!choice) {
-          delay = context.nextCursor ? MINUTE : 15 * MINUTE;
+          delay = context.nextCursor ? MINUTE : CREATOR_BURN_CHECK_MS;
           return;
         }
         pending = await ctx.runMutation(internal.creatorBurnEngine.reserve, {
@@ -859,7 +860,7 @@ export const finishHistoryScan = internalMutation({
     const layer=await ctx.db.get(a.layerId);
     if(!layer || layer.historyLeaseId!==a.leaseId) return null;
     const failures=a.failed?(layer.historyFailures ?? 0)+1:0;
-    const delay=a.failed?Math.min(60,5*2**Math.min(failures-1,4))*MINUTE:0;
+    const delay=a.failed?Math.max(CREATOR_BURN_HISTORY_MS,Math.min(60,5*2**Math.min(failures-1,4))*MINUTE):CREATOR_BURN_HISTORY_MS;
     await ctx.db.patch(layer._id,{historyLeaseId:undefined,historyLeaseUntil:undefined,
       historyFailures:failures,historyRetryAt:Date.now()+delay,
       historyDiagnostic:a.failed?"CREATOR_BURN_HISTORY_READ_RETRY":undefined});

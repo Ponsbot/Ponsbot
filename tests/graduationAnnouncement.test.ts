@@ -14,8 +14,8 @@ describe("graduation announcements", () => {
 
   it("backs inactive graduation checks off as a launch ages", () => {
     const now = 2_000_000_000;
-    expect(graduationNextCheckAt(now - 30 * 60_000, now)).toBe(now + 2 * 60_000);
-    expect(graduationNextCheckAt(now - 3 * 60 * 60_000, now)).toBe(now + 10 * 60_000);
-    expect(graduationNextCheckAt(now - 2 * 24 * 60 * 60_000, now)).toBe(now + 60 * 60_000);
+    expect(graduationNextCheckAt(now - 30 * 60_000, now)).toBe(now + 400_000);
+    expect(graduationNextCheckAt(now - 3 * 60 * 60_000, now)).toBe(now + 2_000_000);
+    expect(graduationNextCheckAt(now - 2 * 24 * 60 * 60_000, now)).toBe(now + 12_000_000);
   });
 });

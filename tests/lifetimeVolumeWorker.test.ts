@@ -83,19 +83,19 @@ describe("one durable volume worker", () => {
       await expect(f.call("repairMissingCurveHistory", args)).rejects.toThrow("curve changed");
     } finally { vi.unstubAllEnvs(); }
   });
-  it("yields for a minute on local budget denial without escalating provider throttling", async () => {
+  it("honors reduced batch spacing on local budget denial without escalating provider throttling", async () => {
     const f = fixture(); await f.add(1); const work = await f.begin();
     await f.db.patch(f.state()._id, { throttleCount: 26, discoveryAt: start });
     await f.call("finishBatch", { leaseToken: work.leaseToken, checked: 0, throttled: false, budgetDeferred: true, retryAfterMs: 60_000 });
     expect(f.state().throttleCount).toBe(0);
     expect(f.state().lastError).toBeUndefined();
     expect(f.pending()).toHaveLength(1);
-    expect(f.pending()[0].at).toBe(start + 60_000);
+    expect(f.pending()[0].at).toBe(start + 290_000);
   });
   it("uses a sparse cumulative-stat cadence and bounded batches", () => {
-    expect(LIFETIME_VOLUME_REFRESH_MS).toBe(6 * HOUR_MS);
-    expect(LIFETIME_VOLUME_DISCOVERY_MS).toBe(6 * HOUR_MS);
-    expect(LIFETIME_VOLUME_BACKFILL_MS).toBe(30 * 60_000);
+    expect(LIFETIME_VOLUME_REFRESH_MS).toBe(20 * HOUR_MS);
+    expect(LIFETIME_VOLUME_DISCOVERY_MS).toBe(20 * HOUR_MS);
+    expect(LIFETIME_VOLUME_BACKFILL_MS).toBe(100 * 60_000);
     expect(LIFETIME_VOLUME_RECENT_CANDLE_LIMIT).toBe(8);
     expect(LIFETIME_VOLUME_BATCH_LIMIT).toBe(12);
   });

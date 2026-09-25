@@ -30,6 +30,8 @@ const NETWORK = "robinhood";
 // Keep this well below GeckoTerminal's keyless ceiling because homepage and
 // token-page market reads share the deployment's outbound IP and allowance.
 const REQUEST_SPACING_MS = 10_000;
+// Slow throughput between batches, not inside the five-minute worker lease.
+const CONTINUATION_SPACING_MS = 290_000;
 const CURVE_FINALIZATION_GRACE_MS = 2 * HOUR_MS;
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 const factoryAbi = parseAbi([
@@ -566,7 +568,7 @@ export const finishBatch = internalMutation({
       : args.budgetDeferred ? now + Math.max(60_000, args.retryAfterMs ?? 0) : args.error ? now + 5 * 60_000 : 0;
     const first = await ctx.db.query("tokenLifetimeVolumes").withIndex("by_enabled_due", q => q.eq("enabled", true)).first();
     const nextDiscovery = (state.discoveryAt ?? 0) + LIFETIME_VOLUME_DISCOVERY_MS;
-    const nextAt = Math.max(now + REQUEST_SPACING_MS, blockedUntil, Math.min(first?.nextCheckAt ?? nextDiscovery, nextDiscovery));
+    const nextAt = Math.max(now + CONTINUATION_SPACING_MS, blockedUntil, Math.min(first?.nextCheckAt ?? nextDiscovery, nextDiscovery));
     await ctx.db.patch(state._id, {
       leaseToken: undefined, leaseUntil: undefined, blockedUntil, throttleCount,
       lastCompletedAt: now, lastError: args.error ?? (args.throttled ? "Gecko OHLCV throttled" : undefined), updatedAt: now,

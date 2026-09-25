@@ -1,6 +1,6 @@
 export const FEE_ACCUMULATION_THRESHOLD_WEI = 7_000_000_000_000_000n;
-export const FEE_CHECK_INTERVAL_MS = 60 * 60_000;
-export const NEW_LAUNCH_FEE_INTERVAL_MS = 10 * 60_000;
+export const FEE_CHECK_INTERVAL_MS = 5 * 60 * 60_000;
+export const NEW_LAUNCH_FEE_INTERVAL_MS = 50 * 60_000;
 export const NEW_LAUNCH_FEE_WINDOW_MS = 4 * 60 * 60_000;
 export const FEE_WORKERS = 4;
 export const FEE_WORK_LEASE_MS = 5 * 60_000;
