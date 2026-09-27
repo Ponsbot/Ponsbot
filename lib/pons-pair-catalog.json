@@ -67,5 +67,7 @@
   { "address": "0xf3081494B87e8D5fb7960f066E931D1D0e6E3d67", "symbol": "TAO", "name": "Bittensor", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
   { "address": "0xaa07a0e9209e16ac99708c3ec70159c6ef3128a3", "symbol": "ORBIO", "name": "Orbio.so", "decimals": 18, "route": { "kind": "v4", "fee": 9000, "tickSpacing": 90, "hook": "0x0000000000000000000000000000000000000000" } },
   { "address": "0xab093def657f15df31b33922a95e047add645b29", "symbol": "SHROOM", "name": "MUSHROOM", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
-  { "address": "0x56910d4409f3a0c78c64dd8d0545ff0705389870", "symbol": "INDEX", "name": "The Index", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } }
+  { "address": "0x56910d4409f3a0c78c64dd8d0545ff0705389870", "symbol": "INDEX", "name": "The Index", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
+  { "address": "0x07ebb29a38fbcb41563817e5e19f2cec619c90d2", "symbol": "BUN", "name": "Bundle Cat", "decimals": 18, "route": { "kind": "v3", "fee": 10000, "tickSpacing": 0, "hook": "0x0000000000000000000000000000000000000000" } },
+  { "address": "0x63c12667638f2ae6fc6ae09b43d98ec84a8586ea", "symbol": "wsNET", "name": "Wrapped Staked NET", "decimals": 18 }
 ]

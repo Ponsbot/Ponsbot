@@ -68,6 +68,8 @@ const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
   ["Orbio.so", "ORBIO"], ["Orbio", "ORBIO"], ["ORBIO", "ORBIO"],
   ["Mushroom", "SHROOM"], ["SHROOM", "SHROOM"],
   ["The Index", "INDEX"], ["Index", "INDEX"],
+  ["Bundle Cat", "BUN"], ["BUN", "BUN"],
+  ["Wrapped Staked NET", "wsNET"], ["wsNET", "wsNET"],
   ["United Parcel Service", "UPS"], ["UPS", "UPS"],
   ["Snap Inc", "SNAP"], ["Snap", "SNAP"], ["Snapchat", "SNAP"],
   ["Lululemon Athletica", "LULU"], ["Lululemon", "LULU"],
