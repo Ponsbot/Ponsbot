@@ -13,6 +13,7 @@ import { agentMarketsSchema } from "../lib/trading-agents/market";
 import type { AgentMarketContext } from "../lib/trading-agents/eliza-bridge";
 import { z } from "zod";
 import { loadPnlState } from "../lib/trading-agents/pnl";
+import { agentFailureCode } from "../lib/trading-agents/diagnostics";
 
 const snapshotSchema = z.object({ cashWei: units, tokens: z.array(z.object({ token: z.string().regex(/^0x[0-9a-f]{40}$/), amount: units })).max(100), observedAt: z.number().int().positive(), complete: z.boolean() }).strict();
 type Lease = { agent: Doc<"tradingAgents">; cycleId: Id<"tradingAgentCycles">; kind: "thought" | "trade" };
@@ -43,7 +44,7 @@ export const lease = internalMutation({
   },
 });
 export const complete = internalMutation({
-  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()), ethUsd: v.optional(v.number()) },
+  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()), failureCode: v.optional(v.string()), ethUsd: v.optional(v.number()) },
   handler: async (ctx, args) => {
     if (!tradingAgentCapabilities().liveTrading) throw new Error("LIVE_DISABLED");
     if (args.resultJson.length > 3000 || (args.snapshotJson?.length ?? 0) > 20000) throw new Error("PAYLOAD_TOO_LARGE");
@@ -53,8 +54,9 @@ export const complete = internalMutation({
     const agent = await ctx.db.get(cycle.agentId), now = Date.now();
     if (!agent || agent.mode !== "live" || agent.status !== "running" || agent.activeCycleId !== cycle._id || agent.policyVersion !== cycle.policyVersion || cycle.leaseUntil <= now) throw new Error("STALE_CYCLE");
     let status: "held" | "executing" | "rejected" = "held", executionId: Id<"tradingAgentExecutions"> | undefined, thought: string | undefined, decisionJson: string | undefined;
+    let diagnosticCode: string | undefined;
     try {
-      if (args.failed) throw new Error("LIVE_CHECK_FAILED");
+      if (args.failed) throw new Error(args.failureCode ?? "LIVE_CHECK_FAILED");
       if (cycle.kind === "thought") {
         thought = botThoughtSchema.parse(JSON.parse(args.resultJson)).thought;
         if (args.snapshotJson) {
@@ -87,9 +89,9 @@ export const complete = internalMutation({
           status = "executing";
         }
       }
-    } catch (error) { if (executionId) throw error; status = "rejected"; }
+    } catch (error) { if (executionId) throw error; status = "rejected"; diagnosticCode = agentFailureCode(error); }
     const schedule = advanceYardSchedule(agent.schedule ?? initialYardSchedule(now), cycle.kind ?? "trade", now);
-    await ctx.db.patch(cycle._id, { status, thought, decisionJson, ...(executionId ? { executionId } : {}), completedAt: now, ...(status === "rejected" ? { diagnosticCode: "LIVE_CHECK_OR_POLICY_FAILED" } : {}) });
+    await ctx.db.patch(cycle._id, { status, thought, decisionJson, ...(executionId ? { executionId } : {}), completedAt: now, ...(diagnosticCode ? { diagnosticCode } : {}) });
     await ctx.db.patch(agent._id, { activeCycleId: undefined, schedule, nextRunAt: Math.min(schedule.nextThoughtAt, schedule.nextTradeAt), updatedAt: now });
     return executionId ?? null;
   },
@@ -102,8 +104,8 @@ export const work = internalAction({
     const current = await ctx.runMutation(makeFunctionReference<"mutation", { leaseToken: string }, Lease | null>("tradingAgentLive:lease"), { leaseToken });
     if (!current) return;
     let ethUsd: number | undefined;
-    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean; ethUsd?: number }>("tradingAgentLive:complete"), {
-      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), ...(ethUsd ? { ethUsd } : {}), failed,
+    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false, failureCode?: string) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean; failureCode?: string; ethUsd?: number }>("tradingAgentLive:complete"), {
+      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), ...(ethUsd ? { ethUsd } : {}), failed, ...(failureCode ? { failureCode } : {}),
     });
     try {
       const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"]; yard: AgentMarketContext["yard"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
@@ -146,7 +148,7 @@ export const work = internalAction({
         finalSnapshot = snapshotSchema.parse(await refreshed.json());
       }
       await finish(JSON.stringify(result), finalSnapshot);
-    } catch { await finish("{}", undefined, true); }
+    } catch (error) { await finish("{}", undefined, true, agentFailureCode(error)); }
   },
 });
 

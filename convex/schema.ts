@@ -1231,6 +1231,8 @@ export default defineSchema({
     .index("by_retention_expires_at", ["retentionExpiresAt"]),
 
   xHoudiniQuotes: defineTable({
+    // Historical uncertainty stays truthful; exclude acknowledged terminal records from active-work alerts.
+    operationalArchivedAt: v.optional(v.number()),
     telegramUpdateId: v.optional(v.string()),
     requestPostId: v.string(),
     deliverySource: v.optional(v.union(v.literal("x"), v.literal("telegram"))),

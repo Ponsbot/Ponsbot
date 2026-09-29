@@ -38,6 +38,7 @@ import type * as pollWalletAuth from "../pollWalletAuth.js";
 import type * as polls from "../polls.js";
 import type * as ponsV2 from "../ponsV2.js";
 import type * as registry from "../registry.js";
+import type * as retiredWork from "../retiredWork.js";
 import type * as site from "../site.js";
 import type * as telegram from "../telegram.js";
 import type * as telegramDeliveries from "../telegramDeliveries.js";
@@ -99,6 +100,7 @@ declare const fullApi: ApiFromModules<{
   polls: typeof polls;
   ponsV2: typeof ponsV2;
   registry: typeof registry;
+  retiredWork: typeof retiredWork;
   site: typeof site;
   telegram: typeof telegram;
   telegramDeliveries: typeof telegramDeliveries;

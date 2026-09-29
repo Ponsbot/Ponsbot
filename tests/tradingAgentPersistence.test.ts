@@ -195,7 +195,7 @@ describe("dormant agent persistence", () => {
     const { ctx, launchId, db, id } = await setup(); const lease = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
     await db.patch(launchId, { publicPublished: false });
     expect(await invoke(agents.finishPaperCycle, ctx, completion(lease))).toMatchObject({ status: "rejected" });
-    expect(await db.get(lease.cycleId)).toMatchObject({ diagnosticCode: "NOT_PONS_BOT_PLATFORM_TOKEN" });
+    expect(await db.get(lease.cycleId)).toMatchObject({ diagnosticCode: "NOT_ALLOWED_AGENT_TOKEN" });
     expect((await db.get(id))?.portfolio).toMatchObject({ cashWei: "10000" });
   });
   it("does not persist invalid raw payloads or provider errors", async () => {
@@ -243,9 +243,9 @@ describe("Bot Yard staging", () => {
     expect(result).toContain("ActualCreator"); expect(result).not.toContain("ownerXUserId"); expect(result).not.toContain("leaseToken"); expect(result).not.toContain("policyVersion");
   });
   it("bounds model calls atomically and rejects stale worker authorization", async () => {
-    const { ctx, id } = await yard();
+    const { db, ctx, id } = await yard();
     await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true });
-    vi.advanceTimersByTime(900000);
+    vi.setSystemTime(Number((await db.get(id))!.nextRunAt));
     const lease = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
     const args = { cycleId: lease.cycleId, leaseToken };
     for (let n = 0; n < 160; n++) expect(await invoke(agents.reserveModelCall, ctx, args)).toBe(true);
@@ -310,39 +310,49 @@ describe("Bot Yard staging", () => {
     await expect(invoke(agents.createYardBotFromPost, ctx, { postId: "999" })).rejects.toThrow("BOT_NAME_TAKEN");
     expect(await invoke(agents.checkBotPost, ctx, { text: "@ponsbotfamily check on Missing" })).toMatchObject({ reply: expect.stringContaining("couldn't find") });
   });
-  it("thinks at 15 and 30 minutes, then thinks and trades separately at 45", async () => {
-    const { ctx, id } = await yard();
+  it("leases independent jittered thought and trade slots at their persisted due times", async () => {
+    const { db, ctx, id } = await yard();
     await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true });
     expect(await invoke(agents.leaseNextPaperCycle, ctx, { leaseToken })).toBeNull();
-    for (let i = 1; i <= 3; i++) {
-      vi.advanceTimersByTime(15 * 60_000);
+    const seen = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      const schedule = (await db.get(id))!.schedule as { nextThoughtAt: number; nextTradeAt: number };
+      vi.setSystemTime(Math.min(schedule.nextThoughtAt, schedule.nextTradeAt));
       const lease = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
-      expect(lease.kind).toBe("thought");
-      expect(await invoke(agents.finishPaperCycle, ctx, { cycleId: lease.cycleId, leaseToken, decisionJson: JSON.stringify({ thought: "Watching for activity." }) })).toMatchObject({ status: "held" });
-      if (i < 3) expect(await invoke(agents.leaseNextPaperCycle, ctx, { leaseToken })).toBeNull();
+      const kind = schedule.nextThoughtAt <= Date.now() ? "thought" : "trade";
+      expect(lease.kind).toBe(kind); seen.add(kind);
+      expect(await invoke(agents.finishPaperCycle, ctx, { cycleId: lease.cycleId, leaseToken, decisionJson: JSON.stringify(kind === "thought" ? { thought: "Watching for activity." } : { action: "hold", reason: "No funds yet." }) })).toMatchObject({ status: "held" });
+      const after = (await db.get(id))!.schedule as typeof schedule;
+      const delay = (kind === "thought" ? after.nextThoughtAt : after.nextTradeAt) - Date.now();
+      const interval = (kind === "thought" ? 30 : 45) * 60_000;
+      expect(Math.abs(delay - interval)).toBeGreaterThanOrEqual(60_000);
+      expect(Math.abs(delay - interval)).toBeLessThanOrEqual(120_000);
     }
-    const trade = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
-    expect(trade.kind).toBe("trade");
-    await invoke(agents.finishPaperCycle, ctx, { cycleId: trade.cycleId, leaseToken, decisionJson: JSON.stringify({ action: "hold", reason: "No funds yet." }) });
+    expect([...seen].sort()).toEqual(["thought", "trade"]);
     expect(await invoke(agents.leaseNextPaperCycle, ctx, { leaseToken })).toBeNull();
   });
   it("never executes a trade from a thought slot", async () => {
     const { db, ctx, id } = await yard();
-    await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true }); vi.advanceTimersByTime(15 * 60_000);
+    await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true });
+    vi.setSystemTime(Number((await db.get(id))!.nextRunAt));
     const lease = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
     expect(await invoke(agents.finishPaperCycle, ctx, completion(lease))).toMatchObject({ status: "rejected" });
     expect((await db.get(id))?.portfolio).toMatchObject({ cashWei: "0", trades: 0 });
   });
   it("does not accelerate failed trade slots through lease retries", async () => {
     const { db, ctx, id } = await yard();
-    await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true }); vi.advanceTimersByTime(45 * 60_000);
+    await invoke(agents.setPaperState, ctx, { agentId: id, ownerXUserId: "123", running: true });
+    vi.setSystemTime(Number((await db.get(id))!.nextRunAt));
     const thought = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken });
     await invoke(agents.finishPaperCycle, ctx, { cycleId: thought.cycleId, leaseToken, decisionJson: JSON.stringify({ thought: "Ready to check." }) });
+    vi.setSystemTime(Number((await db.get(id))!.nextRunAt));
     const trade = await invoke<Lease>(agents.leaseNextPaperCycle, ctx, { leaseToken }); expect(trade.kind).toBe("trade");
     vi.advanceTimersByTime(120_001);
     expect(await invoke(agents.leaseNextPaperCycle, ctx, { leaseToken })).toBeNull();
     expect(await db.get(trade.cycleId)).toMatchObject({ status: "abandoned" });
-    expect((await db.get(id))?.schedule).toMatchObject({ nextTradeAt: Date.parse("2026-09-12T13:30:00Z") });
+    const schedule = (await db.get(id))!.schedule as { nextTradeAt: number };
+    expect(schedule.nextTradeAt - Date.now()).toBeGreaterThanOrEqual(43 * 60_000);
+    expect(schedule.nextTradeAt - Date.now()).toBeLessThanOrEqual(47 * 60_000);
   });
   it("does not expose internal identity, policy, or worker data in Yard DTOs", async () => {
     const { ctx, id } = await yard();

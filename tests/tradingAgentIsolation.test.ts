@@ -3,11 +3,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("trading-agent rollout isolation", () => {
-  it("keeps writes internal and gates the sole public presentation query", () => {
+  it("keeps writes internal and limits public queries to yard presentation", () => {
     const source = readFileSync("convex/tradingAgents.ts", "utf8");
     expect(source).not.toMatch(/export const \w+\s*=\s*(action|mutation)\(/);
-    expect(source.match(/export const \w+\s*=\s*query\(/g)).toEqual(["export const publicYard = query("]);
+    expect(source.match(/export const \w+\s*=\s*query\(/g)).toEqual(["export const publicYardPositions = query(", "export const publicYard = query("]);
     expect(source).toContain("if (!tradingAgentCapabilities().website) return { bots: [], nextCursor: null }");
+    expect(source).toContain("if (!tradingAgentCapabilities().website || ids.length > 24)");
     expect(source).not.toMatch(/ctx\.scheduler|runAfter\(|runAt\(/);
   });
   it("registers only an explicitly gated worker tick", () => {

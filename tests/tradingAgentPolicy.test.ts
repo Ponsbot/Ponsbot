@@ -29,7 +29,7 @@ describe("platform-only universe", () => {
   it.each([null, {}, { ...launch, publicPublished: false }, { ...launch, launchMode: "external" },
     { ...launch, tokenAddress: `0x${"2".repeat(40)}` }, { ...launch, transactionHash: "pending" }])("rejects non-platform evidence %#", evidence => {
     expect(isAgentPlatformToken(token, evidence)).toBe(false);
-    expect(() => settlePaperDecision({ ...input(), launch: evidence })).toThrow("NOT_PONS_BOT_PLATFORM_TOKEN");
+    expect(() => settlePaperDecision({ ...input(), launch: evidence })).toThrow("NOT_ALLOWED_AGENT_TOKEN");
   });
   it("rejects excluded launches even if a stale public record remains", () => {
     const excluded = "0xdf1f5f5afce9ced806f753783d7103301708eb07";
