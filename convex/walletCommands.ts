@@ -52,6 +52,11 @@ export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 // mapping deterministic: the AI may recognize a company name, but execution
 // still normalizes it to the exact indexed ticker before token resolution.
 const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ["P", "P"], ["AVGO", "AVGO"], ["NBIS", "NBIS"], ["ORCL", "ORCL"],
+  ["PENG", "PENG"], ["DDOG", "DDOG"],
+  ["Everpure", "P"], ["Broadcom", "AVGO"], ["Nebius Group", "NBIS"], ["Nebius", "NBIS"],
+  ["Oracle", "ORCL"], ["Penguin Solutions", "PENG"], ["Datadog", "DDOG"],
+  ["iShares Semiconductor ETF", "SOXX"], ["SOXX", "SOXX"],
   ["Snowflake", "SNOW"], ["SNOW", "SNOW"],
   ["Red Cat", "RCAT"], ["RCAT", "RCAT"],
   ["iShares MSCI South Korea ETF", "EWY"], ["EWY", "EWY"],
