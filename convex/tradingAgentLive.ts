@@ -44,7 +44,7 @@ export const lease = internalMutation({
   },
 });
 export const complete = internalMutation({
-  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()), failureCode: v.optional(v.string()), ethUsd: v.optional(v.number()) },
+  args: { cycleId: v.id("tradingAgentCycles"), leaseToken: v.string(), resultJson: v.string(), snapshotJson: v.optional(v.string()), failed: v.optional(v.boolean()), failureCode: v.optional(v.string()), ethUsd: v.optional(v.number()), gasFallbackThought: v.optional(v.boolean()) },
   handler: async (ctx, args) => {
     if (!tradingAgentCapabilities().liveTrading) throw new Error("LIVE_DISABLED");
     if (args.resultJson.length > 3000 || (args.snapshotJson?.length ?? 0) > 20000) throw new Error("PAYLOAD_TOO_LARGE");
@@ -57,7 +57,15 @@ export const complete = internalMutation({
     let diagnosticCode: string | undefined;
     try {
       if (args.failed) throw new Error(args.failureCode ?? "LIVE_CHECK_FAILED");
-      if (cycle.kind === "thought") {
+      if (args.gasFallbackThought) {
+        const snapshot = snapshotSchema.parse(JSON.parse(args.snapshotJson ?? ""));
+        if (cycle.kind !== "trade" || !snapshot.complete || snapshot.observedAt > now || now - snapshot.observedAt > 60000
+          || BigInt(snapshot.cashWei) >= BigInt(agent.policy.maxGasPerTradeWei) + BigInt(agent.policy.reserveWei)) throw new Error("LIVE_BALANCES_UNAVAILABLE");
+        thought = botThoughtSchema.parse(JSON.parse(args.resultJson)).thought;
+        diagnosticCode = "INSUFFICIENT_GAS_RESERVE";
+        await ctx.db.patch(agent._id, { liveHoldings: snapshot });
+      }
+      else if (cycle.kind === "thought") {
         thought = botThoughtSchema.parse(JSON.parse(args.resultJson)).thought;
         if (args.snapshotJson) {
           const snapshot = snapshotSchema.parse(JSON.parse(args.snapshotJson));
@@ -91,7 +99,7 @@ export const complete = internalMutation({
       }
     } catch (error) { if (executionId) throw error; status = "rejected"; diagnosticCode = agentFailureCode(error); }
     const schedule = advanceYardSchedule(agent.schedule ?? initialYardSchedule(now), cycle.kind ?? "trade", now);
-    await ctx.db.patch(cycle._id, { status, thought, decisionJson, ...(executionId ? { executionId } : {}), completedAt: now, ...(diagnosticCode ? { diagnosticCode } : {}) });
+    await ctx.db.patch(cycle._id, { status, thought, decisionJson, ...(thought && args.gasFallbackThought ? { kind: "thought" as const } : {}), ...(executionId ? { executionId } : {}), completedAt: now, ...(diagnosticCode ? { diagnosticCode } : {}) });
     await ctx.db.patch(agent._id, { activeCycleId: undefined, schedule, nextRunAt: Math.min(schedule.nextThoughtAt, schedule.nextTradeAt), updatedAt: now });
     return executionId ?? null;
   },
@@ -104,8 +112,8 @@ export const work = internalAction({
     const current = await ctx.runMutation(makeFunctionReference<"mutation", { leaseToken: string }, Lease | null>("tradingAgentLive:lease"), { leaseToken });
     if (!current) return;
     let ethUsd: number | undefined;
-    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false, failureCode?: string) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean; failureCode?: string; ethUsd?: number }>("tradingAgentLive:complete"), {
-      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), ...(ethUsd ? { ethUsd } : {}), failed, ...(failureCode ? { failureCode } : {}),
+    const finish = (resultJson: string, snapshot?: LiveSnapshot, failed = false, failureCode?: string, gasFallbackThought = false) => ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string; resultJson: string; snapshotJson?: string; failed: boolean; failureCode?: string; ethUsd?: number; gasFallbackThought?: boolean }>("tradingAgentLive:complete"), {
+      cycleId: current.cycleId, leaseToken, resultJson, ...(snapshot ? { snapshotJson: JSON.stringify(snapshot) } : {}), ...(ethUsd ? { ethUsd } : {}), failed, ...(failureCode ? { failureCode } : {}), ...(gasFallbackThought ? { gasFallbackThought: true } : {}),
     });
     try {
       const context = await ctx.runQuery(makeFunctionReference<"query", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, { tokens: Array<{ address: string; symbol: string }>; recentLog: AgentMarketContext["recentLog"]; yard: AgentMarketContext["yard"] }>("tradingAgents:workerContext"), { cycleId: current.cycleId, leaseToken });
@@ -134,6 +142,13 @@ export const work = internalAction({
         agentId: current.agent._id, snapshotJson: JSON.stringify(snapshot),
       });
       if (!await ctx.runMutation(makeFunctionReference<"mutation", { cycleId: Id<"tradingAgentCycles">; leaseToken: string }, boolean>("tradingAgents:reserveModelCall"), { cycleId: current.cycleId, leaseToken })) throw new Error("MODEL_LIMIT");
+      if (BigInt(snapshot.cashWei) < BigInt(current.agent.policy.maxGasPerTradeWei) + BigInt(current.agent.policy.reserveWei)) {
+        const thought = await runAgentModel("thought", { agentId: current.agent._id, cycleId: current.cycleId, policyVersion: current.agent.policyVersion,
+          observedAt: Date.now(), strategy: current.agent.strategy, character: { name: current.agent.name, description: current.agent.description ?? current.agent.strategy }, policy: current.agent.policy,
+          tokens: context.tokens, cashWei: "0", holdings: [], holdingsAvailable: false, recentLog: context.recentLog, yard: context.yard }, AbortSignal.timeout(50000), openRouter);
+        await finish(JSON.stringify(thought), snapshot, false, undefined, true);
+        return;
+      }
       const result = await runAgentModel(current.kind, { agentId: current.agent._id, cycleId: current.cycleId, policyVersion: current.agent.policyVersion,
         observedAt: markets.observedAt, strategy: current.agent.strategy, character: { name: current.agent.name, description: current.agent.description ?? current.agent.strategy }, policy: current.agent.policy,
         ethUsd: markets.ethUsd,
