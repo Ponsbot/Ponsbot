@@ -13,6 +13,14 @@ const invoke = (fn: unknown, ctx: unknown, args: unknown): Promise<unknown> => (
 afterEach(() => vi.unstubAllEnvs());
 
 describe("live bot policy", () => {
+  it("keeps admission funds for a later sale even after a buy uses its full gas allowance", () => {
+    const buy = { action: "buy", token, amount: "8", reason: "Small purchase" };
+    expect(() => reserveLiveDecision(buy, policy, { ...snapshot, cashWei: "47" }, undefined, now)).toThrow("LIVE_BUY_LIMIT");
+    reserveLiveDecision(buy, policy, { ...snapshot, cashWei: "48" }, undefined, now);
+    const remaining = 48n - 8n - BigInt(policy.maxGasPerTradeWei);
+    expect(remaining).toBe(BigInt(policy.reserveWei) + BigInt(policy.maxGasPerTradeWei));
+    expect(reserveLiveDecision({ action: "sell", token, amount: "1", reason: "Replenish ETH" }, policy, { ...snapshot, cashWei: String(remaining) }, undefined, now).budget.trades).toBe(1);
+  });
   it("requires explicit master and live gates", () => {
     expect(tradingAgentCapabilities({ TRADING_AGENTS_LIVE_ENABLED: "true" }).liveTrading).toBe(false);
     expect(tradingAgentCapabilities({ TRADING_AGENTS_ENABLED: "true", TRADING_AGENTS_LIVE_ENABLED: "true" }).liveTrading).toBe(true);

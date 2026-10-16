@@ -12,7 +12,8 @@ export function reserveLiveDecision(raw: unknown, policyValue: AgentPolicy, snap
   if (cash < gas + reserve) throw new Error("INSUFFICIENT_GAS_RESERVE");
   if (budget.trades >= policy.maxTradesPerDay || BigInt(budget.gasReservedWei) + gas > BigInt(policy.maxDailyGasWei)) throw new Error("LIVE_DAILY_LIMIT");
   if (decision.action === "buy") {
-    if (quantity > cash / 5n || quantity > BigInt(policy.maxTradeWei) || quantity + gas + reserve > cash) throw new Error("LIVE_BUY_LIMIT");
+    // Retain the next trade's admission cushion after this entire buy's gas.
+    if (quantity > cash / 5n || quantity > BigInt(policy.maxTradeWei) || quantity + 2n * gas + reserve > cash) throw new Error("LIVE_BUY_LIMIT");
     if (!snapshot.tokens.some(t => t.token === decision.token) && snapshot.tokens.filter(t => BigInt(t.amount) > 0n).length >= policy.maxPositions) throw new Error("POSITION_LIMIT");
     if (BigInt(budget.buyWei) + quantity > BigInt(policy.maxDailyTurnoverWei)) throw new Error("LIVE_DAILY_LIMIT");
     budget.buyWei = (BigInt(budget.buyWei) + quantity).toString();

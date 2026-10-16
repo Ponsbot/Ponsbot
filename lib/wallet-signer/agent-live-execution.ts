@@ -62,6 +62,11 @@ export async function assertLiveEnvelope(job: BotExecution, envelope: BotEnvelop
   const client = rpc(), cash = await client.getBalance({ address: job.from as Address });
   const value = BigInt(envelope.valueWei);
   if (value + maximumGas + BigInt(policy.reserveWei) > cash) throw new Error("INSUFFICIENT_GAS_RESERVE");
+  if (intent.kind === "buy") {
+    const remainingJobGas = BigInt(policy.maxGasPerTradeWei) - BigInt(job.gasSpentWei ?? "0");
+    // Protect all remaining hops/approvals plus admission to one later sale.
+    if (value + remainingJobGas + BigInt(policy.maxGasPerTradeWei) + BigInt(policy.reserveWei) > cash) throw new Error("LIVE_BUY_LIMIT");
+  }
   if (intent.kind === "buy" && (envelope.route.phase === "funding" || envelope.route.pairToken === zeroAddress)) {
     if (BigInt(intent.amount) > cash / 5n || BigInt(intent.amount) > BigInt(policy.maxTradeWei)) throw new Error("LIVE_BUY_LIMIT");
     if (value > BigInt(intent.amount)) throw new Error("LIVE_VALUE_LIMIT");
