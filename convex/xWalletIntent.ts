@@ -1,4 +1,5 @@
 import { tokenPattern } from "../lib/token-pattern";
+import { hasDirectUsdAmount, walletAmountUnitsMatchText } from "../lib/explicit-usd-amount";
 import { isStructuredOutputAvailabilityError, openRouter } from "./llm";
 import { trailingLaunchBuy, ethDenominatedTokenAmount, extractGroundedLaunchName, extractGroundedPairToken, identifierAppearsAsKnownLaunchPair, identifierAppearsAsKnownRwa, knownLaunchPairTicker, knownRwaTicker, normalizeLaunchFeeOptions, parseTopFiveBuyCommand, parseWalletCommand, sharedLaunchNameAndTicker, tickerFromLaunchName, validateStructuredWalletCommand, type WalletCommand } from "./walletCommands";
 import { walletExtractionSchema, walletIntentSchema } from "./xWalletAiSchemas";
@@ -167,8 +168,7 @@ function recipientIsExplicitlyGrounded(text: string, recipient: string) {
 }
 
 function explicitUsdAmount(text: string, amount: string) {
-  const escaped = amount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`\\$\\s*${escaped}(?=$|[^0-9.])`, "i").test(text.replace(/(?<=\d),(?=\d)/g, ""));
+  return hasDirectUsdAmount(text, amount);
 }
 
 function pairSpendRoles(text: string) {
@@ -449,6 +449,10 @@ const extractionReliabilityGuidance: Partial<Record<WalletOperation, string>> = 
 };
 
 export function parameterExtractorPrompt(operation: WalletOperation, hasImage: boolean) {
+  return 'Only use USD when $ is immediately before the numeric amount, such as $666 or $.50. A cashtag is not currency: 666 $BEE6 is 666 tokens. Bare numbers, $ 666, and suffixes USD or dollars never authorize USD. Apply this to every monetary field, including developer buys.\n' + parameterExtractorPromptUnchecked(operation, hasImage);
+}
+
+function parameterExtractorPromptUnchecked(operation: WalletOperation, hasImage: boolean) {
   return `Extract parameters for exactly one ${operation} command. The intent classifier has already selected this operation. Do not change the operation, answer the user, or infer missing values. Return one JSON object only. If any required parameter is missing or ambiguous, set kind to "invalid". When the response format requires other properties, set every unavailable property to null.
 Token names and tickers may contain Chinese Han characters or Japanese hiragana and katakana, including mixed Latin characters and digits. Preserve these characters exactly. Never translate, romanize, or remove them. Uppercase Latin ticker letters only. The same applies to launch-name-derived tickers.
 
@@ -555,6 +559,7 @@ function validateExtractedCommand(value: unknown, operation: WalletOperation, te
     // the X layer knows it must resolve an @recipient before wallet execution.
     try { command = normalizeLaunchFeeOptions(command, text); } catch { return null; }
   }
+  if (command && !walletAmountUnitsMatchText(text, command)) return null;
   const statedPairRoles = command?.kind === "buy" && command.unit === "pair" ? pairSpendRoles(text) : undefined;
   const exactPairBuy = Boolean(command?.kind === "buy" && statedPairRoles
     && statedPairRoles.amount === command.amount

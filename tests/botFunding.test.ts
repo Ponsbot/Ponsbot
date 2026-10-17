@@ -7,7 +7,7 @@ describe("staged bot funding syntax", () => {
     ["@ponsbotfamily SEND $20 ETH TO BOT MOSS!", "20", "usd", "ETH"],
     ["Send $20 of ETH to bot Moss", "20", "usd", "ETH"],
     ["Send $20 to bot Moss", "20", "usd", "ETH"],
-    ["Send 20 dollars of PONSBOT to bot Moss", "20", "usd", "PONSBOT"],
+    ["Send $20 of PONSBOT to bot Moss", "20", "usd", "PONSBOT"],
     ["Send 1,000 $PONSBOT to the bot Moss", "1000", "token", "PONSBOT"],
     ["Send 25% ETH to bot Moss", "25", "percent", "ETH"],
     ["Send all my PONSBOT to bot Moss", "100", "percent", "PONSBOT"],
@@ -24,7 +24,7 @@ describe("staged bot funding syntax", () => {
   it.each(["Please send 1 ETH to bot Moss", "Send 1 ETH to @Moss", "Buy 1 ETH to bot Moss", "A story: Send 1 ETH to bot Moss"])("does not capture %s", text => {
     expect(parseBotFundingPost(text)).toBeNull();
   });
-  it.each(["0 ETH", "-1 ETH", "1e3 ETH", "1,00 ETH", "10", "$20% ETH", "101% ETH", "1 ETH and burn 2 ETH", "2 0x123"])("rejects %s", size => {
+  it.each(["20 dollars of PONSBOT", "20 USD of PONSBOT", "$ 20 of PONSBOT", "0 ETH", "-1 ETH", "1e3 ETH", "1,00 ETH", "10", "$20% ETH", "101% ETH", "1 ETH and burn 2 ETH", "2 0x123"])("rejects %s", size => {
     expect(parseBotFundingPost(`Send ${size} to bot Moss`)).toMatchObject({ ok: false });
   });
   it("retains contract targets for the existing resolver, without guessing a ticker", () => {

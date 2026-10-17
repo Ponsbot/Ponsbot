@@ -412,11 +412,9 @@ describe("deterministic X wallet replies", () => {
     const examples = [
       ["put $100 into SNDK @Ponsbotfamily", "buy"],
       ["@Ponsbotfamily gimme $5 of SNDK", "buy"],
-      ["@Ponsbotfamily I want twenty dollars worth of SNDK", "buy"],
       ["send it: $200 into SNDK @Ponsbotfamily", "buy"],
       ["dump all my SNDK @Ponsbotfamily", "sell"],
       ["@Ponsbotfamily get rid of 5.5 SNDK", "sell"],
-      ["Buy me 50 bucks of SNDK @Ponsbotfamily", "buy"],
       ["market buy $75 SNDK @Ponsbotfamily", "buy"],
       ["@Ponsbotfamily swap $35 for SNDK", "buy"],
       ["swap .025 ETH for SNDK @Ponsbotfamily", "buy"],

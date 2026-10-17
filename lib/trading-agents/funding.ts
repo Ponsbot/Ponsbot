@@ -20,7 +20,8 @@ export function parseBotFundingPost(text: string): BotFundingRequest | null {
   const raw = size?.[2]?.replaceAll(",", "") ?? "100";
   if (raw.length > 78 || !/[1-9]/.test(raw)) return invalid();
   const amount = raw.startsWith(".") ? `0${raw}` : raw;
-  const usd = Boolean(size?.[1] || (size?.[3] && size[3] !== "%"));
+  const usd = Boolean(size?.[1]);
+  if (size?.[3] && size[3] !== "%" && !usd) return invalid();
   const percent = Boolean(all || size?.[3] === "%");
   if (usd && percent || percent && Number(amount) > 100) return invalid();
   const reference = (size?.[4] ?? all?.[1] ?? (usd ? "ETH" : "")).replace(/^\$/, "");

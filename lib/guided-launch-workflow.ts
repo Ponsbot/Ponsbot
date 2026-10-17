@@ -233,7 +233,7 @@ function parseTicker(text: string) {
 function parseDevBuy(text: string, pairToken?: string) {
   const value = clean(text).replace(/,/g, "");
   if (SKIP.test(value) || /^(?:0|\$0|0(?:\.0+)?\s*(?:ETH|USD)?)$/i.test(value)) return null;
-  const usd = value.match(/^\$\s*([0-9]+(?:\.[0-9]+)?)$/) || value.match(/^([0-9]+(?:\.[0-9]+)?)\s*(?:USD|dollars?)$/i);
+  const usd = value.match(/^\$([0-9]+(?:\.[0-9]+)?)$/);
   if (usd && Number(usd[1]) > 0) return { amount: usd[1], unit: "usd" as const };
   const eth = value.match(/^([0-9]+(?:\.[0-9]+)?)\s*(?:ETH|WETH)$/i);
   if (eth && Number(eth[1]) > 0) return { amount: eth[1], unit: "eth" as const };

@@ -38,7 +38,8 @@ function fixture(session: any = activeSession(), guidedContext: any = null) {
   return { ctx, calls, reserved: () => calls.some(c => c.name === "wallets:reserveWalletRequest") };
 }
 function args(command: any = sell, overrides: any = {}) {
-  return { sourcePostId: eventId, xUserId: bot, text: "sell all of my USDG", parsedCommandJson: JSON.stringify(command),
+  return { sourcePostId: eventId, xUserId: bot,
+    text: command.unit === "usd" ? `${command.kind} $${command.amount} of ${command.token}` : "sell all of my USDG", parsedCommandJson: JSON.stringify(command),
     source: "terminal", channel: "terminal_chat", terminalSessionId: sessionId,
     requestId: `terminal:${sessionId}:${eventId}:${command.kind}`, ...overrides };
 }
@@ -52,6 +53,15 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe("bot wallet terminal-only authorization", () => {
+  it.each(["x", "telegram", "terminal"])("rejects a structured USD/token mismatch before any downstream work on %s", async source => {
+    const f = fixture();
+    const result = await handler(executeCommand)(f.ctx, args({ kind: "send", amount: "666", unit: "usd", token: "BEE6", recipient: "@alice" },
+      { text: "send 666 $BEE6 to @alice", source }));
+    expect(result).toMatchObject({ ok: false });
+    expect(result.message).toContain("Use $ directly before a number");
+    expect(f.calls).toHaveLength(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it.each(["terminal_chat", "terminal_form"])("allows a same-owner authenticated USDG sell through %s", async channel => {
     const f = fixture();
     expect(await handler(executeCommand)(f.ctx, args(sell, { channel }))).toMatchObject({ ok: true });

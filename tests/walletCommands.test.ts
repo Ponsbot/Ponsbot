@@ -255,12 +255,10 @@ describe("X wallet commands", () => {
       .toBe("⚠️ More than one token in your wallet uses that ticker. Reply with the contract address so I choose the right one!");
   });
 
-  it("accepts USD written as a unit for buys and token sends", () => {
-    expect(parseWalletCommand("buy 25 USD of PONS")).toMatchObject({ kind: "buy", amount: "25", unit: "usd", token: "PONS" });
-    expect(parseWalletCommand("buy 25 USD PONS")).toMatchObject({ kind: "buy", amount: "25", unit: "usd", token: "PONS" });
-    expect(parseWalletCommand("send 25 USD of PONS to 0x1111111111111111111111111111111111111111")).toEqual({
-      kind: "send", amount: "25", unit: "usd", token: "PONS", recipient: "0x1111111111111111111111111111111111111111",
-    });
+  it("requires a direct dollar prefix rather than a USD suffix", () => {
+    expect(parseWalletCommand("buy 25 USD of PONS").kind).toBe("unknown");
+    expect(parseWalletCommand("buy 25 USD PONS").kind).toBe("unknown");
+    expect(parseWalletCommand("send 25 USD of PONS to 0x1111111111111111111111111111111111111111").kind).toBe("unknown");
   });
 
   it("parses token sells and bounds slippage", () => {
@@ -540,7 +538,7 @@ describe("X wallet commands", () => {
 
   it("accepts USD-denominated burns", () => {
     expect(parseWalletCommand("burn $25 of $ROOT")).toEqual({ kind: "burn", amount: "25", unit: "usd", token: "ROOT" });
-    expect(parseWalletCommand("burn 10 usd worth of ROOT")).toEqual({ kind: "burn", amount: "10", unit: "usd", token: "ROOT" });
+    expect(parseWalletCommand("burn 10 usd worth of ROOT").kind).toBe("unknown");
   });
 
   it("accepts all, half, and percentage balance amounts", () => {

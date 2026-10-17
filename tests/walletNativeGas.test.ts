@@ -55,7 +55,7 @@ const args = (text: string, source: "x" | "terminal" = "x") => ({ sourcePostId: 
 describe("zero native ETH gate", () => {
   it.each(["sell", "burn"])("rejects a native ETH %s accurately before any gas check or quota consumption", async kind => {
     const f = fixture();
-    const result = await handler(executeCommand)(f.ctx, { ...args(`${kind} 0.0001 ETH`, "terminal"),
+    const result = await handler(executeCommand)(f.ctx, { ...args(`${kind} $0.0001 of ETH`, "terminal"),
       parsedCommandJson: JSON.stringify({ kind, token: "ETH", amount: "0.0001", unit: "usd", slippageBps: 250 }),
     });
     expect(result.ok).toBe(false); expect(result.message).not.toContain(NO_NATIVE_GAS_MESSAGE);

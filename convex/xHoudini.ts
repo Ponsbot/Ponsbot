@@ -47,7 +47,7 @@ export type XHoudiniCommand = {
 };
 // A leading dollar sign controls the denomination. Accept optional source-ETH
 // wording so "$50 ETH" and "$50 of ETH" both mean $50 worth of Robinhood ETH.
-const AMOUNT = String.raw`(?:\$\s*(\d+(?:\.\d+)?)(?:\s+(?:of\s+)?(?:ETH|USD))?|(\d+(?:\.\d+)?)\s*(?:ETH|USD))`;
+const AMOUNT = String.raw`(?:\$(\d+(?:\.\d+)?)(?:\s+(?:of\s+)?(?:ETH|USD))?|(\d+(?:\.\d+)?)\s*ETH)`;
 const DEST = String.raw`(0x[a-fA-F0-9]{40}|(?:bc1|[13])[a-zA-HJ-NP-Z0-9]{20,70}|[1-9A-HJ-NP-Za-km-z]{32,44})`;
 const SYMBOLS = ["ETH", "SOL", "BTC", "USDC", "USDT", "BNB", "AVAX", "POL"],
   CHAINS = [
@@ -251,7 +251,7 @@ export function parseXHoudiniCommand(input: string): XHoudiniCommand | null {
       return null;
     return {
       amount: numeric,
-      unit: m[1] || /\bUSD\b/i.test(text) ? "usd" : "eth",
+      unit: m[1] ? "usd" : "eth",
       destination,
       ...parsed,
       privateMode,

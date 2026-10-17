@@ -1,6 +1,7 @@
 import { tokenPattern } from "../lib/token-pattern";
 import { signerRequest as automatedFeeSignerRequest } from "./automatedFeeEngine";
 import { v } from "convex/values";
+import { walletAmountUnitsMatchText, EXPLICIT_USD_MESSAGE } from "../lib/explicit-usd-amount";
 import { grokLaunchFeeRejection } from "../lib/launch-recipient-policy";
 import { isGasResumePrompt } from "../lib/x-temporary-reply-policy";
 import { isTopFiveChild, confirmedTopFivePurchase, TOP_FIVE_GAS_RESERVE_UNITS, TOP_FIVE_BROADCAST_RETRIES } from "../lib/top-five-recovery";
@@ -3680,6 +3681,10 @@ export const executeCommand = internalAction({
         )
       : null;
     let command = structured || parseWalletCommand(args.text);
+    // Recheck persisted/model/continuation commands before any wallet mutation
+    // or signature, not just when parsing a fresh post.
+    if (!walletAmountUnitsMatchText(args.text, command))
+      return { ok: false, message: EXPLICIT_USD_MESSAGE };
     if (command.kind === "unknown")
       return { ok: false, message: command.reason };
     if ((command.kind === "reassign_fees" || command.kind === "upgrade_fees") && (args.source === "terminal" || args.source === "telegram")) {
