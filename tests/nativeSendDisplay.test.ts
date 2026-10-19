@@ -97,7 +97,7 @@ describe("real confirmation reconstruction with mocked Convex records", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.message).toContain("Sent 0.00043251 ETH (≈$1.08) to");
-    expect(result.message).toContain(`Your TXN: https://robinhoodchain.blockscout.com/tx/${hash}`);
+    expect(result.message).toContain(`Your TXN: https://robin.etherscan.io/tx/${hash}`);
     expect(result.message).not.toContain("100%");
     expect(fitXReply(result.message)).toBe(result.message);
     expect(xWeightedLength(result.message)).toBeLessThanOrEqual(280);

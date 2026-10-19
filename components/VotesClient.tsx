@@ -150,7 +150,7 @@ export function VotesClient({ code }: { code?: string }) {
     </div>{!items.length && !loadError && <p>No {closed ? 'completed' : 'ongoing'} polls yet.</p>}{next && <button onClick={() => void load(next)}>More polls</button>}</>}
     {code && poll && <article className={styles.detail}>
       <div className={styles.badges}><span>{poll.official ? 'Official' : 'Community'}</span><span>{poll.status.charAt(0).toUpperCase() + poll.status.slice(1).replaceAll('_', ' ')}</span><span>{poll.code}</span></div>
-      <h2>{poll.question}</h2><p>{poll.tokenAddress && <a href={`https://robinhoodchain.blockscout.com/token/${poll.tokenAddress}`} target='_blank' rel='noreferrer'><strong>{pollTokenLabel(poll.snapshot?.symbol ?? 'TOKEN', poll.tokenAddress)}</strong></a>}</p>
+      <h2>{poll.question}</h2><p>{poll.tokenAddress && <a href={`https://robin.etherscan.io/token/${poll.tokenAddress}`} target='_blank' rel='noreferrer'><strong>{pollTokenLabel(poll.snapshot?.symbol ?? 'TOKEN', poll.tokenAddress)}</strong></a>}</p>
       <p>Created by: <span title={poll.creatorWallet}>{poll.creatorXUsername ? `@${poll.creatorXUsername}` : short(poll.creatorWallet)}</span></p>
       {['open', 'preparing', 'needs_token'].includes(poll.status) && votingWallet?.toLowerCase() === poll.creatorWallet.toLowerCase() && <button disabled={busy} onClick={() => { if (window.confirm('Cancel this poll? Voting will stop and it cannot be reopened.')) void act('cancel'); }}>Cancel poll</button>}
       {poll.status === 'cancelled' && <p className={styles.notice}>This poll was cancelled by its creator.</p>}

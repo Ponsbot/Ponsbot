@@ -73,7 +73,7 @@ export function BotYard({ bots, preview = false, onSelect, headingAction, zone: 
               {botBuyLabel(entry) && <p><strong>{botBuyLabel(entry)}</strong></p>}
               <p>{entry.summary}</p>
               {entry.token && <a className={styles.tokenLink} href={`/launch/${entry.token}`}>View token ↗</a>}
-              {entry.transactionHashes?.map((hash, index) => /^0x[0-9a-fA-F]{64}$/.test(hash) && <a key={hash} className={styles.tokenLink} href={`https://robinhoodchain.blockscout.com/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {index + 1} ↗</a>)}
+              {entry.transactionHashes?.map((hash, index) => /^0x[0-9a-fA-F]{64}$/.test(hash) && <a key={hash} className={styles.tokenLink} href={`https://robin.etherscan.io/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {index + 1} ↗</a>)}
             </li>)}
           </ol>
           {!selected.logs.length && <p className={styles.emptyLog}>Thoughts and trade rationales will appear here once this bot starts.</p>}

@@ -23,5 +23,5 @@ export type BotYardBot = {
 export function botWalletLinks(address: string | undefined) {
   if (!address || !/^0x[0-9a-fA-F]{40}$/.test(address) || /^0x0{40}$/i.test(address)) return null;
   const normalized = address.toLowerCase();
-  return { wallet: `/bot-yard/wallet/${normalized}`, transactions: `https://robinhoodchain.blockscout.com/address/${normalized}?tab=txs` };
+  return { wallet: `/bot-yard/wallet/${normalized}`, transactions: `https://robin.etherscan.io/address/${normalized}#transactions` };
 }

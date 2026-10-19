@@ -20,8 +20,8 @@ describe("X reply length handling", () => {
   });
 
   it("shortens dynamic copy but preserves explorer links", () => {
-    const token = "Your token: https://robinhoodchain.blockscout.com/address/0x1111111111111111111111111111111111111111";
-    const txn = "Your TXN: https://robinhoodchain.blockscout.com/tx/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const token = "Your token: https://robin.etherscan.io/address/0x1111111111111111111111111111111111111111";
+    const txn = "Your TXN: https://robin.etherscan.io/tx/0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const result = fitXReply(`✅ Success! Launched ${"Very Long Token Name ".repeat(20)} (VERYLONGTICKER)!\n${token}\n${txn}`);
     expect(xWeightedLength(result)).toBeLessThanOrEqual(280);
     expect(result).toContain(token);

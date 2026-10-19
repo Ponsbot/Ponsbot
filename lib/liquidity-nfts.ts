@@ -17,6 +17,6 @@ export function liquidityNftLines(position: { publicId: string; symbol: string; 
     if (!contract) throw new Error("Unknown NFT contract");
     return [title, "", `Recorded Delta Liquidity position NFTs (${ids.length}):`,
       ...(position.status === "closed" ? ["", "This position is closed. These links show its historical NFTs, not active liquidity."] : []),
-      "", ...ids.flatMap((id, index) => [...(index ? [""] : []), `NFT #${id}: https://robinhoodchain.blockscout.com/token/${contract}/instance/${id}`])];
+      "", ...ids.flatMap((id, index) => [...(index ? [""] : []), `NFT #${id}: https://robin.etherscan.io/nft/${contract}/${id}`])];
   } catch { return [title, "", "I couldn't read this position's NFT records. Reply with the request again later."]; }
 }

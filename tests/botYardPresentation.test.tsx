@@ -21,7 +21,7 @@ describe("Bot Yard presentation", () => {
     const address = `0x${"1".repeat(40)}`;
     const html = renderToStaticMarkup(<BotYard bots={[{ ...botYardPreviewBots()[0], walletAddress: address }]} />);
     expect(html).toContain(`href="/bot-yard/wallet/${address}"`);
-    expect(html).toContain(`href="https://robinhoodchain.blockscout.com/address/${address}?tab=txs"`);
+    expect(html).toContain(`href="https://robin.etherscan.io/address/${address}#transactions"`);
   });
   it("escapes bot descriptions and public observations", () => {
     const bot = botYardPreviewBots()[0]; bot.description = '<img src=x onerror="alert(1)">'; bot.logs[0].summary = "<script>alert(1)</script>";

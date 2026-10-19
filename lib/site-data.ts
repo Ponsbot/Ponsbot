@@ -360,5 +360,5 @@ function formatDisplay(value: string) {
 // Retain the existing server-page import without exposing data/cache code to clients.
 export { shortAddress } from "./address-display";
 
-export const explorerAddress = (address: string) => `https://robinhoodchain.blockscout.com/address/${address}`;
-export const explorerToken = (address: string) => `https://robinhoodchain.blockscout.com/token/${address}`;
+export const explorerAddress = (address: string) => `https://robin.etherscan.io/address/${address}`;
+export const explorerToken = (address: string) => `https://robin.etherscan.io/token/${address}`;

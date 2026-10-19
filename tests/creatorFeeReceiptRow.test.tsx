@@ -17,7 +17,7 @@ describe("creator fee receipt table row", () => {
     const html = renderToStaticMarkup(React.createElement(CreatorFeeReceiptRow, { receipt }));
     expect(html).toContain("Creator Fees Received"); expect(html).toContain("0.0015 ETH");
     expect(html).toContain("<td>Automatic</td>"); expect(html).toContain("<td>Confirmed</td>");
-    expect(html).toContain(`href="https://robinhoodchain.blockscout.com/tx/${receipt.transactionHash}"`);
+    expect(html).toContain(`href="https://robin.etherscan.io/tx/${receipt.transactionHash}"`);
     expect(html).toContain(`href="/launch/${receipt.tokenAddress}"`);
     expect(html).not.toContain("<td>X</td>");
   });

@@ -28,15 +28,15 @@ describe("liquidity NFT lookups", () => {
   it.each([3, 4] as const)("links each ID to the V%s NFT contract, not the pool or Delta manager", version => {
     const lines = liquidityNftLines({ ...position, version });
     const contract = version === 3 ? DELTA_LIQUIDITY.v3Npm : DELTA_LIQUIDITY.v4Npm;
-    for (const id of ["1324119", "1324120"]) expect(lines).toContain(`NFT #${id}: https://robinhoodchain.blockscout.com/token/${contract}/instance/${id}`);
+    for (const id of ["1324119", "1324120"]) expect(lines).toContain(`NFT #${id}: https://robin.etherscan.io/nft/${contract}/${id}`);
     expect(lines.join("\n")).not.toContain(DELTA_LIQUIDITY.manager);
     expect(lines.join("\n")).toContain("position NFTs (2):\n\nNFT #1324119:");
-    expect(lines.join("\n")).toContain("/instance/1324119\n\nNFT #1324120:");
+    expect(lines.join("\n")).toContain("/1324119\n\nNFT #1324120:");
   });
   it("keeps large integer IDs exact and deduplicates normalized IDs", () => {
     const lines = liquidityNftLines({ ...position, legsJson: JSON.stringify([{ tokenId: "900719925474099312345" }, { tokenId: "0900719925474099312345" }]) });
     expect(lines).toContain("Recorded Delta Liquidity position NFTs (1):");
-    expect(lines.at(-1)).toContain("/instance/900719925474099312345");
+    expect(lines.at(-1)).toContain("/900719925474099312345");
   });
   it("labels closed records as historical", () => {
     expect(liquidityNftLines({ ...position, status: "closed" }).join("\n")).toContain("historical NFTs, not active liquidity");
@@ -50,6 +50,6 @@ describe("liquidity NFT lookups", () => {
     const ids = Array.from({ length: 100 }, (_, i) => ((1n << 255n) + BigInt(i)).toString());
     const pages = paginateLiquidityResponse(liquidityNftLines({ ...position, legsJson: JSON.stringify(ids.map(tokenId => ({ tokenId }))) }), "x", true);
     expect(pages.length).toBeGreaterThan(1);
-    for (const id of ids) expect(pages.join("\n").match(new RegExp(`/instance/${id}`, "g"))).toHaveLength(1);
+    for (const id of ids) expect(pages.join("\n").match(new RegExp(`/${id}`, "g"))).toHaveLength(1);
   });
 });

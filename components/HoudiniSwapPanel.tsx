@@ -875,7 +875,7 @@ export function HoudiniSwapPanel({
               ) : null}
               {progressExecution.fundingTransactionHash ? (
                 <a
-                  href={`https://robinhoodchain.blockscout.com/tx/${progressExecution.fundingTransactionHash}`}
+                  href={`https://robin.etherscan.io/tx/${progressExecution.fundingTransactionHash}`}
                   target="_blank"
                   rel="noreferrer"
                 >

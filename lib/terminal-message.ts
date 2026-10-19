@@ -1,3 +1,4 @@
+import { currentExplorerLinks } from "./explorer-links";
 export type TerminalMessagePart = string | { url: string; suffix: string };
 
 export type TerminalMessageRecord = {
@@ -21,6 +22,7 @@ export function mergeTerminalMessages(current: TerminalMessageRecord[], next: Te
 }
 
 export function splitTerminalMessage(text: string): TerminalMessagePart[] {
+  text = currentExplorerLinks(text);
   const parts: TerminalMessagePart[] = [];
   const pattern = /https?:\/\/[^\s<>]+/g;
   let cursor = 0;

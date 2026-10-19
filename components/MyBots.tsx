@@ -95,7 +95,7 @@ export function MyBots() {
         <p>To your Pons Bot wallet: <a href={`/wallet/${data.destination}`}>{data.destination}</a></p>
         <button type="button" disabled={busy || !data.executionEnabled || !bot.live || !!bot.transactions?.some(tx => tx.state === "active")} onClick={() => void submit(bot.id, { kind: "withdraw", amount: amounts[bot.id] || "" })}>Withdraw ETH</button>
         {bot.transactions?.map(tx => <div key={tx.id} role="status"><p>{tx.state === "confirmed" ? `${tx.kind === "sell" ? "Sale" : "Withdrawal"} confirmed.` : tx.state === "failed" ? tx.error : "Transaction processing…"}</p>
-          {tx.hashes.map((hash, i) => <p key={hash}><a href={`https://robinhoodchain.blockscout.com/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {i + 1}</a></p>)}
+          {tx.hashes.map((hash, i) => <p key={hash}><a href={`https://robin.etherscan.io/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {i + 1}</a></p>)}
         </div>)}
       </article>)}</div>
     </>}

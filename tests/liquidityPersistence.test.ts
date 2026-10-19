@@ -196,7 +196,7 @@ describe("read-only NFT listing through the real liquidity workflow", () => {
     const ctx = await setup(); await nftPosition(ctx); const actions = actionContext(ctx);
     vi.mocked(openRouter).mockReset(); const network = vi.fn(); vi.stubGlobal("fetch", network);
     const result = await invoke(handle, actions, { ...base, source, scope: `${source}:nfts`, text: `Show me the NFTs for position ${position}` });
-    expect(result.message).toContain("/instance/1324119"); expect(result.message).toContain("/instance/1324120");
+    expect(result.message).toContain("/1324119"); expect(result.message).toContain("/1324120");
     expect(result.message).not.toContain("Confirm"); expect(result.deferred).not.toBe(true);
     expect(openRouter).not.toHaveBeenCalled(); expect(network).not.toHaveBeenCalled(); expect(actions.runAction).not.toHaveBeenCalled();
     expect(ctx.scheduler.runAfter).not.toHaveBeenCalled();
@@ -215,7 +215,7 @@ describe("read-only NFT listing through the real liquidity workflow", () => {
   it("can show closed NFT history without allowing ordinary management of closed positions", async () => {
     const ctx = await setup(); await nftPosition(ctx, { status: "closed" });
     const result = await invoke(handle, actionContext(ctx), { ...base, text: "show NFTs for LP-760EF1A7" });
-    expect(result.message).toContain("historical NFTs"); expect(result.message).toContain("/instance/1324119");
+    expect(result.message).toContain("historical NFTs"); expect(result.message).toContain("/1324119");
     expect((await invoke(resolveContext, ctx, { ownerXUserId: LIQUIDITY_TEST_OWNER, position: "LP-760EF1A7" })).position).toBeUndefined();
     expect(ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });
@@ -234,7 +234,7 @@ describe("read-only NFT listing through the real liquidity workflow", () => {
     await invoke(saveTurn, ctx, { turnId: first.turnId, state: JSON.stringify(draft), message: "Review quote", active: true });
     if (source === "x") await invoke(attachPrompt, ctx, { requestKey: root.requestKey, responsePostId: "nft-parent" });
     const result = await invoke(handle, actions, { ...root, requestKey: `${source}:nft-lookup`, text: "show NFTs for LP-760EF1A7", ...(source === "x" ? { parentPostId: "nft-parent" } : {}) });
-    expect(result.message).toContain("/instance/1324119"); expect(result.message).not.toMatch(/still preparing|please wait/i);
+    expect(result.message).toContain("/1324119"); expect(result.message).not.toMatch(/still preparing|please wait/i);
     expect(JSON.parse(ctx.data.get(first.conversationId)!.stateJson)).toEqual(draft);
     expect(ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });
@@ -246,7 +246,7 @@ describe("read-only NFT listing through the real liquidity workflow", () => {
     await invoke(attachPrompt, ctx, { requestKey: root.requestKey, responsePostId: "completed-result" });
     const executionId = await ctx.db.insert("liquidityExecutions", { conversationId: first.conversationId, status: "confirmed", response: "Position opened" });
     const result = await invoke(handle, actionContext(ctx), { ...root, requestKey: "x:nfts-after-open", parentPostId: "completed-result", text: "Show me the NFTs for position LP-760EF1A7" });
-    expect(result.message).toContain("/instance/1324119");
+    expect(result.message).toContain("/1324119");
     expect(ctx.data.get(executionId)).toMatchObject({ status: "confirmed", response: "Position opened" });
     expect(ctx.scheduler.runAfter).not.toHaveBeenCalled();
   });

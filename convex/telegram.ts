@@ -1,3 +1,4 @@
+import { currentExplorerLinks } from "../lib/explorer-links";
 import { internal } from "./_generated/api";
 import { action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
@@ -90,7 +91,7 @@ async function telegramApi(method: string, body: Record<string, unknown>) {
 
 async function sendMessage(chatId: string, text: string, replyMarkup?: Record<string, unknown>) {
   const chunks: string[] = [];
-  let remaining = text.trim() || " ";
+  let remaining = currentExplorerLinks(text).trim() || " ";
   while (remaining.length > 4_000) {
     let cut = remaining.lastIndexOf("\n", 4_000);
     if (cut < 1_000) cut = remaining.lastIndexOf(" ", 4_000);

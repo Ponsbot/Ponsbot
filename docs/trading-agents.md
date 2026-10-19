@@ -262,7 +262,7 @@ authenticated send pipeline, gated by the explicit live-trading flag.
   price impact and must not be represented as executable liquidity quotes.
 - `seedPaperCapital` is internal only, capped at 100 virtual ETH, and only applies
   before any cycle runs while the agent is not running. It never transfers money.
-- The dedicated bot wallet page links to Blockscout balances/history, explicitly
+- The dedicated bot wallet page links to Etherscan balances/history, explicitly
   distinguishes paper activity, and never relies on the regular X wallet index.
 - Real-money owner sales and withdrawals have a durable signer/broadcaster,
   gated separately and not enabled. Live autonomous jobs use the same journal.

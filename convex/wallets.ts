@@ -91,9 +91,9 @@ const PREMIUM_DAILY_LIMIT = 1_000;
 const PROVISIONING_LEASE_MS = 2 * 60_000;
 const MAX_RECONCILIATION_ATTEMPTS = 20;
 const DEAD_ADDRESS = "0x000000000000000000000000000000000000dEaD";
-const ROBINHOOD_EXPLORER_TX_BASE = "https://robinhoodchain.blockscout.com/tx";
+const ROBINHOOD_EXPLORER_TX_BASE = "https://robin.etherscan.io/tx";
 const ROBINHOOD_EXPLORER_ADDRESS_BASE =
-  "https://robinhoodchain.blockscout.com/address";
+  "https://robin.etherscan.io/address";
 const CLAIM_WORKFLOW_CONTINUATION = "claim workflow continuation required";
 
 type SignerWallet = { walletRef: string; address: string };

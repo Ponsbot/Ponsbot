@@ -76,7 +76,7 @@ describe("one-time native pixel sprites and wallet links", () => {
   it("never links an uncreated or invalid wallet", () => {
     expect(botWalletLinks(undefined)).toBeNull(); expect(botWalletLinks("javascript:alert(1)")).toBeNull();
     expect(botWalletLinks(`0x${"0".repeat(40)}`)).toBeNull();
-    expect(botWalletLinks(`0x${"1".repeat(40)}`)?.transactions).toContain("robinhoodchain.blockscout.com/address/");
+    expect(botWalletLinks(`0x${"1".repeat(40)}`)?.transactions).toContain("robin.etherscan.io/address/");
   });
   it("cannot make the page public through a production environment flag", () => {
     expect(botYardPreviewAllowed({ NODE_ENV: "production", BOT_YARD_PREVIEW_ENABLED: "true" })).toBe(false);

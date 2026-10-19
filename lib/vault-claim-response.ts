@@ -48,7 +48,7 @@ export function vaultClaimResponse(outcomes: VaultClaimOutcome[], onlyV2: boolea
         const hash = item.transactionHash;
         if (hash && /^0x[\da-f]{64}$/i.test(hash) && !seen.has(hash.toLowerCase())) {
           seen.add(hash.toLowerCase());
-          lines.push(`${group.length > 1 ? label(item.tokenSymbol) + " payout TXN" : "Your TXN"}: https://robinhoodchain.blockscout.com/tx/${hash}`);
+          lines.push(`${group.length > 1 ? label(item.tokenSymbol) + " payout TXN" : "Your TXN"}: https://robin.etherscan.io/tx/${hash}`);
         }
       }
     } else if (outcome.state === "self_burn") {

@@ -49,6 +49,7 @@ import {
 } from "./xWalletIntent";
 import type { XWalletIntent } from "./xWalletIntent";
 import { fitXReply, xWeightedLength } from "./xText";
+import { currentExplorerLinks } from "../lib/explorer-links";
 import {
   mentionPaginationProgress,
   paginationFailureState,
@@ -359,7 +360,7 @@ export const drainReplyQueue = internalAction({
     let outcome: Outcome;
     let attempted = false;
     try {
-      let text = row.text;
+      let text = currentExplorerLinks(row.text);
       if (row.standalone && row.kind !== "graduation") {
         const username = row.username?.replace(/^@/, "");
         if (!username || !/^[a-zA-Z0-9_]{1,15}$/.test(username)) throw new Error("X recipient username unavailable");

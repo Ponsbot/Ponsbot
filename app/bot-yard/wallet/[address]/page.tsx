@@ -30,7 +30,7 @@ export default async function BotWalletPage({ params }: { params: Promise<{ addr
         <div><span className={styles.eyebrow}>Bot wallet · Robinhood Chain</span><h1>{bot.name}</h1>
           {creator && <p>Created by <a href={`https://x.com/${creator}`} target="_blank" rel="noreferrer">@{creator}</a></p>}</div>
       </div>
-      <a className={styles.action} href={`https://robinhoodchain.blockscout.com/address/${address}?tab=txs`} target="_blank" rel="noreferrer">View on Blockscout ↗</a>
+      <a className={styles.action} href={`https://robin.etherscan.io/address/${address}#transactions`} target="_blank" rel="noreferrer">View on Etherscan ↗</a>
     </header>
     <div className={styles.address}><span className={styles.eyebrow}>Wallet address</span><CopyWalletAddress address={address} /></div>
     <BotPnl pnl={bot.pnl} />
@@ -45,7 +45,7 @@ export default async function BotWalletPage({ params }: { params: Promise<{ addr
         <div className={styles.meta}><span className={styles.badge}>{log.kind === "thought" ? "Thought" : log.outcome === "live_filled" ? "Trade completed" : log.outcome === "executing" ? "Processing" : log.outcome === "failed" ? "Trade incomplete" : "Holding"}</span><BotLocalTime at={log.at} includeDate /></div>
         {botBuyLabel(log) && <p><strong>{botBuyLabel(log)}</strong></p>}
         <p>{log.summary}</p>
-        {!!log.transactionHashes?.length && <div className={styles.transactions}>{log.transactionHashes.filter(hash => /^0x[0-9a-fA-F]{64}$/.test(hash)).map((hash, i) => <a key={hash} href={`https://robinhoodchain.blockscout.com/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {i + 1} ↗</a>)}</div>}
+        {!!log.transactionHashes?.length && <div className={styles.transactions}>{log.transactionHashes.filter(hash => /^0x[0-9a-fA-F]{64}$/.test(hash)).map((hash, i) => <a key={hash} href={`https://robin.etherscan.io/tx/${hash}`} target="_blank" rel="noreferrer">Transaction {i + 1} ↗</a>)}</div>}
       </li>)}</ol> : <p className={styles.empty}>No activity yet. Your bot’s thoughts and trading activity will appear here.</p>}
     </section>
   </section><SiteFooter /></main>;

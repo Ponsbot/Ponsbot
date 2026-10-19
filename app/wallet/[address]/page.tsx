@@ -87,7 +87,7 @@ export default async function WalletPage({ params }: Props) {
             target="_blank"
             rel="noreferrer"
           >
-            View on Blockscout ↗
+            View on Etherscan ↗
           </a></div>
         </div>
         <CopyWalletAddress address={address} />
@@ -143,7 +143,7 @@ function WalletPageShell({ address, children }: { address: string; children: Rea
         <div className="wallet-heading">
           <div><h1>Wallet Holdings</h1></div>
           <div className="wallet-heading-actions">
-            <a className="button button-quiet" href={explorerAddress(address)} target="_blank" rel="noreferrer">View on Blockscout ↗</a>
+            <a className="button button-quiet" href={explorerAddress(address)} target="_blank" rel="noreferrer">View on Etherscan ↗</a>
           </div>
         </div>
         <CopyWalletAddress address={address} />

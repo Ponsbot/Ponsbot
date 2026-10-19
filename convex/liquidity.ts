@@ -818,7 +818,7 @@ function liquidityFundingFailureMessage(plan: LiquidityQuotePlan, steps: SignedS
   const pending = fundingIndexes.filter(index => !steps[index]?.confirmed);
   const completedLines = completed.flatMap(index => [
     `• ${liquidityExecutionStepLabel(plan, index)}: confirmed`,
-    `  TXN: https://robinhoodchain.blockscout.com/tx/${steps[index]!.transactionHash}`,
+    `  TXN: https://robin.etherscan.io/tx/${steps[index]!.transactionHash}`,
   ]);
   const pendingLines = plan.calls.map((_, index) => !steps[index]?.confirmed ? `• ${liquidityExecutionStepLabel(plan, index)}: not completed` : null).filter((line): line is string => Boolean(line));
   const allFundingComplete = pending.length === 0;
@@ -1138,7 +1138,7 @@ export const finishExecution = internalMutation({
       await ctx.db.patch(claimedPosition._id, { feesClaimedJson: JSON.stringify(mergeLiquidityClaimedFees(previous, claimed)),
         lastClaimedJson: JSON.stringify(claimed), lastClaimedAt: now, updatedAt: now });
     }
-    const claimLinks = plan.claimPositions ? steps.map((s, i) => `${plan.claimPositions![i].positionId} TXN: https://robinhoodchain.blockscout.com/tx/${s.transactionHash}`).join("\n\n") : undefined;
+    const claimLinks = plan.claimPositions ? steps.map((s, i) => `${plan.claimPositions![i].positionId} TXN: https://robin.etherscan.io/tx/${s.transactionHash}`).join("\n\n") : undefined;
     const successTitle = d.operation === "claim" ? "Delta Liquidity LP fee collection confirmed"
       : d.operation === "withdraw" ? "Delta Liquidity LP fees collected and position withdrawn"
       : d.operation === "add" ? "Delta Liquidity position opened" : "Delta Liquidity position opened";
@@ -1151,14 +1151,14 @@ export const finishExecution = internalMutation({
       ...completionDetails,
       ...(completionGuidance ? ["", completionGuidance] : []),
       "", ...(d.operation === "claim" ? ["Claimed LP Fees for:"] : []),
-      claimLinks ?? `${d.operation === "claim" && positionId ? `${positionId} ` : ""}TXN: https://robinhoodchain.blockscout.com/tx/${args.transactionHash}`,
+      claimLinks ?? `${d.operation === "claim" && positionId ? `${positionId} ` : ""}TXN: https://robin.etherscan.io/tx/${args.transactionHash}`,
     ].join("\n");
     const message = args.success
       ? conversation.source === "x" && d.operation !== "claim"
         ? withGuidedHelpCompletion(successMessage)
         : successMessage
       : steps.some((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim")
-        ? `⚠️ Some LP fees were collected, but the remaining request did not complete. Already-collected fees are in your wallet.\n\nCompleted collections:\n\n${steps.flatMap((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim" ? [`${plan.claimPositions?.[i]?.positionId ?? positionId ?? "LP fees"}: ${(s.received ?? []).join(", ")} TXN: https://robinhoodchain.blockscout.com/tx/${s.transactionHash}`] : []).join("\n\n")}`
+        ? `⚠️ Some LP fees were collected, but the remaining request did not complete. Already-collected fees are in your wallet.\n\nCompleted collections:\n\n${steps.flatMap((s, i) => s.confirmed && plan.calls[i]?.purpose === "claim" ? [`${plan.claimPositions?.[i]?.positionId ?? positionId ?? "LP fees"}: ${(s.received ?? []).join(", ")} TXN: https://robin.etherscan.io/tx/${s.transactionHash}`] : []).join("\n\n")}`
       : steps.some((step, index) => step.confirmed && ["funding_buy", "funding_usdg_to_eth", "funding_wrap"].includes(plan.calls[index]?.purpose))
         ? liquidityFundingFailureMessage(plan, steps)
       : steps.some(s => s.confirmed) ? "⚠️ The liquidity request stopped after some steps completed. Earlier approvals or wrapping may have succeeded; the failed step was not repeated. Check your wallet before retrying."
@@ -1278,7 +1278,7 @@ export const recordOperatorRecoveredOpen = internalMutation({
     const response = [
       `✅ ${positionId}: Delta Liquidity position opened!`, "", ...liquidityOpenedDetails(draft, deposited, args.depositedUsd,
         plan.requestedBudgetUsd, Boolean(plan.partialReprice)),
-      "", liquidityCompletionGuidance("open", positionId), "", `TXN: https://robinhoodchain.blockscout.com/tx/${args.transactionHash}`,
+      "", liquidityCompletionGuidance("open", positionId), "", `TXN: https://robin.etherscan.io/tx/${args.transactionHash}`,
     ].join("\n");
     await ctx.db.patch(execution._id, { planJson: JSON.stringify(recoveredPlan), stepsJson: JSON.stringify(recoveredSteps),
       ...(revertedHistory.length ? { revertedOpenStepsJson: JSON.stringify(revertedHistory) } : {}), status: "confirmed", stage: "recovered_open", positionIds: [positionId],

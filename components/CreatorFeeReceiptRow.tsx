@@ -9,6 +9,6 @@ export function CreatorFeeReceiptRow({ receipt }: { receipt: TerminalFeeReceipt 
     <td>{receipt.tokenPageAvailable ? <Link href={`/launch/${receipt.tokenAddress}`}>{token}</Link> : token}</td>
     <td>Automatic</td><td>Confirmed</td>
     <td>{new Date(receipt.createdAt).toLocaleString()}</td>
-    <td><a href={`https://robinhoodchain.blockscout.com/tx/${receipt.transactionHash}`} target="_blank" rel="noreferrer">View TXN ↗</a></td>
+    <td><a href={`https://robin.etherscan.io/tx/${receipt.transactionHash}`} target="_blank" rel="noreferrer">View TXN ↗</a></td>
   </tr>;
 }

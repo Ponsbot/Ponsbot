@@ -79,7 +79,7 @@ export const LIQUIDITY_EXPLANATIONS: Record<Exclude<LiquidityHelpTopic, "step">,
   ownership: [
     "💡 Delta Liquidity holds the underlying position NFTs in its manager contract and records your Pons Bot wallet as their beneficial owner. Our workflow checks those ownership records before management actions.",
     "Your LP-XXXXXXXX ID groups the position’s NFTs. You can use it with or without LP- when checking or managing the position.",
-    "To see the individual NFTs and their Blockscout links, say: Show me the NFTs for position LP-1234ABCD. This is a read-only lookup.",
+    "To see the individual NFTs and their Etherscan links, say: Show me the NFTs for position LP-1234ABCD. This is a read-only lookup.",
   ],
   management: [
     "💡 Use your LP ID to check the position, collect LP fees, or fully withdraw. To invest more, create a separate position. Adding capital to an existing position is not available yet.",
