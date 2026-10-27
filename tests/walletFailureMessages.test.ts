@@ -43,6 +43,20 @@ describe("wallet failure messages", () => {
 
   it("explains when an earlier wallet operation still holds the execution lease", () => {
     expect(safeFailure(new Error("another wallet transaction is still being prepared; please try again shortly")))
-      .toBe("⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with the launch request again!");
+      .toBe("⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with your request again!");
+  });
+
+  it.each([
+    ["launch", "launch"], ["send", "send"], ["buy", "buy"],
+    ["buy_and_send", "buy-and-send"], ["buy_and_burn", "buy-and-burn"],
+    ["buy_top_five", "top-five buy"], ["sell", "sell"], ["burn", "burn"],
+    ["swap_token_for_token", "swap"], ["claim_fees", "creator-fee claim"],
+    ["reassign_fees", "fee reassignment"], ["upgrade_fees", "fee upgrade"],
+  ] as const)("identifies a blocked %s request correctly", (kind, label) => {
+    for (const detail of ["another wallet transaction is still being prepared", "wallet is busy with another transaction"]) {
+      expect(safeFailure(new Error(detail), kind)).toBe(
+        `⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with the ${label} request again!`,
+      );
+    }
   });
 });

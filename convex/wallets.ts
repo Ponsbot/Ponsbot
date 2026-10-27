@@ -3421,8 +3421,24 @@ export function safeFailure(
     /another wallet transaction is still being prepared|wallet is busy with another transaction/i.test(
       message,
     )
-  )
-    return "⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with the launch request again!";
+  ) {
+    const requestLabel: Partial<Record<WalletCommand["kind"], string>> = {
+      launch: "launch",
+      send: "send",
+      buy: "buy",
+      buy_and_send: "buy-and-send",
+      buy_and_burn: "buy-and-burn",
+      buy_top_five: "top-five buy",
+      sell: "sell",
+      burn: "burn",
+      swap_token_for_token: "swap",
+      claim_fees: "creator-fee claim",
+      reassign_fees: "fee reassignment",
+      upgrade_fees: "fee upgrade",
+    };
+    const label = operationKind ? requestLabel[operationKind] : undefined;
+    return `⏳ Your wallet is still processing an earlier transaction. Wait for it to finish, then reply with ${label ? `the ${label} request` : "your request"} again!`;
+  }
   if (/\bcode=RPC_PROVIDER_AUTHORIZATION_FAILED\b|rpc provider.*(?:forbidden|unauthorized)/i.test(message)) {
     console.error("wallet_rpc_provider_failure", { message: sanitizedDiagnosticDetail(new Error(message)) });
     return "🛠️ The wallet network is temporarily unavailable. Nothing was submitted onchain. Reply with the request again shortly!";
