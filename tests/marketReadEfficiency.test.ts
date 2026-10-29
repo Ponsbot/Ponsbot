@@ -29,7 +29,7 @@ describe("small-row market refresh guard", () => {
     expect(f.reads).toEqual(["websiteRefreshJobs"]);
   });
   it("memoizes freshness from an existing snapshot, but allows work again when it expires", async () => {
-    const f = fixture(); await f.add("tokenLaunches", { normalizedTokenAddress: token, tokenAddress: token, poolAddress: token, publicPublished: true, publicMarketCapUsd: 100, publicMarketCapUpdatedAt: now - 30_000 });
+    const f = fixture(); await f.add("tokenLaunches", { normalizedTokenAddress: token, tokenAddress: token, poolAddress: token, publicPublished: true, publicMarketCapUsd: 100, publicMarketCapUpdatedAt: now - 30_000, publicVolume24hUsd: 0, publicVolume24hUpdatedAt: now - 30_000 });
     const args = { tokens: [token], leaseId: "new", viewerKey: "viewer" };
     expect(await f.call(acquire, args)).toEqual([]); f.reads.length = 0;
     expect(await f.call(acquire, args)).toEqual([]); expect(f.reads).toEqual(["websiteRefreshJobs"]);
@@ -40,6 +40,11 @@ describe("small-row market refresh guard", () => {
     const f = fixture(); await f.add("websiteRefreshJobs", { token, leaseId: "owner", leaseUntil: now + 20_000, retryAt: 0 });
     await f.call(complete, { tokens: [token], leaseId: "wrong", snapshots: [{ tokenAddress: token, observedAt: now, marketCapUsd: 100 }] });
     expect(f.tables.websiteRefreshJobs[0].retryAt).toBe(0);
+  });
+  it("refreshes stale volume even when market cap is fresh", async () => {
+    const f = fixture(); await f.add("tokenLaunches", { normalizedTokenAddress: token, tokenAddress: token, poolAddress: token, publicPublished: true,
+      publicMarketCapUsd: 100, publicMarketCapUpdatedAt: now, publicVolume24hUsd: 500, publicVolume24hUpdatedAt: now - 86400000 });
+    expect(await f.call(acquire, { tokens: [token], leaseId: "volume", viewerKey: "viewer" })).toHaveLength(1);
   });
 });
 describe("global Gecko cooldown and pacing", () => {
@@ -65,13 +70,20 @@ describe("global Gecko cooldown and pacing", () => {
     expect(coinGeckoMonthlyPaceRetryAt(2_000, 100_000, now)).toBe(0);
     expect(coinGeckoMonthlyPaceRetryAt(4_000, 100_000, now)).toBeGreaterThan(now);
   });
-  it("reconciles the official paid counter without lowering locally observed usage", async () => {
+  it("reconciles inflated local reservations to official paid usage", async () => {
     const f = fixture();
     await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodKey: "2027-01", periodCount: 120 });
     await handler(recordCoinGeckoUsage)(f.ctx, { periodKey: "2027-01", count: 100, limit: 100_000,
       remaining: 99_900, rateLimit: 300, plan: "Basic", observedAt: now });
-    expect(f.tables.websiteProviderBudget[0]).toMatchObject({ periodCount: 120, officialPeriodCount: 100,
+    expect(f.tables.websiteProviderBudget[0]).toMatchObject({ periodCount: 100, officialPeriodCount: 100,
       officialPeriodLimit: 100_000, officialRemaining: 99_900, officialRateLimit: 300, officialPlan: "Basic", officialSyncedAt: now });
+  });
+  it("does not overwrite a newer official snapshot", async () => {
+    const f = fixture();
+    await f.add("websiteProviderBudget", { key: "coingecko-paid", attempts: [], periodCount: 150, officialSyncedAt: now });
+    await handler(recordCoinGeckoUsage)(f.ctx, { periodKey: "2027-01", count: 100, limit: 100_000,
+      remaining: 99_900, rateLimit: 300, plan: "Basic", observedAt: now - 1000 });
+    expect(f.tables.websiteProviderBudget[0].periodCount).toBe(150);
   });
   it("uses a higher official counter to stop paid reservations at the hard monthly limit", async () => {
     const f = fixture();

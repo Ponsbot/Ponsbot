@@ -40,7 +40,9 @@ export async function refreshWebsiteCatalog(client: ConvexHttpClient, secret: st
   }
   const tokens = [...new Set(targets.map(target => target.tokenAddress.toLowerCase()))].sort();
   const offset = lease.offset < tokens.length ? lease.offset : 0;
-  const selected = tokens.slice(offset, offset + 300);
+  // Keep the complete batch comfortably inside the catalog lease and snapshot
+  // freshness window even when providers time out. Continue next time.
+  const selected = tokens.slice(offset, offset + 90);
   const nextOffset = offset + selected.length >= tokens.length ? 0 : offset + selected.length;
   const chunks: string[][] = [];
   for (let i = 0; i < selected.length; i += GECKO_TOKEN_BATCH_SIZE) chunks.push(selected.slice(i, i + GECKO_TOKEN_BATCH_SIZE));
@@ -73,11 +75,9 @@ export async function refreshWebsiteCatalog(client: ConvexHttpClient, secret: st
       const base = pool.relationships?.base_token?.data?.id;
       const cap = !base || base.toLowerCase() === `robinhood_${tokenAddress.toLowerCase()}`
         ? geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd) : undefined;
-      const rawVolume = pool.attributes?.volume_usd?.h24;
-      const volume = rawVolume ? Number(rawVolume) : NaN;
-      if (cap === undefined && !Number.isFinite(volume)) continue;
-      snapshots.push({ tokenAddress, observedAt, ...(cap === undefined ? {} : { marketCapUsd: cap }),
-        ...(Number.isFinite(volume) && volume >= 0 ? { volume24hUsd: volume } : {}) });
+      if (cap === undefined) continue;
+      // A single pool's volume must never replace token-wide 24h volume.
+      snapshots.push({ tokenAddress, observedAt, marketCapUsd: cap });
     }
   });
   await client.mutation(api.marketData.recordCatalog, { secret, leaseId, snapshots: mergeCatalogSnapshots(snapshots), nextOffset });

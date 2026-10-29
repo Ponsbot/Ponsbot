@@ -55,7 +55,7 @@ export default async function LaunchPage({ params }: Props) {
     </div>
     {launch.automatedFeeBuybackEnabled ? <p className="token-fee-buyback-strip">5% of creator fees from this token buyback and burn $PONSBOT</p> : null}
   </>;
-  return <main><SiteHeader /><section className="detail-shell"><TokenActivity key={launch.tokenAddress} tokenAddress={launch.tokenAddress} poolAddress={launch.poolAddress} symbol={launch.symbol} currentMarketCapUsd={launch.marketCapUsd} currentMarketCapUpdatedAt={launch.marketCapUpdatedAt} volume24hUsd={launch.volume24hUsd} graduated={launch.graduated} artwork={artwork} summary={summary} details={details} /></section><SiteFooter /></main>;
+  return <main><SiteHeader /><section className="detail-shell"><TokenActivity key={launch.tokenAddress} tokenAddress={launch.tokenAddress} poolAddress={launch.poolAddress} symbol={launch.symbol} currentMarketCapUsd={launch.marketCapUsd} currentMarketCapUpdatedAt={launch.marketCapUpdatedAt} volume24hUsd={launch.volume24hUsd} volume24hUpdatedAt={launch.volume24hUpdatedAt} graduated={launch.graduated} artwork={artwork} summary={summary} details={details} /></section><SiteFooter /></main>;
 }
 
 function shortAddress(address: string) {

@@ -1,4 +1,5 @@
 "use client";
+import { displayedVolume } from "@/lib/website-refresh-policy";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { shortAddress } from "../lib/address-display";
@@ -10,8 +11,8 @@ import { activityCacheOnly, activityNextRefreshDelay, type PageTrade, type PageH
 type Trade = PageTrade;
 type Holder = PageHolder;
 
-export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarketCapUsd, currentMarketCapUpdatedAt, volume24hUsd, graduated, artwork, summary, details }: {
-  tokenAddress: string; poolAddress?: string; symbol: string; currentMarketCapUsd?: number; currentMarketCapUpdatedAt?: number; volume24hUsd?: number;
+export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarketCapUsd, currentMarketCapUpdatedAt, volume24hUsd, volume24hUpdatedAt, graduated, artwork, summary, details }: {
+  tokenAddress: string; poolAddress?: string; symbol: string; currentMarketCapUsd?: number; currentMarketCapUpdatedAt?: number; volume24hUsd?: number; volume24hUpdatedAt?: number;
   artwork: ReactNode; summary: ReactNode; details: ReactNode;
   graduated?: boolean;
 }) {
@@ -19,7 +20,8 @@ export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarket
   const { active, canRefresh } = refreshSession;
   const [trades, setTrades] = useState<Trade[]>([]); const [holders, setHolders] = useState<Holder[]>([]);
   const [liveMarketCapUsd, setLiveMarketCapUsd] = useState(currentMarketCapUsd);
-  const [liveVolume24hUsd, setLiveVolume24hUsd] = useState(volume24hUsd);
+  const [liveVolume24hUsd, setLiveVolume24hUsd] = useState(displayedVolume(volume24hUsd, volume24hUpdatedAt));
+  const liveVolumeUpdatedAt = useRef(volume24hUpdatedAt ?? 0);
   const [liveGraduated, setLiveGraduated] = useState(graduated);
   const [tab, setTab] = useState<"trades" | "holders">("trades");
   const [tradesUnavailable, setTradesUnavailable] = useState(false); const [holdersUnavailable, setHoldersUnavailable] = useState(false);
@@ -62,7 +64,10 @@ export function TokenActivity({ tokenAddress, poolAddress, symbol, currentMarket
                 liveMarketCapUpdatedAt.current = marketUpdatedAt;
                 setLiveMarketCapUsd(market.marketCapUsd);
               }
-              if (typeof market.volume24hUsd === "number") setLiveVolume24hUsd(market.volume24hUsd);
+              if (typeof market.volume24hUpdatedAt === "number" && market.volume24hUpdatedAt >= liveVolumeUpdatedAt.current) {
+                liveVolumeUpdatedAt.current = market.volume24hUpdatedAt;
+                setLiveVolume24hUsd(displayedVolume(market.volume24hUsd, market.volume24hUpdatedAt));
+              }
               if (market.graduated === true) setLiveGraduated(true);
             }
       } catch { /* Keep the last market snapshot during transient failures. */ }

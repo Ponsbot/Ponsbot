@@ -58,7 +58,8 @@ describe("website provider fallback", () => {
   it("prefers Gecko valuation without reserve or paid reads", async () => {
     mocks.gecko.mockResolvedValue(new Response(JSON.stringify({ data: [{ attributes: { address: addr(2), fdv_usd: "150000", volume_usd: { h24: "1234" } } }] }), { headers: { "x-market-observed-at": String(Date.now() - 1000) } }));
     const results = await refreshWebsiteMarkets(client, "s", [target], config);
-    expect(results[0]).toMatchObject({ marketCapUsd: 150000, marketCapSource: "gecko", volume24hUsd: 1234 });
+    expect(results[0]).toMatchObject({ marketCapUsd: 150000, marketCapSource: "gecko" });
+    expect(results[0].volume24hUsd).toBeUndefined(); // One pool is not total token volume.
     expect(publicRpc.readContract.mock.calls.some(([a]: any[]) => a.functionName === "getReserves")).toBe(false);
     expect(publicRpc.getBlock).not.toHaveBeenCalled();
     expect(paidRpc.getBlock).not.toHaveBeenCalled();
@@ -103,7 +104,8 @@ describe("website provider fallback", () => {
   });
   it("does not refresh a Gecko volume timestamp when RPC supplies the missing cap", async () => {
     const observedAt = Date.now() - 20_000;
-    mocks.gecko.mockResolvedValue(new Response(JSON.stringify({ data: [{ attributes: { address: addr(2), volume_usd: { h24: "44" } } }] }), { headers: { "x-market-observed-at": String(observedAt) } }));
+    mocks.gecko.mockImplementation(async (url: string) => new Response(JSON.stringify(url.includes('/simple/')
+      ? { data: { attributes: { h24_volume_usd: { [addr(1)]: '44' } } } } : { data: [] }), { headers: { "x-market-observed-at": String(observedAt) } }));
     const results = await refreshWebsiteMarkets(client, "s", [target], config);
     expect(results[0]).toMatchObject({ volume24hUsd: 44, volumeObservedAt: observedAt, marketCapUsd: 20000 });
   });

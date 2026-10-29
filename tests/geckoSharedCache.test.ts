@@ -9,6 +9,15 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 describe("shared Gecko stale response semantics", () => {
+  it("tries the independently budgeted public provider when paid admission is blocked", async () => {
+    vi.stubEnv("COINGECKO_PRO_API_KEY", "paid-test-key");
+    mocks.mutation.mockResolvedValueOnce({ acquired: false, stale: true, retryAt: Date.now() + 86400000, json: '{"data":[1]}', observedAt: 10 })
+      .mockResolvedValueOnce({ acquired: true }).mockResolvedValueOnce(undefined);
+    vi.mocked(fetch).mockResolvedValue(Response.json({ data: [2] }));
+    expect(await (await geckoSharedFetch(url, 60000, 1000, true)).json()).toEqual({ data: [2] });
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe(url);
+    expect(new Headers(vi.mocked(fetch).mock.calls[0][1]?.headers).has("x-cg-pro-api-key")).toBe(false);
+  });
   it("fails closed when an explicit paid request has no paid key", async () => {
     const response = await geckoSharedFetch(url, 60_000, 1_000, false, false, undefined, "background", "paid", "lifetime_volume");
     expect(response.status).toBe(503);

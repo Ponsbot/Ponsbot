@@ -42,8 +42,10 @@ export const acquire = mutation({
       const capAt = Math.max(state?.marketCapUpdatedAt ?? 0, launch.publicMarketCapUpdatedAt ?? 0);
       const cap = (state?.marketCapUpdatedAt ?? 0) >= (launch.publicMarketCapUpdatedAt ?? 0) ? state?.marketCapUsd : launch.publicMarketCapUsd;
       const refreshTtl = marketRefreshTtl(state?.lastTradeAt, now);
-      if (typeof cap === "number" && Number.isFinite(cap) && cap >= 0 && capAt > 0 && now - capAt < refreshTtl) {
-        const fresh = { token, leaseId, leaseUntil: 0, retryAt: capAt + refreshTtl };
+      const volumeAt = Math.max(state?.volume24hUpdatedAt ?? 0, launch.publicVolume24hUpdatedAt ?? 0);
+      if (typeof cap === "number" && Number.isFinite(cap) && cap >= 0 && capAt > 0 && now - capAt < refreshTtl
+        && volumeAt > 0 && now - volumeAt < refreshTtl) {
+        const fresh = { token, leaseId, leaseUntil: 0, retryAt: Math.min(capAt, volumeAt) + refreshTtl };
         if (job) await ctx.db.patch(job._id, fresh); else await ctx.db.insert("websiteRefreshJobs", fresh);
         continue;
       }
@@ -88,7 +90,10 @@ export const complete = mutation({
       const capValid = valid && next.marketCapUsd !== undefined && Number.isFinite(next.marketCapUsd) && next.marketCapUsd > 0;
       const state = await ctx.db.query("tokenMarketState").withIndex("by_normalized_token", q => q.eq("normalizedTokenAddress", normalized)).unique();
       const refreshTtl = marketRefreshTtl(next?.lastTradeAt ?? state?.lastTradeAt, now);
-      await ctx.db.patch(job._id, { leaseUntil: 0, retryAt: capValid ? next.observedAt + refreshTtl : now + WEBSITE_REFRESH_RETRY_MS });
+      const volumeFresh = valid && next.volume24hUsd !== undefined && Number.isFinite(next.volume24hUsd) && next.volume24hUsd >= 0
+        && (next.volumeObservedAt ?? next.observedAt) >= now - 120_000;
+      await ctx.db.patch(job._id, { leaseUntil: 0, retryAt: capValid && volumeFresh
+        ? Math.min(next.observedAt, next.volumeObservedAt ?? next.observedAt) + refreshTtl : now + WEBSITE_REFRESH_RETRY_MS });
       if (!valid || isTokenIndexExcluded(normalized)) continue;
       const launch = await ctx.db.query("tokenLaunches").withIndex("by_normalized_token_address", q => q.eq("normalizedTokenAddress", normalized)).unique();
       if (!launch?.publicPublished) continue;
@@ -122,13 +127,14 @@ export const reserveAlchemy = mutation({
 });
 
 export const acquireCatalog = mutation({
-  args: { secret: v.string(), leaseId: v.string() },
-  handler: async (ctx, { secret, leaseId }) => {
+  args: { secret: v.string(), leaseId: v.string(), force: v.optional(v.boolean()) },
+  handler: async (ctx, { secret, leaseId, force }) => {
     authorize(secret);
     const now = Date.now(), key = "website-catalog";
     const row = await ctx.db.query("websiteReadCache").withIndex("by_key", q => q.eq("key", key)).unique();
-    if (row && (row.expiresAt > now || (row.leaseUntil ?? 0) > now)) return false;
-    const values = { key, expiresAt: now + 15 * 60_000, leaseId, leaseUntil: now + 60_000 };
+    // Authenticated operator refreshes may bypass the cooldown, never a live lease.
+    if (row && ((!force && row.expiresAt > now) || (row.leaseUntil ?? 0) > now)) return false;
+    const values = { key, expiresAt: now + 15 * 60_000, leaseId, leaseUntil: now + 120_000 };
     if (row) await ctx.db.patch(row._id, values); else await ctx.db.insert("websiteReadCache", values);
     const offset = Number(row?.json ?? 0);
     return { offset: Number.isInteger(offset) && offset >= 0 ? offset : 0 };
@@ -258,9 +264,11 @@ export const recordCoinGeckoUsage = internalMutation({
       || args.observedAt > Date.now() + 30_000 || args.observedAt < Date.now() - 10 * 60_000) throw new Error("invalid CoinGecko usage snapshot");
     const key = "coingecko-paid";
     const row = await ctx.db.query("websiteProviderBudget").withIndex("by_key", q => q.eq("key", key)).unique();
-    const localCount = row?.periodKey === args.periodKey ? row.periodCount ?? 0 : 0;
+    // Official accounting is authoritative: local reservations include failed
+    // or abandoned calls and must not permanently pin the account at its cap.
+    if ((row?.officialSyncedAt ?? 0) >= args.observedAt) return;
     const values = {
-      periodKey: args.periodKey, periodCount: Math.max(localCount, args.count),
+      periodKey: args.periodKey, periodCount: args.count,
       officialPeriodCount: args.count, officialPeriodLimit: args.limit,
       officialRemaining: args.remaining, officialRateLimit: args.rateLimit,
       officialPlan: args.plan, officialSyncedAt: args.observedAt,

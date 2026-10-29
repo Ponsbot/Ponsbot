@@ -45,6 +45,10 @@ export async function geckoSharedFetch(url: string, ttlMs = 60_000, timeoutMs = 
   const retryAt = "retryAt" in reserved ? reserved.retryAt : Date.now() + 60_000;
   const previous = () => new Response(reserved.json, { headers: { "content-type": "application/json",
     "x-market-observed-at": String(reserved.observedAt), ...(reserved.stale ? { "x-market-stale": "1" } : {}) } });
+  if (!reserved.acquired && reserved.stale && paid && provider === "auto") {
+    const fallback = await geckoSharedFetch(url, ttlMs, timeoutMs, false, false, freshAfter, priority, "free", workload).catch(() => undefined);
+    if (fallback?.ok) return fallback;
+  }
   if (!reserved.acquired) return reserved.json !== undefined && (!reserved.stale || allowStale)
     ? previous()
     : new Response(null, { status: 429, headers: { "retry-after": String(Math.max(1, Math.ceil((retryAt - Date.now()) / 1_000))), "x-gecko-local-deferral": "1" } });

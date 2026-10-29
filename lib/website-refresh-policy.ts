@@ -4,6 +4,12 @@ export const WEBSITE_REFRESH_LEASE_MS = 45_000;
 export const WEBSITE_REFRESH_RETRY_MS = 30_000;
 export const WEBSITE_METADATA_TTL_MS = 60 * 60_000;
 
+/** Do not present an old rolling window as today's volume during an outage. */
+export function displayedVolume(value: number | undefined, observedAt: number | undefined, now = Date.now()) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && observedAt !== undefined
+    && observedAt <= now + 30_000 && now - observedAt <= 2 * 60 * 60_000 ? value : undefined;
+}
+
 export function pageRefreshActive(startedAt: number, now: number) {
   return now >= startedAt && now - startedAt < PAGE_REFRESH_SESSION_MS;
 }

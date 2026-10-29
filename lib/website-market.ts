@@ -133,12 +133,9 @@ export async function refreshWebsiteMarkets(client: ConvexHttpClient, secret: st
       const base = pool.relationships?.base_token?.data?.id;
       const cap = !base || base.toLowerCase() === `robinhood_${token}`
         ? geckoMarketCap(pool.attributes?.market_cap_usd, pool.attributes?.fdv_usd) : undefined;
-      const rawVolume = pool.attributes?.volume_usd?.h24;
-      const volume = rawVolume === undefined || rawVolume === null || rawVolume === "" ? NaN : Number(rawVolume);
       const existing = snapshots.get(token);
       snapshots.set(token, { ...existing, tokenAddress: token, observedAt: cap === undefined ? existing?.observedAt ?? observedAt : observedAt,
         ...(existing?.marketCapUsd !== undefined || cap === undefined ? {} : { marketCapUsd: cap, marketCapSource: "gecko" }),
-        ...(existing?.volume24hUsd !== undefined || !Number.isFinite(volume) || volume < 0 ? {} : { volume24hUsd: volume, volumeObservedAt: observedAt }),
       });
     }
   }

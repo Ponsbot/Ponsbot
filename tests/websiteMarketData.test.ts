@@ -156,14 +156,14 @@ describe("per-token durable refresh leases", () => {
   });
   it("uses fresh shared values without extending their source timestamp or writing rate limits", async () => {
     const f = fixture(); await f.add(1);
-    await f.db.insert("tokenMarketState", { normalizedTokenAddress: token(1), marketCapUsd: 100, marketCapUpdatedAt: now - 20_000 });
+    await f.db.insert("tokenMarketState", { normalizedTokenAddress: token(1), marketCapUsd: 100, marketCapUpdatedAt: now - 20_000, volume24hUsd: 0, volume24hUpdatedAt: now - 20_000 });
     expect(await f.acquire([token(1)])).toEqual([]);
     expect(f.rows.marketViewerRateLimits).toBeUndefined();
     expect(f.rows.tokenMarketState[0].marketCapUpdatedAt).toBe(now - 20_000);
   });
   it("also honors a newer public-launch snapshot", async () => {
     const f = fixture(); const id = await f.add(1);
-    await f.db.patch(id, { publicMarketCapUsd: 100, publicMarketCapUpdatedAt: now - 1 });
+    await f.db.patch(id, { publicMarketCapUsd: 100, publicMarketCapUpdatedAt: now - 1, publicVolume24hUsd: 0, publicVolume24hUpdatedAt: now - 1 });
     expect(await f.acquire([token(1)])).toEqual([]);
   });
   it("retains old values and backs off on failed refreshes", async () => {
