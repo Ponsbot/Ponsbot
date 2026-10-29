@@ -53,6 +53,14 @@ export const DEFAULT_SWAP_SLIPPAGE_BPS = 250;
 // mapping deterministic: the AI may recognize a company name, but execution
 // still normalizes it to the exact indexed ticker before token resolution.
 const RWA_NAME_ALIASES: ReadonlyArray<readonly [string, string]> = [
+  ["V", "V"], ["Visa", "V"], ["Visa Inc", "V"],
+  ["JPM", "JPM"], ["JPMorgan Chase", "JPM"], ["JPMorgan", "JPM"], ["JP Morgan", "JPM"],
+  ["MCD", "MCD"], ["McDonald's", "MCD"], ["McDonalds", "MCD"],
+  ["GDX", "GDX"], ["VanEck Gold Miners ETF", "GDX"], ["VanEck Gold Miners", "GDX"],
+  ["PYPL", "PYPL"], ["PayPal", "PYPL"],
+  ["BMNR", "BMNR"], ["BitMine Immersion Technologies", "BMNR"], ["BitMine", "BMNR"],
+  ["DIS", "DIS"], ["Disney", "DIS"], ["Walt Disney", "DIS"],
+  ["UBER", "UBER"], ["Uber", "UBER"], ["Uber Technologies", "UBER"],
   ["P", "P"], ["AVGO", "AVGO"], ["NBIS", "NBIS"], ["ORCL", "ORCL"],
   ["PENG", "PENG"], ["DDOG", "DDOG"],
   ["Everpure", "P"], ["Broadcom", "AVGO"], ["Nebius Group", "NBIS"], ["Nebius", "NBIS"],

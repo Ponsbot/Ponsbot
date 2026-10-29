@@ -76,5 +76,13 @@
   {"address":"0xb0992820E760d836549ba69BC7598b4af75dEE03","symbol":"ORCL","name":"Oracle","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":1000,"hook":"0x0000000000000000000000000000000000000000"}},
   {"address":"0x9b23573b156B52565012F5cE02CDF60AFBaa70Be","symbol":"PENG","name":"Penguin Solutions","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
   {"address":"0x27c99fBde9D0d2AA4f4Bfb4943f237843DdF6958","symbol":"DDOG","name":"Datadog","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
-  {"address":"0x75742c18BC1f1C5c5f448f4C9D9C6F66dafAAa38","symbol":"SOXX","name":"iShares Semiconductor ETF","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}}
+  {"address":"0x75742c18BC1f1C5c5f448f4C9D9C6F66dafAAa38","symbol":"SOXX","name":"iShares Semiconductor ETF","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0x9BFF87700337babF5099e99F322F888DafB1d551","symbol":"V","name":"Visa","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0x07c44dA0848960bFf894F17584dB8B2F60B2409E","symbol":"JPM","name":"JPMorgan Chase","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0x2fdaa4604F10F4AE7f66fa48A174bCd25b1ece20","symbol":"MCD","name":"McDonald's","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0xBDFa7A06458Aa26b8E736E0fC87aD37C3BB8Ac2e","symbol":"GDX","name":"VanEck Gold Miners ETF","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0xa45aBDc77918F7B9199b022eEe400C0BC5712BD2","symbol":"PYPL","name":"PayPal","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0x9a7842EDed60b0FE1e03eEc342C82A397c821eD0","symbol":"BMNR","name":"BitMine Immersion Technologies","decimals":18,"route":{"kind":"v3","fee":10000,"tickSpacing":0,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0x501B1B3B79750313AD2C4CcCD08586c4C17d7283","symbol":"DIS","name":"Disney","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}},
+  {"address":"0xbd335Aa5A1693F0121A5c0Ef18A080E9958DA78b","symbol":"UBER","name":"Uber","decimals":18,"route":{"kind":"v4","fee":50000,"tickSpacing":500,"hook":"0x0000000000000000000000000000000000000000"}}
 ]
